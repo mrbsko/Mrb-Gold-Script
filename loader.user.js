@@ -6,7 +6,7 @@
 // @match        https://barafranca.nl/*
 // @match        https://www.barafranca.nl/*
 // @run-at       document-start
-// @require      https://JOUWNAAM.github.io/JOUWREPOSITORY/mrb-gold.js
+// @require      https://mrbsko.github.io/Mrb-Gold-Script/mrb-gold.js
 // @grant        none
 // ==/UserScript==
 
