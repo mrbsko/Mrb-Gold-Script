@@ -1,3 +1,4 @@
+// v11.11.19: Race-driver autokeuze houdt actielock vast, kiest optie 1 en bevestigt via jQuery plus native form-fallback.
 // v11.11.18: Race Driver herkent ook de Nederlandse autokeuzepagina, accepteert Willekeurige auto en klikt Ga robuust met formulierfallback.
 // v11.8.0: Heist 2.0 — één plannerautoriteit, dubbele lokale navigatielussen uitgeschakeld onder plannerbeheer en centrale state-registratie.
 // v11.10.1: OC rolverdeling hersteld: Driver kiest auto, Explosievenexpert kiest C4, Wapenexpert vult 100 kogels en 2 Tommy Guns in.
@@ -6693,73 +6694,124 @@ try {
     if(!scriptAan) return;
     if (isLoggedOut()) return pauseForGate('slave_selectCar: uitgelogd');
 
-    const body = String(document.body?.innerText || '').replace(/\s+/g, ' ').trim();
-    const select = Array.from(document.querySelectorAll('select')).find(sel => {
+    // Houd de centrale actielock actief zolang de driver op dit formulier staat.
+    // Hiermee kan Cars/Crimes de pagina niet overnemen voordat de race-auto is bevestigd.
+    raceTouchAction();
+
+    const root = document.querySelector('#game_container') || document;
+    const body = String(root.innerText || root.textContent || '').replace(/\s+/g, ' ').trim();
+    const headingVisible = /Select our car for the race|Selecteer je auto voor de race|Kies je auto voor de race/i.test(body);
+
+    const forms = Array.from(root.querySelectorAll('form'));
+    const form = forms.find(f => {
+      const txt = String(f.innerText || f.textContent || '').replace(/\s+/g, ' ');
+      return /Select our car for the race|Selecteer je auto voor de race|Kies je auto voor de race|Willekeurige auto in deze stad/i.test(txt)
+        && !!f.querySelector('select');
+    }) || forms.find(f => !!f.querySelector('select') && !!f.querySelector('input[type="submit"], button[type="submit"], button')) || null;
+
+    const select = form?.querySelector('select') || Array.from(root.querySelectorAll('select')).find(sel => {
       const ctx = String(sel.closest('form, table, .box, #game_container')?.innerText || '');
       const hay = `${sel.name || ''} ${sel.id || ''} ${ctx}`.toLowerCase();
-      return /auto|car|race|autorace|selecteer je auto|select our car/.test(hay);
-    }) || document.querySelector('select');
+      return /auto|car|race|autorace|selecteer je auto|select our car|willekeurige auto/.test(hay);
+    }) || null;
 
-    const onSelectCar =
-      /Select our car for the race|Selecteer je auto voor de race|Kies je auto voor de race/i.test(body) ||
-      !!select;
+    if (headingVisible && select){
+      const options = Array.from(select.options || []);
+      // De oude, werkende Race-flow koos bewust optie 1. Op deze pagina is dat
+      // "Willekeurige auto in deze stad" of de eerste beschikbare concrete auto.
+      let chosen = options.find((o, i) => i > 0 && !o.disabled && /willekeurige auto in deze stad|random car in this city/i.test(o.textContent || ''))
+        || options.find((o, i) => i > 0 && !o.disabled && String(o.value || '').trim() !== '')
+        || options[1]
+        || options[0];
 
-    if (onSelectCar){
-      // Een reeds gekozen optie zoals "Willekeurige auto in deze stad" is geldig.
-      // Als er concrete auto's beschikbaar zijn, kiest de bestaande helper de eerste.
-      raceSelectFirstAvailableCar();
+      if (chosen){
+        select.selectedIndex = Math.max(0, options.indexOf(chosen));
+        select.value = chosen.value;
+        try { chosen.selected = true; } catch(e) {}
+        try { select.dispatchEvent(new Event('input', {bubbles:true})); } catch(e) {}
+        try { select.dispatchEvent(new Event('change', {bubbles:true})); } catch(e) {}
+        try {
+          const $ = $jq && $jq();
+          if ($) $(select).val(chosen.value).prop('selectedIndex', select.selectedIndex).trigger('input').trigger('change');
+        } catch(e) {}
+      }
 
-      const scope = select?.closest('form') || document;
-      const candidates = Array.from(scope.querySelectorAll(
-        'input[type="submit"], input[type="button"], input[type="image"], button[type="submit"], button'
-      )).filter(b => !b.disabled && b.offsetParent !== null);
-
-      const submit = candidates.find(b => {
-        const label = raceButtonText(b);
-        return /^(ga|go)$/i.test(label) || /select|ready|gereed|race|bevestig|confirm|submit/i.test(label);
-      }) || candidates[0] || null;
+      const scope = form || select.closest('form') || root;
+      const candidates = Array.from(scope.querySelectorAll('input[type="submit"], input[type="button"], button[type="submit"], button'))
+        .filter(b => !b.disabled && b.offsetParent !== null);
+      const submit = candidates.find(b => /^(ga|go)$/i.test(raceButtonText(b)))
+        || candidates.find(b => /select|ready|gereed|bevestig|confirm|submit/i.test(raceButtonText(b)))
+        || candidates[0]
+        || null;
 
       if (submit){
-        raceRegistryState('DRIVER_CAR_SUBMIT', `auto bevestigen via ${raceButtonText(submit) || 'formulier'}`);
-        try{ submit.focus(); }catch{}
+        raceRegistryState('DRIVER_CAR_SUBMIT', `auto bevestigen via ${raceButtonText(submit) || 'Ga'}`);
+        raceTouchAction();
 
-        let clicked = false;
-        try{
-          submit.click();
-          clicked = true;
-        }catch{}
-
-        // Fallback voor pagina's waarop een gewone click-handler niet reageert.
-        if (!clicked){
-          try{
-            const form = submit.form || select?.closest('form');
-            if (form?.requestSubmit && submit.matches('button[type="submit"], input[type="submit"]')) form.requestSubmit(submit);
-            else if (form?.requestSubmit) form.requestSubmit();
-            else form?.submit?.();
-            clicked = true;
-          }catch{}
+        // Gebruik eerst exact dezelfde jQuery-click als de oude werkende versie.
+        let submitted = false;
+        try {
+          const $ = $jq && $jq();
+          if ($) {
+            $(submit).focus().trigger('mousedown').trigger('mouseup').trigger('click');
+            submitted = true;
+          }
+        } catch(e) {}
+        if (!submitted){
+          try { submit.focus(); submit.click(); submitted = true; } catch(e) {}
         }
 
-        next(()=>{
-          const after = String(document.body?.innerText || '').replace(/\s+/g, ' ');
+        // Controleer langer dan voorheen: de site verwerkt deze actie soms traag.
+        let checks = 0;
+        const verify = ()=>{
+          if(!scriptAan) return;
+          if (isLoggedOut()) return pauseForGate('slave_selectCar verify: uitgelogd');
+          raceTouchAction();
+          checks++;
+
+          const nowRoot = document.querySelector('#game_container') || document;
+          const after = String(nowRoot.innerText || nowRoot.textContent || '').replace(/\s+/g, ' ');
           const stillHere = /Select our car for the race|Selecteer je auto voor de race|Kies je auto voor de race/i.test(after);
-          if (stillHere){
-            raceRegistryState('DRIVER_CAR_RETRY', 'autobevestiging nog zichtbaar; opnieuw proberen');
-            next(slave_selectCar, randomDelay(1800,3200));
+
+          if (!stillHere){
+            raceRegistryState('DRIVER_READY', 'auto bevestigd');
+            clearRacePlan();
+            next(()=>{
+              guiLoad('/information.php');
+              next(()=>checkAvailability(true), randomDelay(10000,20000));
+            }, randomDelay(2500,4500));
             return;
           }
 
-          raceRegistryState('DRIVER_READY', 'auto bevestigd');
-          clearRacePlan();
-          guiLoad('/information.php');
-          next(()=>checkAvailability(true), randomDelay(10000,20000));
-        }, randomDelay(2200,3800));
+          // Na enkele controles één native formulier-submit als tweede route.
+          if (checks === 3){
+            const activeForm = submit.form || select.closest('form') || form;
+            try {
+              if (activeForm?.requestSubmit && submit.matches('button[type="submit"], input[type="submit"]')) activeForm.requestSubmit(submit);
+              else if (activeForm?.requestSubmit) activeForm.requestSubmit();
+              else if (activeForm) HTMLFormElement.prototype.submit.call(activeForm);
+            } catch(e) {
+              try { raceSafeClick(submit); } catch(_) {}
+            }
+          }
+
+          // Blijf op de Race-pagina en probeer maximaal ongeveer 20 seconden.
+          // Daarna wordt de volledige autokeuze opnieuw opgebouwd, zonder dat Cars overneemt.
+          if (checks < 8){
+            next(verify, 2200);
+          } else {
+            raceRegistryState('DRIVER_CAR_RETRY', 'autobevestiging opnieuw uitvoeren');
+            next(slave_selectCar, randomDelay(1800,2800));
+          }
+        };
+
+        next(verify, 2200);
         return;
       }
     }
 
     raceRegistryState('DRIVER_CAR_WAIT', 'wachten op autokeuzeformulier');
-    next(slave_selectCar, randomDelay(2500,4500));
+    next(slave_selectCar, randomDelay(1800,2800));
   }
 
   // ------------------ AVAILABILITY (gedeeld) ------------------
