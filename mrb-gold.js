@@ -1,3 +1,4 @@
+// v11.11.18: Race Driver herkent ook de Nederlandse autokeuzepagina, accepteert Willekeurige auto en klikt Ga robuust met formulierfallback.
 // v11.8.0: Heist 2.0 — één plannerautoriteit, dubbele lokale navigatielussen uitgeschakeld onder plannerbeheer en centrale state-registratie.
 // v11.10.1: OC rolverdeling hersteld: Driver kiest auto, Explosievenexpert kiest C4, Wapenexpert vult 100 kogels en 2 Tommy Guns in.
 // v11.10.3: OC wordt bij actieve start direct wakker gemaakt; alle oude Heist GroupCrimes-routes blokkeren op de OC-toggle.
@@ -6692,30 +6693,73 @@ try {
     if(!scriptAan) return;
     if (isLoggedOut()) return pauseForGate('slave_selectCar: uitgelogd');
 
-    const body = document.body?.innerText || '';
-    const onSelectCar = /Select our car for the race/i.test(body) || document.querySelector('select');
+    const body = String(document.body?.innerText || '').replace(/\s+/g, ' ').trim();
+    const select = Array.from(document.querySelectorAll('select')).find(sel => {
+      const ctx = String(sel.closest('form, table, .box, #game_container')?.innerText || '');
+      const hay = `${sel.name || ''} ${sel.id || ''} ${ctx}`.toLowerCase();
+      return /auto|car|race|autorace|selecteer je auto|select our car/.test(hay);
+    }) || document.querySelector('select');
+
+    const onSelectCar =
+      /Select our car for the race|Selecteer je auto voor de race|Kies je auto voor de race/i.test(body) ||
+      !!select;
 
     if (onSelectCar){
+      // Een reeds gekozen optie zoals "Willekeurige auto in deze stad" is geldig.
+      // Als er concrete auto's beschikbaar zijn, kiest de bestaande helper de eerste.
       raceSelectFirstAvailableCar();
 
-      const submit = Array.from(document.querySelectorAll('input[type="submit"], button[type="submit"], button'))
-        .find(b => /select|ready|race|go|submit/i.test((b.value || b.textContent || ''))) || document.querySelector('input[type="submit"], button[type="submit"]');
+      const scope = select?.closest('form') || document;
+      const candidates = Array.from(scope.querySelectorAll(
+        'input[type="submit"], input[type="button"], input[type="image"], button[type="submit"], button'
+      )).filter(b => !b.disabled && b.offsetParent !== null);
+
+      const submit = candidates.find(b => {
+        const label = raceButtonText(b);
+        return /^(ga|go)$/i.test(label) || /select|ready|gereed|race|bevestig|confirm|submit/i.test(label);
+      }) || candidates[0] || null;
 
       if (submit){
+        raceRegistryState('DRIVER_CAR_SUBMIT', `auto bevestigen via ${raceButtonText(submit) || 'formulier'}`);
         try{ submit.focus(); }catch{}
-        try{ submit.click(); }catch{}
+
+        let clicked = false;
+        try{
+          submit.click();
+          clicked = true;
+        }catch{}
+
+        // Fallback voor pagina's waarop een gewone click-handler niet reageert.
+        if (!clicked){
+          try{
+            const form = submit.form || select?.closest('form');
+            if (form?.requestSubmit && submit.matches('button[type="submit"], input[type="submit"]')) form.requestSubmit(submit);
+            else if (form?.requestSubmit) form.requestSubmit();
+            else form?.submit?.();
+            clicked = true;
+          }catch{}
+        }
+
         next(()=>{
-          next(()=>{
-            clearRacePlan();
-            guiLoad('/information.php');
-            next(()=>checkAvailability(true), randomDelay(10000,20000));
-          }, randomDelay(18000,40000));
-        }, actionDelay());
+          const after = String(document.body?.innerText || '').replace(/\s+/g, ' ');
+          const stillHere = /Select our car for the race|Selecteer je auto voor de race|Kies je auto voor de race/i.test(after);
+          if (stillHere){
+            raceRegistryState('DRIVER_CAR_RETRY', 'autobevestiging nog zichtbaar; opnieuw proberen');
+            next(slave_selectCar, randomDelay(1800,3200));
+            return;
+          }
+
+          raceRegistryState('DRIVER_READY', 'auto bevestigd');
+          clearRacePlan();
+          guiLoad('/information.php');
+          next(()=>checkAvailability(true), randomDelay(10000,20000));
+        }, randomDelay(2200,3800));
         return;
       }
     }
 
-    next(slave_selectCar, randomDelay(5000,10000));
+    raceRegistryState('DRIVER_CAR_WAIT', 'wachten op autokeuzeformulier');
+    next(slave_selectCar, randomDelay(2500,4500));
   }
 
   // ------------------ AVAILABILITY (gedeeld) ------------------
