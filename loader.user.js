@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MRB Gold Edition Loader
 // @namespace    https://barafranca.nl
-// @version      11.11.17
+// @version      11.11.18
 // @description  Laadt automatisch de nieuwste MRB Gold Edition vanaf GitHub
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -18,5 +18,5 @@
 // @connect      maker.ifttt.com
 // @connect      script.google.com
 // @connect      script.googleusercontent.com
-// @require      https://raw.githubusercontent.com/Mrbsko/Mrb-Gold-Script/main/mrb-gold.js
+// @require      https://raw.githubusercontent.com/Mrbsko/Mrb-Gold-Script/main/mrb-gold.js?v=11.11.18
 // ==/UserScript==
