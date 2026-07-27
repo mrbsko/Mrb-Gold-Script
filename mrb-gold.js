@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mrb script NL - MRB Gold Edition
 // @namespace    https://barafranca.nl
-// @version      11.11.52
+// @version      11.11.53
 // @description  MRB Gold Edition Captcha Badge Status Fix
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -20,6 +20,7 @@
 // @run-at       document-end
 // ==/UserScript==
 
+// v11.11.53: Centrale navigatiebeveiliging — blokkeert navigatiestormen, dubbele doelen en alle automatische navigatie tijdens Cloudflare.
 // v11.11.48: Race due-planfix — een verlopen startplan voert nu daadwerkelijk de Race-flow uit in plaats van opnieuw een startplan te maken.
 // v11.11.47: Race Core uit v11.2.0 hersteld; volledige Race-cyclus onder één centrale actielock en lokale watcher uit bij plannerbeheer.
 // v11.11.38: Race due-planfix — verlopen start- en info-plannen worden daadwerkelijk uitgevoerd in plaats van opnieuw ingepland.
@@ -17596,6 +17597,12 @@ function mrbSharedSet(key, value){
   const NAV_TTL = 20_000;
   const ACTION_TTL = 45_000;
   const CONTINUATION_TTL = 30_000;
+  // v11.11.53: harde centrale navigatiepoort. Alle modules die mrbNavigate
+  // gebruiken delen voortaan dezelfde minimale tussenruimte. Een geblokkeerde
+  // aanvraag telt als afgehandeld, zodat oude `mrbNavigate(...) || loadPage(...)`
+  // fallbacks de beveiliging niet alsnog kunnen omzeilen.
+  const NAV_GUARD_MIN_GAP = 3500;
+  const NAV_GUARD_SAME_TARGET_GAP = 10_000;
 
   let enabled = !!mrbSharedGet(K_ENABLED, true);
   let currentTask = null;
@@ -17604,6 +17611,10 @@ function mrbSharedSet(key, value){
   let runnerTimer = null;
   let navigationContinuation = null;
   let navigationSequence = 0;
+  let lastGuardedNavigationAt = 0;
+  let lastGuardedNavigationTarget = '';
+  let lastGuardedNavigationOwner = '';
+  let navigationGuardBlocked = 0;
   const tasks = new Map();
 
   function now(){ return Date.now(); }
@@ -17716,18 +17727,55 @@ function mrbSharedSet(key, value){
     return value;
   }
 
+  function navigationGuardCloudflareActive(){
+    try {
+      if (unsafeWindow.__mrbCloudflareRecovery) return true;
+      if (typeof gm_isCloudflareCheck === 'function' && gm_isCloudflareCheck()) return true;
+      const body = String(document.body?.innerText || '').replace(/\s+/g, ' ');
+      return /Beveiliging wordt geverifieerd|Verifying you are human|Verify you are human|Dit kan enkele seconden duren|This may take a few seconds/i.test(body) ||
+        !!document.querySelector('form[action*="cdn-cgi"],script[src*="cdn-cgi/challenge-platform"],#challenge-running,#cf-challenge-running,iframe[src*="challenges.cloudflare.com"]');
+    } catch(e) { return false; }
+  }
+
+  function navigationGuardBlock(reason, owner, normalized){
+    navigationGuardBlocked += 1;
+    log('nav-blok', `${owner}: ${normalized} — ${reason}`, owner);
+    // BELANGRIJK: true betekent hier "centraal afgehandeld". Veel oudere
+    // modules hebben een directe GUI.loadPage-fallback achter een || staan.
+    // false zou die fallback activeren en de navigatiestorm juist voortzetten.
+    return true;
+  }
+
   function navigate(target, options={}){
     const normalized = normalizeNavigationTarget(target);
     if (!normalized) return false;
 
     const owner = clean(options.owner || options.source || currentTask?.id || 'mrb-direct');
+    const forced = options.force === true;
+    const ts = now();
+
+    if (!forced && navigationGuardCloudflareActive()) {
+      return navigationGuardBlock('Cloudflare actief; alle automatisering gepauzeerd', owner, normalized);
+    }
+
+    if (!forced && lastGuardedNavigationAt) {
+      const elapsed = ts - lastGuardedNavigationAt;
+      if (normalized === lastGuardedNavigationTarget && elapsed < NAV_GUARD_SAME_TARGET_GAP) {
+        return navigationGuardBlock(`dubbel doel binnen ${NAV_GUARD_SAME_TARGET_GAP / 1000}s`, owner, normalized);
+      }
+      if (elapsed < NAV_GUARD_MIN_GAP) {
+        return navigationGuardBlock(`centrale rustpauze nog ${Math.ceil((NAV_GUARD_MIN_GAP - elapsed) / 1000)}s`, owner, normalized);
+      }
+    }
+
     releaseExpiredNavigationLock();
     const alreadyOwned = !!navigationLock && navigationLock.owner === owner;
     if (!canNavigate(owner)) {
-      log('nav-wacht', `${owner} wacht: ${normalized}`, owner);
-      return false;
+      return navigationGuardBlock(`navigatielock van ${navigationLock?.owner || 'andere module'}`, owner, normalized);
     }
-    if (!alreadyOwned && !acquireNavigation(owner, Number(options.ttl) || NAV_TTL)) return false;
+    if (!alreadyOwned && !acquireNavigation(owner, Number(options.ttl) || NAV_TTL)) {
+      return navigationGuardBlock('navigatielock niet verkregen', owner, normalized);
+    }
 
     try {
       const gui = unsafeWindow?.omerta?.GUI?.container;
@@ -17743,6 +17791,9 @@ function mrbSharedSet(key, value){
         location.href = normalized;
       }
       navigationSequence += 1;
+      lastGuardedNavigationAt = ts;
+      lastGuardedNavigationTarget = normalized;
+      lastGuardedNavigationOwner = owner;
       // Een planner-module die navigeert krijgt altijd zelf eerst de kans om op
       // de nieuwe pagina zijn vervolgactie uit te voeren. Dit voorkomt dat de
       // Bodyguard Trainer de zojuist geopende Crimes/Race/Heist-pagina overneemt.
@@ -18147,6 +18198,15 @@ function mrbSharedSet(key, value){
     navigationOwner:() => { releaseExpiredNavigationLock(); return navigationLock?.owner || null; },
     actionOwner:() => { releaseExpiredNavigationLock(); return actionLock?.owner || null; },
     continuationOwner:() => { releaseExpiredNavigationLock(); return navigationContinuation?.owner || null; },
+    navigationGuard:() => ({
+      minGapMs:NAV_GUARD_MIN_GAP,
+      sameTargetGapMs:NAV_GUARD_SAME_TARGET_GAP,
+      lastAt:lastGuardedNavigationAt,
+      lastTarget:lastGuardedNavigationTarget,
+      lastOwner:lastGuardedNavigationOwner,
+      blocked:navigationGuardBlocked,
+      cloudflare:navigationGuardCloudflareActive()
+    }),
     log
   };
 
