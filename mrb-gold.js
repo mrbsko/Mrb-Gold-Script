@@ -20,10 +20,10 @@
 // @run-at       document-end
 // ==/UserScript==
 
-// v11.11.37: Gerichte Race-rollback — de complete Race-module is exact teruggezet naar v11.11.32; alle overige v11.11.36-modules en fixes blijven behouden.
-
-// v11.11.38: Race root-fix — de planner voert een vervallen start/info-plan daadwerkelijk uit in plaats van het plan te wissen en opnieuw te plannen.
+// v11.11.38: Race due-planfix — verlopen start- en info-plannen worden daadwerkelijk uitgevoerd in plaats van opnieuw ingepland.
 // v11.11.32: Harde TDZ-fix — de interne menuhelper heet nergens meer addBlock; alle hoofdmodules gebruiken mrbCoreAddBlock en alleen de gedeelde API behoudt de propertynaam addBlock.
+// v11.11.35: Race-actielockfix — Race geeft de centrale actielock altijd vrij wanneer alleen een toekomstplan wordt ingepland of een controle klaar is.
+// v11.11.33: Race-reactiefix — uitnodigen, accepteren en auto kiezen worden direct gewekt door paginawijzigingen; lange 5-15s Race-polls verkort.
 // v11.11.29: Loader-scopefix — centrale menu-, opslag- en timerhelpers worden gedeeld met alle losse modules buiten de hoofd-IIFE.
 // v11.11.26: Captcha-badgefix — UIT/Start krijgt altijd voorrang; het woord captcha alleen maakt een module niet meer actief.
 // v11.11.27: Module-uitfix — Captcha Alert stopt ook de achtergrondscan volledig; Test geluid wijzigt de aan/uit-status niet.
@@ -6652,7 +6652,7 @@ try {
         raceSelectFirstAvailableCar();
         raceSafeClick(inviteBtn);
         if(failsafeTimer) clearTimeout(failsafeTimer);
-        next(()=> leader_checkPartner(0), randomDelay(10000,15000));
+        next(()=> leader_checkPartner(0), randomDelay(1500,2500));
       }, actionDelay());
       return;
     }
@@ -6691,11 +6691,11 @@ try {
       }
 
       if (/invited|accepted|uitgenodigd|geaccepteerd|waiting|wachten/i.test(body)){
-        next(()=> leader_checkPartner(retries+1), randomDelay(10000,15000));
+        next(()=> leader_checkPartner(retries+1), randomDelay(2500,4000));
         return;
       }
 
-      next(leader_raceFlow, randomDelay(2000,4000));
+      next(leader_raceFlow, randomDelay(800,1400));
     }, randomDelay(1000,2000));
   }
 
@@ -6786,7 +6786,7 @@ try {
     const accept = $('a').filter(function(){ return /(Accepteer|Accept)/i.test($(this).text()); });
     if (accept.length){
       accept[0].click();
-      next(slave_selectCar, actionDelay());
+      next(slave_selectCar, randomDelay(500,900));
       return;
     }
 
@@ -6801,8 +6801,8 @@ try {
 
     next(()=>{
       guiLoad('/races.php');
-      next(slave_acceptLoop, randomDelay(1500,4000));
-    }, randomDelay(5000,10000));
+      next(slave_acceptLoop, randomDelay(600,1200));
+    }, randomDelay(1500,2500));
   }
 
   function slave_selectCar(){
@@ -6833,7 +6833,53 @@ try {
       }
     }
 
-    next(slave_selectCar, randomDelay(5000,10000));
+    next(slave_selectCar, randomDelay(500,900));
+  }
+
+  // v11.11.36 — snelle Race-reacties uitsluitend op de echte Race-pagina.
+  // De observer mag vanaf Mijn account of andere spelpagina's nooit zelf een
+  // Race-stap starten. De Core Planner blijft exclusief verantwoordelijk voor
+  // de eerste navigatie naar /races.php. Op de Race-pagina versnelt deze laag
+  // alleen accepteren, auto kiezen, uitnodigen en starten.
+  let raceDomWakeTimer = 0;
+  function raceIsActualRacePage(){
+    return /(?:^|\/)races\.php(?:$|[?#])/i.test(String(location.pathname || '') + String(location.search || '') + String(location.hash || ''))
+      || /\/races\.php(?:[?#]|$)/i.test(String(location.href || ''));
+  }
+
+  function raceScheduleDomWake(){
+    if (!scriptAan || isLoggedOut() || !raceIsActualRacePage()) return;
+    clearTimeout(raceDomWakeTimer);
+    raceDomWakeTimer = setTimeout(()=>{
+      if (!scriptAan || isLoggedOut() || !raceIsActualRacePage()) return;
+      const root = document.querySelector('#game_container') || document.body;
+      const body = String(root?.innerText || '');
+
+      if (raceRole === 'slave') {
+        const hasAccept = Array.from(root?.querySelectorAll?.('a, button, input[type="submit"]') || [])
+          .some(el => /(Accepteer|Accept)/i.test(String(el.textContent || el.value || '')));
+        const hasCar = /Select our car for the race/i.test(body) || !!root?.querySelector?.('select');
+        if (hasCar) { next(slave_selectCar, 100); return; }
+        if (hasAccept) { next(slave_acceptLoop, 100); return; }
+      } else {
+        if (raceFindRaceStartButton()) { next(leader_tryStart, 100); return; }
+        if (raceFindGoToInvitesButton() || raceFindSendInviteButton()) { next(leader_raceFlow, 100); return; }
+      }
+    }, 140);
+  }
+
+  const raceDomRoot = document.querySelector('#game_container') || document.body;
+  if (raceDomRoot) {
+    const raceDomObserver = new MutationObserver(mutations=>{
+      if (!raceIsActualRacePage()) return;
+      for (const mutation of mutations) {
+        if (mutation.type === 'childList' && (mutation.addedNodes?.length || mutation.removedNodes?.length)) {
+          raceScheduleDomWake();
+          return;
+        }
+      }
+    });
+    raceDomObserver.observe(raceDomRoot, {childList:true, subtree:true});
   }
 
   // ------------------ AVAILABILITY (gedeeld) ------------------
@@ -7030,15 +7076,13 @@ try {
       const plan = loadRacePlan();
       const now = Date.now();
 
-      // Een toekomstplan hoeft de centrale actielock niet vast te houden.
+      // Een toekomstplan houdt geen exclusieve actielock vast.
       if (plan && Number(plan.at) > now + 300) {
         raceReleaseAction();
         return { nextAt:Number(plan.at), status:plan.type === 'start' ? 'racestart gepland' : 'race-timer gepland' };
       }
 
-      // Root-fix: een vervallen plan moet worden UITGEVOERD. In de oude code
-      // werd het plan gewist en bootstrapRaceIdle() aangeroepen, waardoor Race
-      // telkens opnieuw plande maar nooit leader_startRace/slave_startRace bereikte.
+      // Voer een verlopen racestart daadwerkelijk uit.
       if (plan && plan.type === 'start') {
         clearRacePlan();
         raceRegistryState('START_DUE', raceRole === 'leader' ? 'Leider-flow starten' : 'Driver-flow starten');
@@ -7047,6 +7091,7 @@ try {
         return { delayMs:5000, status:'racestart uitgevoerd' };
       }
 
+      // Voer een verlopen timercontrole daadwerkelijk uit.
       if (plan && plan.type === 'info') {
         clearRacePlan();
         raceRegistryState('INFO_DUE', 'Race-timer opnieuw controleren');
@@ -7059,7 +7104,7 @@ try {
         return { delayMs:5000, status:'race-timer controleren' };
       }
 
-      // Zonder plan eerst de normale info-sync uitvoeren.
+      // Zonder opgeslagen plan de normale informatie-sync starten.
       raceReleaseAction();
       bootstrapRaceIdle();
       const nextPlan = loadRacePlan();
