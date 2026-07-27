@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mrb script NL - MRB Gold Edition
 // @namespace    https://barafranca.nl
-// @version      11.11.47
+// @version      11.11.48
 // @description  MRB Gold Edition Captcha Badge Status Fix
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -20,6 +20,7 @@
 // @run-at       document-end
 // ==/UserScript==
 
+// v11.11.48: Race due-planfix — een verlopen startplan voert nu daadwerkelijk de Race-flow uit in plaats van opnieuw een startplan te maken.
 // v11.11.47: Race Core uit v11.2.0 hersteld; volledige Race-cyclus onder één centrale actielock en lokale watcher uit bij plannerbeheer.
 // v11.11.38: Race due-planfix — verlopen start- en info-plannen worden daadwerkelijk uitgevoerd in plaats van opnieuw ingepland.
 // v11.11.32: Harde TDZ-fix — de interne menuhelper heet nergens meer addBlock; alle hoofdmodules gebruiken mrbCoreAddBlock en alleen de gedeelde API behoudt de propertynaam addBlock.
@@ -6996,8 +6997,28 @@ try {
       }
       const plan = loadRacePlan();
       if (plan && Number(plan.at) > Date.now()+300) {
+        raceReleaseAction();
         return { nextAt:Number(plan.at), status:plan.type === 'start' ? 'racestart gepland' : 'race-timer gepland' };
       }
+
+      // Een verlopen plan moet worden UITGEVOERD. De vorige versie verwijderde
+      // het plan en las daarna opnieuw de info-timer. Bij status 'Nu' ontstond
+      // daardoor steeds een nieuw startplan, zodat /races.php nooit werd geopend.
+      if (plan && plan.type === 'start') {
+        clearRacePlan();
+        if (raceRole === 'leader') leader_startRace();
+        else slave_startRace();
+        return { nextAt:Date.now()+5000, status:'Race-flow gestart' };
+      }
+
+      if (plan && plan.type === 'info') {
+        clearRacePlan();
+        raceReleaseAction();
+        guiLoad('/information.php');
+        next(()=>checkAvailability(true), randomDelay(3000,6000));
+        return { nextAt:Date.now()+5000, status:'Race-timer controleren' };
+      }
+
       clearRacePlan();
       bootstrapRaceIdle();
       const nextPlan = loadRacePlan();
