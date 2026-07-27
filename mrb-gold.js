@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mrb script NL - MRB Gold Edition
 // @namespace    https://barafranca.nl
-// @version      11.11.45
+// @version      11.11.46
 // @description  MRB Gold Edition Captcha Badge Status Fix
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -28,6 +28,7 @@
 // v11.11.26: Captcha-badgefix — UIT/Start krijgt altijd voorrang; het woord captcha alleen maakt een module niet meer actief.
 // v11.11.27: Module-uitfix — Captcha Alert stopt ook de achtergrondscan volledig; Test geluid wijzigt de aan/uit-status niet.
 // v11.11.45: Heist-flow gecontroleerd tegen v11.11.24; winstoverdracht gebruikt directe paginafunctie, paginacontext-injectie en native klikfallback.
+// v11.11.46: Crimes/Cars planner respecteert de echte module-timers; alleen een actieve interne flow krijgt een snelle vervolgcontrole.
 // v11.11.24: Heist-winstfix — voert de JavaScript-link MakeTransfer(token) rechtstreeks in de paginacontext uit en controleert alleen de positieve Driver-uitbetaling.
 // v11.11.21: CPU-hotfix - adaptieve rustige puls, zware globale DOM-observers begrensd en slapende modules veroorzaken geen permanente scans.
 // v11.8.0: Heist 2.0 — één plannerautoriteit, dubbele lokale navigatielussen uitgeschakeld onder plannerbeheer en centrale state-registratie.
@@ -18299,9 +18300,25 @@ function mrbSharedSet(key, value){
         } else {
           context.releaseAction();
         }
+        const nowTs = Date.now();
+        const dueAt = Number(nextAt || cc.nextAt?.() || (nowTs + 15_000));
+        const activeFlow = !!(
+          state.busy ||
+          state.current ||
+          state.confirmPendingKind ||
+          state.forcedRetryKind
+        );
+
         return {
-          nextAt: Math.min(Number(nextAt || Date.now()+5000), Date.now()+1000),
-          status: state.busy ? `exclusief bezig: ${state.current || 'actie'}` : 'timers bewaakt'
+          // Alleen tijdens een lopende Crimes/Cars-actie snel opnieuw controleren.
+          // In rust wordt de echte interne timer gevolgd, zodat de module niet
+          // voortijdig naar Crimes of Cars blijft navigeren.
+          nextAt: activeFlow
+            ? nowTs + 1000
+            : Math.max(nowTs + 1000, Number.isFinite(dueAt) ? dueAt : nowTs + 15_000),
+          status: activeFlow
+            ? `exclusief bezig: ${state.current || state.confirmPendingKind || state.forcedRetryKind || 'actie'}`
+            : 'wacht op echte Crimes/Cars-timer'
         };
       }
     });
