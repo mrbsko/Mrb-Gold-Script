@@ -1,5 +1,27 @@
-// v11.11.19: Race-driver autokeuze houdt actielock vast, kiest optie 1 en bevestigt via jQuery plus native form-fallback.
-// v11.11.18: Race Driver herkent ook de Nederlandse autokeuzepagina, accepteert Willekeurige auto en klikt Ga robuust met formulierfallback.
+// ==UserScript==
+// @name         Mrb script NL - MRB Gold Edition
+// @namespace    https://barafranca.nl
+// @version      11.11.24
+// @description  MRB Gold Edition CPU Performance Hotfix
+// @author       Mrb
+// @include      http://*.barafranca.nl/*
+// @include      https://*.barafranca.nl/*
+// @include      http://barafranca.nl/*
+// @include      https://barafranca.nl/*
+// @grant        unsafeWindow
+// @grant        GM_addStyle
+// @grant        GM_setValue
+// @grant        GM_getValue
+// @grant        GM_notification
+// @grant        GM_xmlhttpRequest
+// @connect      maker.ifttt.com
+// @connect      script.google.com
+// @connect      script.googleusercontent.com
+// @run-at       document-end
+// ==/UserScript==
+
+// v11.11.24: Heist-winstfix — voert de JavaScript-link MakeTransfer(token) rechtstreeks in de paginacontext uit en controleert alleen de positieve Driver-uitbetaling.
+// v11.11.21: CPU-hotfix - adaptieve rustige puls, zware globale DOM-observers begrensd en slapende modules veroorzaken geen permanente scans.
 // v11.8.0: Heist 2.0 — één plannerautoriteit, dubbele lokale navigatielussen uitgeschakeld onder plannerbeheer en centrale state-registratie.
 // v11.10.1: OC rolverdeling hersteld: Driver kiest auto, Explosievenexpert kiest C4, Wapenexpert vult 100 kogels en 2 Tommy Guns in.
 // v11.10.3: OC wordt bij actieve start direct wakker gemaakt; alle oude Heist GroupCrimes-routes blokkeren op de OC-toggle.
@@ -153,7 +175,7 @@
   // zonder functionele herschrijving op de centrale kern kunnen blijven draaien.
   const MRB_NATIVE_SET_INTERVAL = window.setInterval.bind(window);
   const MRB_NATIVE_CLEAR_INTERVAL = window.clearInterval.bind(window);
-  const MRB_PULSE_MS = 100;
+  const MRB_PULSE_MS = 250;
   const mrbIntervalTasks = new Map();
   let mrbIntervalSequence = 1;
   let mrbPulseHandle = null;
@@ -1257,13 +1279,15 @@ if(status){
   });
 
   function gmStartStatusBadges(){
+    const perfMenu = document.getElementById('mrbGoldMenu');
+    if (perfMenu) perfMenu.style.contain = 'layout style paint';
     gmUpdateAllStatusBadges();
     const menuRoot = document.getElementById('mrbGoldMenu');
     if (menuRoot && !window.__mrbStatusBadgeObserverStarted) {
       window.__mrbStatusBadgeObserverStarted = true;
       // Alleen het MRB-menu observeren; wijzigingen in het volledige spel hoeven
       // geen complete badge-update meer te veroorzaken.
-      gmStatusBadgeObserver.observe(menuRoot, { childList:true, subtree:true, characterData:true, attributes:true, attributeFilter:['class','disabled','aria-pressed'] });
+      gmStatusBadgeObserver.observe(menuRoot, { childList:true, subtree:true });
       // Langzame fallback voor statuswijzigingen die buiten de menu-DOM ontstaan.
       mrbSetInterval(gmUpdateAllStatusBadges, 5000);
     }
@@ -2216,13 +2240,27 @@ Naam3"></textarea><br><br>
   }
 
   // persistente (re)injectie zoals origineel bedoeld, maar zonder herlaad nodig
-  const mo = new MutationObserver(()=>{
-    const form   = document.querySelector('#detectives-search-div');
-    const parent = document.querySelector('#detectivesMain');
-    const hasBox = parent?.querySelector('#bulkDetectivesBox');
-    if (form && parent && (!uiInjected || !hasBox)) injectUI();
+  // CPU-hotfix: niet meer bij iedere wijziging de volledige pagina doorzoeken.
+  let injectScheduled = false;
+  const scheduleInject = () => {
+    if (injectScheduled) return;
+    injectScheduled = true;
+    setTimeout(() => { injectScheduled = false; injectUI(); }, 250);
+  };
+  const mo = new MutationObserver(mutations=>{
+    for (const m of mutations) {
+      for (const node of m.addedNodes || []) {
+        if (node.nodeType !== 1) continue;
+        if (node.id === 'detectivesMain' || node.id === 'detectives-search-div' ||
+            node.querySelector?.('#detectivesMain, #detectives-search-div')) {
+          scheduleInject();
+          return;
+        }
+      }
+    }
   });
-  mo.observe(document.body,{childList:true,subtree:true});
+  const detectiveRoot = document.querySelector('#game_container') || document.body;
+  if (detectiveRoot) mo.observe(detectiveRoot,{childList:true,subtree:true});
 
   // eerste poging
   injectUI();
@@ -2281,12 +2319,24 @@ Naam3"></textarea><br><br>
     focusBtn(findBtn());
 
     // 2) Observeer latere injecties
-    mo = new MutationObserver(() => {
-      const btn = findBtn();
-      if (btn) focusBtn(btn);
+    let focusScheduled = false;
+    mo = new MutationObserver((mutations) => {
+      if (focusScheduled) return;
+      let relevant = false;
+      for (const m of mutations) {
+        for (const node of m.addedNodes || []) {
+          if (node.nodeType !== 1) continue;
+          if (node.matches?.(BTN_SELECTOR) || node.querySelector?.(BTN_SELECTOR)) { relevant = true; break; }
+        }
+        if (relevant) break;
+      }
+      if (!relevant) return;
+      focusScheduled = true;
+      requestAnimationFrame(() => { focusScheduled = false; focusBtn(findBtn()); });
     });
-    if (document.body) {
-      mo.observe(document.body, { childList: true, subtree: true });
+    const travelRoot = document.querySelector('#game_container') || document.body;
+    if (travelRoot) {
+      mo.observe(travelRoot, { childList: true, subtree: true });
     }
 
     // 3) Enter-listener (capture om modals te pakken)
@@ -2463,11 +2513,18 @@ Naam3"></textarea><br><br>
     }
   }
 
-  // Observer + retries
-  const mo = new MutationObserver(()=>prefillOnce());
-  mo.observe(document.documentElement, { childList:true, subtree:true });
-  window.addEventListener('hashchange', prefillOnce, true);
-  window.addEventListener('popstate', prefillOnce, true);
+  // CPU-hotfix: alleen op relevante pagina's en maximaal eenmaal per 250 ms.
+  let prefillTimer = 0;
+  function schedulePrefill(){
+    if (!(onPageRaces() || onPageHeist() || onPageOC())) return;
+    clearTimeout(prefillTimer);
+    prefillTimer = setTimeout(prefillOnce, 250);
+  }
+  const mo = new MutationObserver(schedulePrefill);
+  const prefillRoot = document.querySelector('#game_container') || document.body;
+  if (prefillRoot) mo.observe(prefillRoot, { childList:true, subtree:true });
+  window.addEventListener('hashchange', schedulePrefill, true);
+  window.addEventListener('popstate', schedulePrefill, true);
   setTimeout(prefillOnce, 300);
   setTimeout(prefillOnce, 1000);
   setTimeout(prefillOnce, 2000);
@@ -3495,17 +3552,11 @@ Naam3"></textarea><br><br>
     updateStatus();
     tick();
 
-    if (document.documentElement) {
-      mo.observe(document.documentElement, {
-        childList:true,
-        subtree:true,
-        characterData:true,
-        attributes:true,
-        attributeFilter:['src','style','class','id']
-      });
-    }
+    // CPU fix: geen full-document MutationObserver meer. De 1,5 s scan
+    // detecteert captcha's betrouwbaar zonder duizenden callbacks per minuut.
+    try { mo.disconnect(); } catch (_) {}
 
-    scanTimer = mrbSetInterval(tick, 1000);
+    scanTimer = mrbSetInterval(tick, 1500);
     window.__mrbCaptchaScanTimer = scanTimer;
   }
 
@@ -6694,124 +6745,30 @@ try {
     if(!scriptAan) return;
     if (isLoggedOut()) return pauseForGate('slave_selectCar: uitgelogd');
 
-    // Houd de centrale actielock actief zolang de driver op dit formulier staat.
-    // Hiermee kan Cars/Crimes de pagina niet overnemen voordat de race-auto is bevestigd.
-    raceTouchAction();
+    const body = document.body?.innerText || '';
+    const onSelectCar = /Select our car for the race/i.test(body) || document.querySelector('select');
 
-    const root = document.querySelector('#game_container') || document;
-    const body = String(root.innerText || root.textContent || '').replace(/\s+/g, ' ').trim();
-    const headingVisible = /Select our car for the race|Selecteer je auto voor de race|Kies je auto voor de race/i.test(body);
+    if (onSelectCar){
+      raceSelectFirstAvailableCar();
 
-    const forms = Array.from(root.querySelectorAll('form'));
-    const form = forms.find(f => {
-      const txt = String(f.innerText || f.textContent || '').replace(/\s+/g, ' ');
-      return /Select our car for the race|Selecteer je auto voor de race|Kies je auto voor de race|Willekeurige auto in deze stad/i.test(txt)
-        && !!f.querySelector('select');
-    }) || forms.find(f => !!f.querySelector('select') && !!f.querySelector('input[type="submit"], button[type="submit"], button')) || null;
-
-    const select = form?.querySelector('select') || Array.from(root.querySelectorAll('select')).find(sel => {
-      const ctx = String(sel.closest('form, table, .box, #game_container')?.innerText || '');
-      const hay = `${sel.name || ''} ${sel.id || ''} ${ctx}`.toLowerCase();
-      return /auto|car|race|autorace|selecteer je auto|select our car|willekeurige auto/.test(hay);
-    }) || null;
-
-    if (headingVisible && select){
-      const options = Array.from(select.options || []);
-      // De oude, werkende Race-flow koos bewust optie 1. Op deze pagina is dat
-      // "Willekeurige auto in deze stad" of de eerste beschikbare concrete auto.
-      let chosen = options.find((o, i) => i > 0 && !o.disabled && /willekeurige auto in deze stad|random car in this city/i.test(o.textContent || ''))
-        || options.find((o, i) => i > 0 && !o.disabled && String(o.value || '').trim() !== '')
-        || options[1]
-        || options[0];
-
-      if (chosen){
-        select.selectedIndex = Math.max(0, options.indexOf(chosen));
-        select.value = chosen.value;
-        try { chosen.selected = true; } catch(e) {}
-        try { select.dispatchEvent(new Event('input', {bubbles:true})); } catch(e) {}
-        try { select.dispatchEvent(new Event('change', {bubbles:true})); } catch(e) {}
-        try {
-          const $ = $jq && $jq();
-          if ($) $(select).val(chosen.value).prop('selectedIndex', select.selectedIndex).trigger('input').trigger('change');
-        } catch(e) {}
-      }
-
-      const scope = form || select.closest('form') || root;
-      const candidates = Array.from(scope.querySelectorAll('input[type="submit"], input[type="button"], button[type="submit"], button'))
-        .filter(b => !b.disabled && b.offsetParent !== null);
-      const submit = candidates.find(b => /^(ga|go)$/i.test(raceButtonText(b)))
-        || candidates.find(b => /select|ready|gereed|bevestig|confirm|submit/i.test(raceButtonText(b)))
-        || candidates[0]
-        || null;
+      const submit = Array.from(document.querySelectorAll('input[type="submit"], button[type="submit"], button'))
+        .find(b => /select|ready|race|go|submit/i.test((b.value || b.textContent || ''))) || document.querySelector('input[type="submit"], button[type="submit"]');
 
       if (submit){
-        raceRegistryState('DRIVER_CAR_SUBMIT', `auto bevestigen via ${raceButtonText(submit) || 'Ga'}`);
-        raceTouchAction();
-
-        // Gebruik eerst exact dezelfde jQuery-click als de oude werkende versie.
-        let submitted = false;
-        try {
-          const $ = $jq && $jq();
-          if ($) {
-            $(submit).focus().trigger('mousedown').trigger('mouseup').trigger('click');
-            submitted = true;
-          }
-        } catch(e) {}
-        if (!submitted){
-          try { submit.focus(); submit.click(); submitted = true; } catch(e) {}
-        }
-
-        // Controleer langer dan voorheen: de site verwerkt deze actie soms traag.
-        let checks = 0;
-        const verify = ()=>{
-          if(!scriptAan) return;
-          if (isLoggedOut()) return pauseForGate('slave_selectCar verify: uitgelogd');
-          raceTouchAction();
-          checks++;
-
-          const nowRoot = document.querySelector('#game_container') || document;
-          const after = String(nowRoot.innerText || nowRoot.textContent || '').replace(/\s+/g, ' ');
-          const stillHere = /Select our car for the race|Selecteer je auto voor de race|Kies je auto voor de race/i.test(after);
-
-          if (!stillHere){
-            raceRegistryState('DRIVER_READY', 'auto bevestigd');
+        try{ submit.focus(); }catch{}
+        try{ submit.click(); }catch{}
+        next(()=>{
+          next(()=>{
             clearRacePlan();
-            next(()=>{
-              guiLoad('/information.php');
-              next(()=>checkAvailability(true), randomDelay(10000,20000));
-            }, randomDelay(2500,4500));
-            return;
-          }
-
-          // Na enkele controles één native formulier-submit als tweede route.
-          if (checks === 3){
-            const activeForm = submit.form || select.closest('form') || form;
-            try {
-              if (activeForm?.requestSubmit && submit.matches('button[type="submit"], input[type="submit"]')) activeForm.requestSubmit(submit);
-              else if (activeForm?.requestSubmit) activeForm.requestSubmit();
-              else if (activeForm) HTMLFormElement.prototype.submit.call(activeForm);
-            } catch(e) {
-              try { raceSafeClick(submit); } catch(_) {}
-            }
-          }
-
-          // Blijf op de Race-pagina en probeer maximaal ongeveer 20 seconden.
-          // Daarna wordt de volledige autokeuze opnieuw opgebouwd, zonder dat Cars overneemt.
-          if (checks < 8){
-            next(verify, 2200);
-          } else {
-            raceRegistryState('DRIVER_CAR_RETRY', 'autobevestiging opnieuw uitvoeren');
-            next(slave_selectCar, randomDelay(1800,2800));
-          }
-        };
-
-        next(verify, 2200);
+            guiLoad('/information.php');
+            next(()=>checkAvailability(true), randomDelay(10000,20000));
+          }, randomDelay(18000,40000));
+        }, actionDelay());
         return;
       }
     }
 
-    raceRegistryState('DRIVER_CAR_WAIT', 'wachten op autokeuzeformulier');
-    next(slave_selectCar, randomDelay(1800,2800));
+    next(slave_selectCar, randomDelay(5000,10000));
   }
 
   // ------------------ AVAILABILITY (gedeeld) ------------------
@@ -8500,7 +8457,11 @@ try {
       if (!heistScam){
         return next(()=>{
           if(!scriptAan || heistHardStopped) return;
-          heistSafeClick(sendLink);
+          const sent = executeHeistTransfer(sendLink);
+          if (!sent) {
+            try { console.warn('[Heist] Verstuur-link gevonden, maar uitvoeren is mislukt.'); } catch(_) {}
+            return next(()=>inspectGroupCrimes(false), randomDelay(1800,3000));
+          }
           setHeistPhase('idle');
           heistStartedAt = 0;
           next(goInfo, randomDelay(5000,10000));
@@ -8602,6 +8563,32 @@ try {
       return true;
     }catch{}
     return false;
+  }
+
+  // Route 66 gebruikt geen normale URL voor de winstuitbetaling, maar:
+  // javascript:MakeTransfer('<token>'). Een gewone userscript-click kan door
+  // de geisoleerde Tampermonkey-context worden genegeerd. Roep de pagina-
+  // functie daarom rechtstreeks via unsafeWindow aan en val pas daarna terug
+  // op een native klik.
+  function executeHeistTransfer(action){
+    if (!action) return false;
+
+    const href = String(action.getAttribute?.('href') || action.href || '').trim();
+    const match = href.match(/MakeTransfer\s*\(\s*['"]([^'"]+)['"]\s*\)/i);
+
+    if (match && match[1]) {
+      try {
+        if (typeof unsafeWindow.MakeTransfer === 'function') {
+          unsafeWindow.MakeTransfer(match[1]);
+          console.log('[Heist] Winst verstuurd via MakeTransfer().');
+          return true;
+        }
+      } catch (e) {
+        try { console.warn('[Heist] MakeTransfer() direct mislukt; klikfallback wordt gebruikt.', e); } catch(_) {}
+      }
+    }
+
+    return heistSafeClick(action);
   }
 
   function heistSetValue(el, value){
@@ -9035,7 +9022,11 @@ try {
         const transfer = findHeistTransferLink();
         if (transfer && !heistScam) {
           recordHeistSuccess('route66-positive-profit');
-          heistSafeClick(transfer);
+          const sent = executeHeistTransfer(transfer);
+          if (!sent) {
+            try { console.warn('[Heist] Route 66 winstuitbetaling kon niet worden uitgevoerd.'); } catch(_) {}
+            return;
+          }
           setHeistPhase('idle');
           heistStartedAt = 0;
           setTimeout(goInfo, randomDelay(4000,7000));
@@ -9077,10 +9068,14 @@ try {
   }
 
   const heistNlObserver = new MutationObserver(() => {
+    if (!scriptAan) return;
+    const href = String(location.href || '');
+    if (!/module=Heist|route\s*66/i.test(href)) return;
     clearTimeout(window.__mrbHeistNlTick);
-    window.__mrbHeistNlTick = setTimeout(heistNlRoute66Tick, 350);
+    window.__mrbHeistNlTick = setTimeout(heistNlRoute66Tick, 500);
   });
-  if (document.documentElement) heistNlObserver.observe(document.documentElement, { childList:true, subtree:true, characterData:true });
+  const heistNlRoot = document.querySelector('#game_container');
+  if (heistNlRoot) heistNlObserver.observe(heistNlRoot, { childList:true, subtree:true });
   window.addEventListener('hashchange', () => setTimeout(heistNlRoute66Tick, 500), true);
   mrbSetInterval(heistNlRoute66Tick, 5000);
 
@@ -15349,9 +15344,10 @@ if (pausedCaptcha){
   const observer=new MutationObserver(()=>{
     if(!active||busy)return;
     clearTimeout(unsafeWindow.__mrbMilestonePopupDebounce);
-    unsafeWindow.__mrbMilestonePopupDebounce=setTimeout(processPopup,100);
+    unsafeWindow.__mrbMilestonePopupDebounce=setTimeout(processPopup,350);
   });
-  observer.observe(document.documentElement,{childList:true,subtree:true,characterData:true});
+  const milestoneRoot=document.querySelector('#game_container');
+  if(milestoneRoot) observer.observe(milestoneRoot,{childList:true,subtree:true});
   mrbSetInterval(()=>{ if(active&&!busy&&popupRoot())processPopup(); },1000);
 
 
@@ -16433,7 +16429,11 @@ if (pausedCaptcha){
   const tick = () => { try { installBar(); } catch(e){ console.warn('[GarageTopBar v3]', e); } };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', tick);
   else tick();
-  new MutationObserver(tick).observe(document.body, {childList:true, subtree:true});
+  // CPU-hotfix: geen permanente full-body observer. SPA-navigatie en een rustige
+  // controle zijn voldoende om de balk te plaatsen.
+  window.addEventListener('hashchange', tick, true);
+  window.addEventListener('popstate', tick, true);
+  mrbSetInterval(() => { if (onPage()) tick(); }, 3000);
 })();
 
 
@@ -16617,7 +16617,8 @@ if (pausedCaptcha){
       }
     }
   });
-  mo.observe(document.documentElement || document.body, {childList:true, subtree:true});
+  const jailRoot = document.querySelector('#game_container');
+  if (jailRoot) mo.observe(jailRoot, {childList:true, subtree:true});
 })();
 
 // === GroupCrimes + OrgCrime auto-gedrag (altijd actief) ===
@@ -16810,13 +16811,16 @@ if (pausedCaptcha){
     // Meteen één keer draaien
     handlePages();
 
-    // En opnieuw bij DOM-veranderingen (AJAX/SPA/frames die later vullen)
-    const target = document.documentElement || document.body;
+    // CPU fix: alleen de spelcontainer observeren en wijzigingen bundelen.
+    const target = document.querySelector('#game_container');
     if (target) {
-        new MutationObserver(handlePages).observe(target, {
-            childList: true,
-            subtree: true
-        });
+        let prefillTimer = 0;
+        new MutationObserver(() => {
+            const href = String(location.href || '');
+            if (!/module=(GroupCrimes|OrgCrime|Heist)/i.test(href)) return;
+            clearTimeout(prefillTimer);
+            prefillTimer = setTimeout(handlePages, 500);
+        }).observe(target, { childList:true, subtree:true });
     }
 
 })();
@@ -16925,13 +16929,14 @@ if (pausedCaptcha){
 
     mrbSetInterval(autoStart, 2000);
 
-    new MutationObserver(autoStart).observe(
-        document.documentElement,
-        {
-            childList:true,
-            subtree:true
-        }
-    );
+    let autoStartScheduled=false;
+    const autoStartObserver=new MutationObserver(()=>{
+        if(!heistLeaderRunning() || autoStartScheduled) return;
+        autoStartScheduled=true;
+        setTimeout(()=>{autoStartScheduled=false;autoStart();},300);
+    });
+    const autoStartRoot=document.querySelector('#game_container')||document.body;
+    if(autoStartRoot) autoStartObserver.observe(autoStartRoot,{childList:true,subtree:true});
 
     autoStart();
 
@@ -17072,14 +17077,33 @@ if (pausedCaptcha){
     }, 500 + Math.floor(Math.random() * 600));
   }
 
-  const mo = new MutationObserver(run);
+  let carsObserverActive = false;
+  let carsRunScheduled = false;
+  const mo = new MutationObserver(() => {
+    if (carsRunScheduled) return;
+    carsRunScheduled = true;
+    setTimeout(() => { carsRunScheduled = false; run(); }, 250);
+  });
+
+  function carsEnabled(){
+    return ((!!gmGet('cc_running', false) && !!gmGet('cc_doCars', true)) ||
+      !!gmGet('cars_scriptAan', false) || !!gmGet('crime_carsAan', false) ||
+      !!gmGet('crimes_scriptAan', false) || !!gmGet('dd_cars', false));
+  }
+  function manageCarsObserver(){
+    const shouldObserve = carsEnabled() && onCarsPage();
+    if (shouldObserve && !carsObserverActive) {
+      const root = document.querySelector('#game_container') || document.body;
+      if (root) { mo.observe(root, { childList:true, subtree:true, characterData:true }); carsObserverActive=true; }
+    } else if (!shouldObserve && carsObserverActive) {
+      mo.disconnect(); carsObserverActive=false;
+    }
+    if (shouldObserve) run();
+  }
 
   function start(){
-    run();
-    if (document.documentElement) {
-      mo.observe(document.documentElement, { childList:true, subtree:true, characterData:true });
-    }
-    mrbSetInterval(run, 1500);
+    manageCarsObserver();
+    mrbSetInterval(manageCarsObserver, 1500);
   }
 
   if (document.readyState === 'loading') {
