@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mrb script NL - MRB Gold Edition
 // @namespace    https://barafranca.nl
-// @version      11.11.37
+// @version      11.11.32
 // @description  MRB Gold Edition Captcha Badge Status Fix
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -19,8 +19,6 @@
 // @connect      script.googleusercontent.com
 // @run-at       document-end
 // ==/UserScript==
-
-// v11.11.37: Gerichte Race-rollback — de complete Race-module is exact teruggezet naar v11.11.32; alle overige v11.11.36-modules en fixes blijven behouden.
 
 // v11.11.32: Harde TDZ-fix — de interne menuhelper heet nergens meer addBlock; alle hoofdmodules gebruiken mrbCoreAddBlock en alleen de gedeelde API behoudt de propertynaam addBlock.
 // v11.11.29: Loader-scopefix — centrale menu-, opslag- en timerhelpers worden gedeeld met alle losse modules buiten de hoofd-IIFE.
@@ -17445,9 +17443,6 @@ function mrbSharedSet(key, value){
     </details>
   `, '00-v9-diagnostics');
 
-  // Interne diagnose blijft volledig actief, maar hoort niet in het gebruikersmenu.
-  block.remove();
-
   function formatTime(ts){
     try { return new Date(ts).toLocaleTimeString('nl-NL', {hour:'2-digit', minute:'2-digit', second:'2-digit'}); }
     catch(e) { return '-'; }
@@ -18636,9 +18631,6 @@ function mrbSharedSet(key, value){
     </details>
   `, '00-v10-final-system');
 
-  // Interne systeemcontrole blijft volledig actief, maar hoort niet in het gebruikersmenu.
-  block.remove();
-
   function inspect(){
     const planner=unsafeWindow.mrbV9Planner;
     const tasks=planner?.listTasks?.() || [];
@@ -18756,9 +18748,6 @@ function mrbSharedSet(key, value){
     <div id="mrbV10RegList" style="font-size:11px;line-height:1.45;margin-top:5px;"></div>
     <div class="gm-row" style="margin-top:6px;"><button id="mrbV10RegRetry" class="gm-btn">Opnieuw koppelen</button></div>
   `,'00-v10-registration');
-
-  // Interne registratiestatus blijft volledig actief, maar hoort niet in het gebruikersmenu.
-  block.remove();
 
   function render(){
     const p=unsafeWindow.mrbV9Planner;
