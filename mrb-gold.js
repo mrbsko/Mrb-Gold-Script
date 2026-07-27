@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mrb script NL - MRB Gold Edition
 // @namespace    https://barafranca.nl
-// @version      11.11.34
+// @version      11.11.33
 // @description  MRB Gold Edition Captcha Badge Status Fix
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -17481,9 +17481,6 @@ function mrbSharedSet(key, value){
     </details>
   `, '00-v9-diagnostics');
 
-  // Interne diagnose blijft volledig actief, maar hoort niet in het gebruikersmenu.
-  block.remove();
-
   function formatTime(ts){
     try { return new Date(ts).toLocaleTimeString('nl-NL', {hour:'2-digit', minute:'2-digit', second:'2-digit'}); }
     catch(e) { return '-'; }
@@ -18672,9 +18669,6 @@ function mrbSharedSet(key, value){
     </details>
   `, '00-v10-final-system');
 
-  // Interne systeemcontrole blijft volledig actief, maar hoort niet in het gebruikersmenu.
-  block.remove();
-
   function inspect(){
     const planner=unsafeWindow.mrbV9Planner;
     const tasks=planner?.listTasks?.() || [];
@@ -18792,9 +18786,6 @@ function mrbSharedSet(key, value){
     <div id="mrbV10RegList" style="font-size:11px;line-height:1.45;margin-top:5px;"></div>
     <div class="gm-row" style="margin-top:6px;"><button id="mrbV10RegRetry" class="gm-btn">Opnieuw koppelen</button></div>
   `,'00-v10-registration');
-
-  // Interne registratiestatus blijft volledig actief, maar hoort niet in het gebruikersmenu.
-  block.remove();
 
   function render(){
     const p=unsafeWindow.mrbV9Planner;
