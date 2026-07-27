@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mrb script NL - MRB Gold Edition
 // @namespace    https://barafranca.nl
-// @version      11.11.24
-// @description  MRB Gold Edition CPU Performance Hotfix
+// @version      11.11.27
+// @description  MRB Gold Edition Captcha Badge Status Fix
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
 // @include      https://*.barafranca.nl/*
@@ -20,6 +20,8 @@
 // @run-at       document-end
 // ==/UserScript==
 
+// v11.11.26: Captcha-badgefix — UIT/Start krijgt altijd voorrang; het woord captcha alleen maakt een module niet meer actief.
+// v11.11.27: Module-uitfix — Captcha Alert stopt ook de achtergrondscan volledig; Test geluid wijzigt de aan/uit-status niet.
 // v11.11.24: Heist-winstfix — voert de JavaScript-link MakeTransfer(token) rechtstreeks in de paginacontext uit en controleert alleen de positieve Driver-uitbetaling.
 // v11.11.21: CPU-hotfix - adaptieve rustige puls, zware globale DOM-observers begrensd en slapende modules veroorzaken geen permanente scans.
 // v11.8.0: Heist 2.0 — één plannerautoriteit, dubbele lokale navigatielussen uitgeschakeld onder plannerbeheer en centrale state-registratie.
@@ -1165,22 +1167,28 @@ if(status){
       .replace(/\s+/g, ' ')
       .trim();
 
-    const btnText = Array.from(block.querySelectorAll('button'))
-      .filter(b => !b.classList.contains('gm-min') && !b.classList.contains('gm-order'))
-      .map(b => String(b.textContent || '').replace(/\s+/g, ' ').trim())
-      .join(' ');
-
+    const buttons = Array.from(block.querySelectorAll('button'))
+      .filter(b => !b.classList.contains('gm-min') && !b.classList.contains('gm-order'));
+    const buttonLabels = buttons.map(b => String(b.textContent || '').replace(/\s+/g, ' ').trim());
+    const btnText = buttonLabels.join(' ');
     const hay = (statusText + ' ' + btnText).toLowerCase();
 
-    if (/captcha|human-check|zichtbaar|🔊/.test(hay)) return { state:'captcha', label:'CAPTCHA' };
+    // Een expliciete Start-knop of UIT-status is altijd leidend. Dit voorkomt
+    // dat de tekst "Geen captcha actief" door het woord captcha als actief telt.
+    const hasStartButton = buttonLabels.some(t => /^start$/i.test(t));
+    const hasStopButton = buttonLabels.some(t => /^stop$/i.test(t));
+    const explicitlyOff = /\buit\b|gestopt|⛔|inactive|\boff\b/i.test(statusText);
+    if (hasStartButton || explicitlyOff) return { state:'inactive', label:'UIT' };
 
-    // Bij de meeste modules betekent knoptekst "Stop" dat de module actief is.
-    if (/\bstop\b/.test(hay) || /actief|✅|running|aan\b/.test(hay)) {
-      if (!/\buit\b|gestopt|⛔/.test(hay) || /\bstop\b/.test(hay)) return { state:'active', label:'ACTIEF' };
-    }
+    // CAPTCHA alleen tonen wanneer de module aan staat en de status werkelijk
+    // een zichtbare/actieve human-check meldt, niet bij "geen captcha".
+    const captchaVisible = /captcha|human-check|menselijke controle|🔊/i.test(statusText) &&
+      !/geen captcha|captcha niet|niet zichtbaar|geen human-check/i.test(statusText);
+    if (hasStopButton && captchaVisible) return { state:'captcha', label:'CAPTCHA' };
 
-    if (/\bstart\b/.test(hay) || /\buit\b|gestopt|⛔|inactive|off\b/.test(hay)) {
-      return { state:'inactive', label:'UIT' };
+    // Bij de meeste modules betekent een exacte Stop-knop dat de module actief is.
+    if (hasStopButton || /actief|✅|running|\baan\b/i.test(statusText)) {
+      return { state:'active', label:'ACTIEF' };
     }
 
     return { state:'unknown', label:'' };
@@ -3481,9 +3489,35 @@ Naam3"></textarea><br><br>
     }
   }
 
+  function stopScan(){
+    if (scanTimer) {
+      mrbClearInterval(scanTimer);
+      clearTimeout(scanTimer);
+      scanTimer = null;
+    }
+    try {
+      if (window.__mrbCaptchaScanTimer) {
+        mrbClearInterval(window.__mrbCaptchaScanTimer);
+        clearTimeout(window.__mrbCaptchaScanTimer);
+        window.__mrbCaptchaScanTimer = null;
+      }
+    } catch(e) {}
+    try {
+      clearTimeout(window.__mrbCaptchaAlertTickV829);
+      window.__mrbCaptchaAlertTickV829 = null;
+    } catch(e) {}
+  }
+
+  function startScan(){
+    if (!on || scanTimer) return;
+    scanTimer = mrbSetInterval(tick, 1500);
+    window.__mrbCaptchaScanTimer = scanTimer;
+  }
+
   function tick(){
     if (!on) {
       stopSound();
+      stopScan();
       updateStatus();
       return;
     }
@@ -3500,11 +3534,13 @@ Naam3"></textarea><br><br>
 
     if (on) {
       getAudioCtx(); // user-gesture unlock
+      startScan();
       tick();
     } else {
       stopSound();
+      stopScan();
     }
-    updateStatus(on ? 'Captcha Alert gestart.' : 'Captcha Alert gestopt.');
+    updateStatus(on ? 'Captcha Alert gestart.' : 'Captcha Alert volledig gestopt.');
   });
 
   block.querySelector('#mrbCaptchaSave')?.addEventListener('click', () => {
@@ -3513,16 +3549,19 @@ Naam3"></textarea><br><br>
   });
 
   block.querySelector('#mrbCaptchaTest')?.addEventListener('click', () => {
+    // Testen mag de module niet ongemerkt inschakelen.
+    const wasOn = on;
     saveSettings();
-    on = true;
     soundOn = true;
-    GM_Set(K_ON, true);
     GM_Set(K_SOUND, true);
     const cb = block.querySelector('#mrbCaptchaSound');
     if (cb) cb.checked = true;
 
     const ok = playBeep(true);
-    updateStatus(ok ? 'Testgeluid afgespeeld. Captcha Alert staat aan.' : 'Testgeluid kon niet starten. Controleer browser/site geluidstoestemming.');
+    on = wasOn;
+    GM_Set(K_ON, on);
+    if (!on) { stopSound(); stopScan(); }
+    updateStatus(ok ? `Testgeluid afgespeeld. Captcha Alert blijft ${on ? 'aan' : 'uit'}.` : 'Testgeluid kon niet starten. Controleer browser/site geluidstoestemming.');
   });
 
   block.querySelector('#mrbCaptchaStopSound')?.addEventListener('click', () => {
@@ -3550,14 +3589,18 @@ Naam3"></textarea><br><br>
 
   function start(){
     updateStatus();
-    tick();
 
-    // CPU fix: geen full-document MutationObserver meer. De 1,5 s scan
-    // detecteert captcha's betrouwbaar zonder duizenden callbacks per minuut.
+    // Geen full-document MutationObserver. De scan bestaat uitsluitend zolang
+    // de module aan staat; UIT betekent dus ook echt geen captcha-achtergrondscan.
     try { mo.disconnect(); } catch (_) {}
 
-    scanTimer = mrbSetInterval(tick, 1500);
-    window.__mrbCaptchaScanTimer = scanTimer;
+    if (on) {
+      startScan();
+      tick();
+    } else {
+      stopSound();
+      stopScan();
+    }
   }
 
   if (document.readyState === 'loading') {
