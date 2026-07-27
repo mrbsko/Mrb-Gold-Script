@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mrb script NL - MRB Gold Edition
 // @namespace    https://barafranca.nl
-// @version      11.11.40
+// @version      11.11.41
 // @description  MRB Gold Edition Captcha Badge Status Fix
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -9614,15 +9614,7 @@ try {
       const saved = Number(GM_Get(K_HEIST_NEXT_AVAILABLE_AT, 0)) || 0;
       const partner = getPartnerWaitRemainingMs();
       if (partner > 0) return Date.now()+partner;
-
-      // v11.11.40: respecteer altijd de opgeslagen Heist-timer.
-      // Een Driver zonder actieve uitnodiging mag niet iedere seconde wakker worden.
-      if (saved > Date.now()) return saved + 3000;
-      if (heistRole === 'slave' || heistRole === 'driver') {
-        const active = ['inviting','waiting_accept','started'].includes(heistPhase) || hasPendingLeaderHeist();
-        return Date.now() + (active ? 5000 : 60000);
-      }
-      return Date.now()+750;
+      return saved > Date.now() ? saved + 3000 : Date.now()+750;
     },
     wake:(context)=>{
       if (!scriptAan){ heistReleaseAction(); return { delayMs:15000, status:'module staat uit' }; }
@@ -9633,15 +9625,6 @@ try {
       const saved = Number(GM_Get(K_HEIST_NEXT_AVAILABLE_AT, 0)) || 0;
       const partnerWait = getPartnerWaitRemainingMs();
       const longWait = saved > Date.now() + 20_000 || partnerWait > 20_000;
-      const isDriverRole = heistRole === 'slave' || heistRole === 'driver';
-
-      // v11.11.40: een idle Driver navigeert niet meer voortdurend naar Heist.
-      // Alleen een actieve Driver-flow mag direct doorlopen; anders rustig opnieuw controleren.
-      if (isDriverRole && !activePhase && saved <= Date.now()) {
-        heistReleaseAction();
-        heistRegistryState('IDLE', 'Driver wacht op uitnodiging');
-        return { delayMs:60000, status:'Driver wacht op Heist-uitnodiging' };
-      }
 
       if (activePhase || !longWait){
         if (!heistAcquireAction(context)) {
@@ -19096,10 +19079,10 @@ function mrbSharedSet(key, value){
     if (!plannerIsQuiet() || !crimesCarsAreQuiet()) return;
 
     const role = String(heist.role?.() || 'leader').toLowerCase();
-    // v11.11.40: deze losse navigatiewatcher mag nooit een idle Driver naar
-    // Groepsmisdaden sturen. De centrale Heist-flow handelt echte uitnodigingen af.
+    // v11.11.41: alleen deze losse legacy-watcher begrenzen.
+    // Driver wordt uitsluitend door de centrale Heist-flow afgehandeld.
     if (role === 'slave' || role === 'driver') return;
-    // Leider uitsluitend wanneer de Information-timer werkelijk Nu/Now toont.
+    // Leider navigeert pas wanneer de zichtbare Information-timer werkelijk Nu/Now is.
     if (!heistAvailableNow()) return;
 
     const last = Number(mrbSharedGet(K_LAST_NAV, 0)) || 0;
