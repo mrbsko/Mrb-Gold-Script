@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mrb script NL - MRB Gold Edition
 // @namespace    https://barafranca.nl
-// @version      11.11.48
+// @version      11.11.50
 // @description  MRB Gold Edition Captcha Badge Status Fix
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -29,6 +29,7 @@
 // v11.11.29: Loader-scopefix — centrale menu-, opslag- en timerhelpers worden gedeeld met alle losse modules buiten de hoofd-IIFE.
 // v11.11.26: Captcha-badgefix — UIT/Start krijgt altijd voorrang; het woord captcha alleen maakt een module niet meer actief.
 // v11.11.27: Module-uitfix — Captcha Alert stopt ook de achtergrondscan volledig; Test geluid wijzigt de aan/uit-status niet.
+// v11.11.50: Heist planner navigeert zelfstandig zodra de opgeslagen timer verloopt; geen afhankelijkheid meer van losse navigatiewatcher.
 // v11.11.45: Heist-flow gecontroleerd tegen v11.11.24; winstoverdracht gebruikt directe paginafunctie, paginacontext-injectie en native klikfallback.
 // v11.11.46: Crimes/Cars planner respecteert de echte module-timers; alleen een actieve interne flow krijgt een snelle vervolgcontrole.
 // v11.11.24: Heist-winstfix — voert de JavaScript-link MakeTransfer(token) rechtstreeks in de paginacontext uit en controleert alleen de positieve Driver-uitbetaling.
@@ -6755,7 +6756,7 @@ try {
 
     if (handleSlaveTravelToRaceCity()) return;
 
-    if ($('#game_container:contains("Select our car for the race")').length){
+    if ($('#game_container:contains("Select our car for the race"), #game_container:contains("Selecteer je auto voor de race")').length){
       slave_selectCar();
       return;
     }
@@ -6787,13 +6788,13 @@ try {
     if (isLoggedOut()) return pauseForGate('slave_selectCar: uitgelogd');
 
     const body = document.body?.innerText || '';
-    const onSelectCar = /Select our car for the race/i.test(body) || document.querySelector('select');
+    const onSelectCar = /Select our car for the race|Selecteer je auto voor de race/i.test(body) || document.querySelector('select');
 
     if (onSelectCar){
       raceSelectFirstAvailableCar();
 
       const submit = Array.from(document.querySelectorAll('input[type="submit"], button[type="submit"], button'))
-        .find(b => /select|ready|race|go|submit/i.test((b.value || b.textContent || ''))) || document.querySelector('input[type="submit"], button[type="submit"]');
+        .find(b => /select|ready|race|go|ga|submit/i.test((b.value || b.textContent || ''))) || document.querySelector('input[type="submit"], button[type="submit"]');
 
       if (submit){
         try{ submit.focus(); }catch{}
@@ -9508,8 +9509,27 @@ try {
         heistRegistryState('COOLDOWN', partnerWait > 0 ? 'partner-cooldown' : 'Heist-timer');
       }
 
+      // v11.11.50: zodra de opgeslagen Heist-timer werkelijk verlopen is,
+      // laat de planner de eerste navigatie zelf uitvoeren. Daarmee is Heist niet
+      // meer afhankelijk van de losse FirstNavigation-watcher of een toevallige
+      // Information-page. De bestaande checkAvailability() bevestigt daarna Nu.
+      const nowTs = Date.now();
+      const onInformation = /\/information\.php/i.test(String(location.pathname || location.href || ''));
+      const savedDue = saved > 0 && saved <= nowTs;
+      const leaderDue = heistRole === 'leader' && (savedDue || !saved);
+
+      if (!activePhase && leaderDue && !onInformation) {
+        heistRegistryState('TIMER_DUE', 'Heist-timer verlopen; Information openen');
+        loadPage('/information.php');
+        heistTouchAction();
+        return {
+          nextAt: nowTs + 2500,
+          status: 'Heist-timer verlopen — Information controleren'
+        };
+      }
+
       checkAvailability();
-      const nextAt = partnerWait > 0 ? Date.now()+partnerWait : (saved > Date.now() ? saved+3000 : Date.now()+5000);
+      const nextAt = partnerWait > 0 ? Date.now()+partnerWait : (saved > Date.now() ? saved+3000 : Date.now()+2500);
       if (activePhase) {
         heistTouchAction();
         heistRegistryState(heistPhase, heistRole === 'leader' ? 'Leider-flow' : 'Driver-flow');
@@ -18149,16 +18169,17 @@ function mrbSharedSet(key, value){
 
         const nextAt = cc.wake();
         const state = cc.state();
-        if (state.busy || state.current || state.confirmPendingKind || state.forcedRetryKind) {
+        if (state.busy || state.confirmPendingKind || state.forcedRetryKind) {
           context.touchAction(45_000);
         } else {
+          // Een achtergebleven `current`-waarde mag de centrale planner niet blokkeren.
+          // Alleen een aantoonbaar actieve actie houdt de lease vast.
           context.releaseAction();
         }
         const nowTs = Date.now();
         const dueAt = Number(nextAt || cc.nextAt?.() || (nowTs + 15_000));
         const activeFlow = !!(
           state.busy ||
-          state.current ||
           state.confirmPendingKind ||
           state.forcedRetryKind
         );
@@ -18171,7 +18192,7 @@ function mrbSharedSet(key, value){
             ? nowTs + 1000
             : Math.max(nowTs + 1000, Number.isFinite(dueAt) ? dueAt : nowTs + 15_000),
           status: activeFlow
-            ? `exclusief bezig: ${state.current || state.confirmPendingKind || state.forcedRetryKind || 'actie'}`
+            ? `exclusief bezig: ${state.confirmPendingKind || state.forcedRetryKind || state.current || 'actie'}`
             : 'wacht op echte Crimes/Cars-timer'
         };
       }
