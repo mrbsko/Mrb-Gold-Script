@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mrb script NL - MRB Gold Edition
 // @namespace    https://barafranca.nl
-// @version      11.11.35
+// @version      11.11.36
 // @description  MRB Gold Edition Captcha Badge Status Fix
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -6835,21 +6835,29 @@ try {
     next(slave_selectCar, randomDelay(500,900));
   }
 
-  // v11.11.33 — directe Race-wakeup bij SPA/DOM-wijzigingen.
-  // De oude flow wachtte bij een gemiste render 5-15 seconden voordat opnieuw
-  // naar uitnodigingen of de autokeuze werd gekeken. Nu wordt alleen het
-  // spelgebied rustig geobserveerd en wordt de actieve Race-stap direct hervat.
+  // v11.11.36 — snelle Race-reacties uitsluitend op de echte Race-pagina.
+  // De observer mag vanaf Mijn account of andere spelpagina's nooit zelf een
+  // Race-stap starten. De Core Planner blijft exclusief verantwoordelijk voor
+  // de eerste navigatie naar /races.php. Op de Race-pagina versnelt deze laag
+  // alleen accepteren, auto kiezen, uitnodigen en starten.
   let raceDomWakeTimer = 0;
+  function raceIsActualRacePage(){
+    return /(?:^|\/)races\.php(?:$|[?#])/i.test(String(location.pathname || '') + String(location.search || '') + String(location.hash || ''))
+      || /\/races\.php(?:[?#]|$)/i.test(String(location.href || ''));
+  }
+
   function raceScheduleDomWake(){
-    if (!scriptAan || isLoggedOut()) return;
+    if (!scriptAan || isLoggedOut() || !raceIsActualRacePage()) return;
     clearTimeout(raceDomWakeTimer);
     raceDomWakeTimer = setTimeout(()=>{
-      if (!scriptAan || isLoggedOut()) return;
-      const body = String(document.querySelector('#game_container')?.innerText || document.body?.innerText || '');
+      if (!scriptAan || isLoggedOut() || !raceIsActualRacePage()) return;
+      const root = document.querySelector('#game_container') || document.body;
+      const body = String(root?.innerText || '');
+
       if (raceRole === 'slave') {
-        const hasAccept = Array.from(document.querySelectorAll('#game_container a, #game_container button, #game_container input[type="submit"]'))
+        const hasAccept = Array.from(root?.querySelectorAll?.('a, button, input[type="submit"]') || [])
           .some(el => /(Accepteer|Accept)/i.test(String(el.textContent || el.value || '')));
-        const hasCar = /Select our car for the race/i.test(body) || !!document.querySelector('#game_container select');
+        const hasCar = /Select our car for the race/i.test(body) || !!root?.querySelector?.('select');
         if (hasCar) { next(slave_selectCar, 100); return; }
         if (hasAccept) { next(slave_acceptLoop, 100); return; }
       } else {
@@ -6862,6 +6870,7 @@ try {
   const raceDomRoot = document.querySelector('#game_container') || document.body;
   if (raceDomRoot) {
     const raceDomObserver = new MutationObserver(mutations=>{
+      if (!raceIsActualRacePage()) return;
       for (const mutation of mutations) {
         if (mutation.type === 'childList' && (mutation.addedNodes?.length || mutation.removedNodes?.length)) {
           raceScheduleDomWake();
