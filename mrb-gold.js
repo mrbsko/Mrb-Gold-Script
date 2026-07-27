@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mrb script NL - MRB Gold Edition
 // @namespace    https://barafranca.nl
-// @version      11.11.53
+// @version      11.11.54
 // @description  MRB Gold Edition Captcha Badge Status Fix
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -21,6 +21,7 @@
 // ==/UserScript==
 
 // v11.11.53: Centrale navigatiebeveiliging — blokkeert navigatiestormen, dubbele doelen en alle automatische navigatie tijdens Cloudflare.
+// v11.11.54: Session Manager gekoppeld aan de centrale Navigation Guard; sessie/timersync wacht op navigatierust en start nooit tijdens Cloudflare of een recente paginawissel.
 // v11.11.48: Race due-planfix — een verlopen startplan voert nu daadwerkelijk de Race-flow uit in plaats van opnieuw een startplan te maken.
 // v11.11.47: Race Core uit v11.2.0 hersteld; volledige Race-cyclus onder één centrale actielock en lokale watcher uit bij plannerbeheer.
 // v11.11.38: Race due-planfix — verlopen start- en info-plannen worden daadwerkelijk uitgevoerd in plaats van opnieuw ingepland.
@@ -13576,6 +13577,7 @@ if (pausedCaptcha){
   let active=GM_Get(K_ACTIVE,true)!==false;
   let nextTs=Number(GM_Get(K_NEXTTS,0))||0;
   let plannerManaged=false;
+  let navigationGuardManaged=false;
   let legacyTimer=null;
 
   const block = mrbCoreAddBlock(`
@@ -13604,7 +13606,7 @@ if (pausedCaptcha){
     block.querySelector('#rfToggle').textContent=active?'Stop':'Start';
     const gated=gateVisible();
     block.querySelector('#rfStatus').innerHTML=active
-      ? (gated ? '<span class="bad">⏸ Sessie/gate</span>' : `<span class="ok">✅ Actief${plannerManaged?' — 🧭 Core':''}</span>`)
+      ? (gated ? '<span class="bad">⏸ Sessie/gate</span>' : `<span class="ok">✅ Actief${plannerManaged?' — 🧭 Core':''}${navigationGuardManaged?' — 🛡 Guard':''}</span>`)
       : '<span class="bad">⛔</span>';
     const info=block.querySelector('#rfInfo');
     if(info) info.textContent=message || (active&&nextTs?`Sessiekontrole over ${fmt(nextTs-Date.now())}`:'-');
@@ -13648,6 +13650,20 @@ if (pausedCaptcha){
       return {nextAt:nextTs,status:'sessie/gate zichtbaar'};
     }
 
+    // De Session Manager veroorzaakt zelf geen zichtbare navigatie of reload.
+    // Wacht bovendien tot de centrale Navigation Guard minimaal vijf seconden
+    // navigatierust meldt. Zo valt timersync nooit samen met Race/Heist/D&D/Cars.
+    try{
+      const guard=unsafeWindow.mrbNavigationGuard;
+      if(guard && !guard.isQuiet(5000)){
+        const wait=Math.max(1000,Number(guard.msUntilQuiet(5000))||5000);
+        nextTs=Date.now()+wait;
+        GM_Set(K_NEXTTS,nextTs);
+        ui(`Wacht op navigatierust (${fmt(wait)})`);
+        return {nextAt:nextTs,status:'wacht op Navigation Guard'};
+      }
+    }catch(e){}
+
     // Gebruik de reeds aanwezige achtergrond-timersync indien beschikbaar.
     // Geen zichtbare navigatie en geen volledige page reload.
     try { unsafeWindow.mrbBackgroundTimerSync?.request?.('session-manager'); } catch(e){}
@@ -13662,6 +13678,7 @@ if (pausedCaptcha){
 
   unsafeWindow.mrbV11Refresh={
     setPlannerManaged(v){ plannerManaged=!!v; if(plannerManaged)clearLegacy(); else armLegacy(); ui(); },
+    setNavigationGuardManaged(v){ navigationGuardManaged=!!v; ui(); },
     isRunning(){ return !!active; },
     nextAt(){ normalizeNext(); return active?nextTs:Date.now()+PERIOD_MS; },
     wake
@@ -18224,6 +18241,30 @@ function mrbSharedSet(key, value){
   // website-loader niet; modules roepen hem alleen bewust aan.
   unsafeWindow.mrbNavigate = (target, options={}) => navigate(target, options);
 
+  // Gedeelde status/API voor niet-navigerende onderhoudstaken zoals de
+  // Session Manager. Die kunnen hiermee wachten tot de navigatielaag rustig is
+  // zonder zelf een tweede planner, reload of directe loadPage te starten.
+  unsafeWindow.mrbNavigationGuard = Object.freeze({
+    version:'11.11.54',
+    isCloudflareActive:()=>navigationGuardCloudflareActive(),
+    isQuiet(minQuietMs=5000){
+      const quiet=Math.max(0,Number(minQuietMs)||0);
+      releaseExpiredNavigationLock();
+      if(navigationGuardCloudflareActive()) return false;
+      if(navigationLock) return false;
+      return !lastGuardedNavigationAt || now()-lastGuardedNavigationAt>=quiet;
+    },
+    msUntilQuiet(minQuietMs=5000){
+      const quiet=Math.max(0,Number(minQuietMs)||0);
+      releaseExpiredNavigationLock();
+      if(navigationGuardCloudflareActive()) return 15000;
+      const byTime=lastGuardedNavigationAt?Math.max(0,quiet-(now()-lastGuardedNavigationAt)):0;
+      const byLock=navigationLock?Math.max(0,navigationLock.until-now()):0;
+      return Math.max(byTime,byLock);
+    },
+    snapshot:()=>plannerApi.navigationGuard()
+  });
+
   // Zelfherstel na handmatige clicks/hash-navigatie. Dit hergebruikt exact dezelfde
   // plannerinstantie en behoudt dus alle geregistreerde taken en interne planning.
   const plannerPublishTimer = mrbSetInterval(() => {
@@ -18523,6 +18564,7 @@ function mrbSharedSet(key, value){
     const refresh=unsafeWindow.mrbV11Refresh;
     if(!planner||!refresh){ if(++attempts<240)setTimeout(connect,250); return; }
     refresh.setPlannerManaged(true);
+    refresh.setNavigationGuardManaged?.(true);
     planner.registerTask({
       id:'v11-refresh',
       title:'Session Manager',
