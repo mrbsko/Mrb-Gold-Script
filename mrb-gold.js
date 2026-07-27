@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mrb script NL - MRB Gold Edition
 // @namespace    https://barafranca.nl
-// @version      11.11.32
+// @version      11.11.38
 // @description  MRB Gold Edition Captcha Badge Status Fix
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -20,6 +20,9 @@
 // @run-at       document-end
 // ==/UserScript==
 
+// v11.11.37: Gerichte Race-rollback — de complete Race-module is exact teruggezet naar v11.11.32; alle overige v11.11.36-modules en fixes blijven behouden.
+
+// v11.11.38: Race root-fix — de planner voert een vervallen start/info-plan daadwerkelijk uit in plaats van het plan te wissen en opnieuw te plannen.
 // v11.11.32: Harde TDZ-fix — de interne menuhelper heet nergens meer addBlock; alle hoofdmodules gebruiken mrbCoreAddBlock en alleen de gedeelde API behoudt de propertynaam addBlock.
 // v11.11.29: Loader-scopefix — centrale menu-, opslag- en timerhelpers worden gedeeld met alle losse modules buiten de hoofd-IIFE.
 // v11.11.26: Captcha-badgefix — UIT/Start krijgt altijd voorrang; het woord captcha alleen maakt een module niet meer actief.
@@ -7022,12 +7025,42 @@ try {
         raceRegistryState('WAIT_ACTION_LOCK', 'wacht op centrale actielock');
         return { delayMs:1000, status:'wacht op centrale actielock' };
       }
+
       raceRegistryState('PLANNER_WAKE', 'planner controleert Race');
       const plan = loadRacePlan();
-      if (plan && Number(plan.at) > Date.now()+300) {
+      const now = Date.now();
+
+      // Een toekomstplan hoeft de centrale actielock niet vast te houden.
+      if (plan && Number(plan.at) > now + 300) {
+        raceReleaseAction();
         return { nextAt:Number(plan.at), status:plan.type === 'start' ? 'racestart gepland' : 'race-timer gepland' };
       }
-      clearRacePlan();
+
+      // Root-fix: een vervallen plan moet worden UITGEVOERD. In de oude code
+      // werd het plan gewist en bootstrapRaceIdle() aangeroepen, waardoor Race
+      // telkens opnieuw plande maar nooit leader_startRace/slave_startRace bereikte.
+      if (plan && plan.type === 'start') {
+        clearRacePlan();
+        raceRegistryState('START_DUE', raceRole === 'leader' ? 'Leider-flow starten' : 'Driver-flow starten');
+        if (raceRole === 'leader') leader_startRace();
+        else slave_startRace();
+        return { delayMs:5000, status:'racestart uitgevoerd' };
+      }
+
+      if (plan && plan.type === 'info') {
+        clearRacePlan();
+        raceRegistryState('INFO_DUE', 'Race-timer opnieuw controleren');
+        if (/information\.php/i.test(location.href)) {
+          checkAvailability(true);
+        } else {
+          guiLoad('/information.php');
+          next(()=>checkAvailability(true), randomDelay(3000,6000));
+        }
+        return { delayMs:5000, status:'race-timer controleren' };
+      }
+
+      // Zonder plan eerst de normale info-sync uitvoeren.
+      raceReleaseAction();
       bootstrapRaceIdle();
       const nextPlan = loadRacePlan();
       return { nextAt:nextPlan && Number(nextPlan.at) ? Number(nextPlan.at) : Date.now()+5000, status:'race gecontroleerd' };
@@ -17443,6 +17476,9 @@ function mrbSharedSet(key, value){
     </details>
   `, '00-v9-diagnostics');
 
+  // Interne diagnose blijft volledig actief, maar hoort niet in het gebruikersmenu.
+  block.remove();
+
   function formatTime(ts){
     try { return new Date(ts).toLocaleTimeString('nl-NL', {hour:'2-digit', minute:'2-digit', second:'2-digit'}); }
     catch(e) { return '-'; }
@@ -18631,6 +18667,9 @@ function mrbSharedSet(key, value){
     </details>
   `, '00-v10-final-system');
 
+  // Interne systeemcontrole blijft volledig actief, maar hoort niet in het gebruikersmenu.
+  block.remove();
+
   function inspect(){
     const planner=unsafeWindow.mrbV9Planner;
     const tasks=planner?.listTasks?.() || [];
@@ -18748,6 +18787,9 @@ function mrbSharedSet(key, value){
     <div id="mrbV10RegList" style="font-size:11px;line-height:1.45;margin-top:5px;"></div>
     <div class="gm-row" style="margin-top:6px;"><button id="mrbV10RegRetry" class="gm-btn">Opnieuw koppelen</button></div>
   `,'00-v10-registration');
+
+  // Interne registratiestatus blijft volledig actief, maar hoort niet in het gebruikersmenu.
+  block.remove();
 
   function render(){
     const p=unsafeWindow.mrbV9Planner;
