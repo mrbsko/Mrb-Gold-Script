@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mrb script NL - MRB Gold Edition
 // @namespace    https://barafranca.nl
-// @version      11.11.29
+// @version      11.11.30
 // @description  MRB Gold Edition Captcha Badge Status Fix
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -1360,6 +1360,13 @@ if(status){
     setCollapsed(collapsed);
     return el;
   }
+
+  // v11.11.30 — Exporteer helpers direct nadat addBlock gereed is.
+  window.__MRB_GOLD_SHARED_HELPERS__ = Object.assign(
+    window.__MRB_GOLD_SHARED_HELPERS__ || {},
+    { addBlock, GM_Get, GM_Set, mrbSetInterval, mrbClearInterval, buildMenu }
+  );
+
   // =====================================================================
   // v11.11.3 — SPOT OVERVAL NIEUWE ZELFSTANDIGE CORE
   // Oude Spot Overval-code volledig vervangen. De UI en state-machine starten
@@ -16998,38 +17005,27 @@ if (pausedCaptcha){
 // =====================================================================
 // 12) BOOZEN
 
-  // Deel de centrale helpers expliciet met de losse modules die hieronder
-  // in afzonderlijke IIFE's staan. Bij uitvoering via de GitHub-loader zijn
-  // lokale functies uit deze hoofd-IIFE anders niet lexicaal bereikbaar.
-  window.__MRB_GOLD_SHARED_HELPERS__ = Object.assign(
-    window.__MRB_GOLD_SHARED_HELPERS__ || {},
-    {
-      addBlock,
-      GM_Get,
-      GM_Set,
-      mrbSetInterval,
-      mrbClearInterval,
-      buildMenu
-    }
-  );
-
 })();
 
 // Gedeelde aliases voor alle zelfstandige modules onder deze regel.
-// De fallback houdt het script fail-safe wanneer een helper ontbreekt.
-const __mrbShared = window.__MRB_GOLD_SHARED_HELPERS__ || {};
-const addBlock = (...args) => {
+// var voorkomt een temporal-dead-zone tijdens het initialiseren van de hoofd-IIFE.
+var __mrbShared = window.__MRB_GOLD_SHARED_HELPERS__ || {};
+var addBlock = function(){
   if (typeof __mrbShared.addBlock !== 'function') {
     throw new Error('MRB gedeelde helper addBlock ontbreekt');
   }
-  return __mrbShared.addBlock(...args);
+  return __mrbShared.addBlock.apply(null, arguments);
 };
-const GM_Get = (key, fallback) => typeof __mrbShared.GM_Get === 'function'
-  ? __mrbShared.GM_Get(key, fallback)
-  : GM_getValue(key, fallback);
-const GM_Set = (key, value) => typeof __mrbShared.GM_Set === 'function'
-  ? __mrbShared.GM_Set(key, value)
-  : GM_setValue(key, value);
+var GM_Get = function(key, fallback){
+  return typeof __mrbShared.GM_Get === 'function'
+    ? __mrbShared.GM_Get(key, fallback)
+    : GM_getValue(key, fallback);
+};
+var GM_Set = function(key, value){
+  return typeof __mrbShared.GM_Set === 'function'
+    ? __mrbShared.GM_Set(key, value)
+    : GM_setValue(key, value);
+};
 
 // =====================================================================
 // MRB AUTOJAT HOOGSTE PERCENTAGE PATCH
