@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mrb script NL - MRB Gold Edition
 // @namespace    https://barafranca.nl
-// @version      11.11.41
+// @version      11.11.43
 // @description  MRB Gold Edition Captcha Badge Status Fix
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -29,6 +29,7 @@
 // v11.11.27: Module-uitfix — Captcha Alert stopt ook de achtergrondscan volledig; Test geluid wijzigt de aan/uit-status niet.
 // v11.11.24: Heist-winstfix — voert de JavaScript-link MakeTransfer(token) rechtstreeks in de paginacontext uit en controleert alleen de positieve Driver-uitbetaling.
 // v11.11.21: CPU-hotfix - adaptieve rustige puls, zware globale DOM-observers begrensd en slapende modules veroorzaken geen permanente scans.
+// v11.11.43: Heist-Driver invitepoll geeft centrale actielock na korte controle vrij; planner herstelt zonder refresh.
 // v11.8.0: Heist 2.0 — één plannerautoriteit, dubbele lokale navigatielussen uitgeschakeld onder plannerbeheer en centrale state-registratie.
 // v11.10.1: OC rolverdeling hersteld: Driver kiest auto, Explosievenexpert kiest C4, Wapenexpert vult 100 kogels en 2 Tommy Guns in.
 // v11.10.3: OC wordt bij actieve start direct wakker gemaakt; alle oude Heist GroupCrimes-routes blokkeren op de OC-toggle.
@@ -9611,6 +9612,12 @@ try {
     },
     nextAt:()=>{
       if (!scriptAan) return Date.now()+15000;
+
+      // v11.11.42: de Driver heeft geen eigen Heist-cooldown nodig om een
+      // uitnodiging te mogen accepteren. Controleer daarom regelmatig op een
+      // bestaande uitnodiging, onafhankelijk van de timer van de Leider.
+      if (heistRole === 'slave') return Date.now()+20000;
+
       const saved = Number(GM_Get(K_HEIST_NEXT_AVAILABLE_AT, 0)) || 0;
       const partner = getPartnerWaitRemainingMs();
       if (partner > 0) return Date.now()+partner;
@@ -9620,6 +9627,27 @@ try {
       if (!scriptAan){ heistReleaseAction(); return { delayMs:15000, status:'module staat uit' }; }
       if (heistHardStopped){ heistReleaseAction(); return { delayMs:60000, status:'hard gestopt' }; }
       if (isLoggedOut()){ heistReleaseAction(); return { delayMs:10000, status:'pauze gate/captcha' }; }
+
+      // v11.11.42: Driver controleert rechtstreeks de GroupCrimes-pagina op
+      // een uitnodiging. Dit mag niet afhankelijk zijn van de zichtbare
+      // Heist-timer op Information.
+      if (heistRole === 'slave') {
+        if (!heistAcquireAction(context)) {
+          return { delayMs:1000, status:'Driver wacht op centrale actielock' };
+        }
+
+        // v11.11.43: een periodieke Driver-controle mag de centrale actielock
+        // niet tot de volgende controle vasthouden. In v11.11.42 werd de lock
+        // iedere 20 seconden opnieuw met 150 seconden verlengd, waardoor Crimes,
+        // Cars en andere vrije timers pas na een volledige refresh weer liepen.
+        slave_start();
+        setTimeout(() => {
+          // Geef de navigatie/uitnodigingscontrole enkele seconden om te starten,
+          // maar maak daarna altijd ruimte voor de overige planner-modules.
+          if (heistRole === 'slave' && heistPhase === 'idle') heistReleaseAction();
+        }, 8000);
+        return { nextAt:Date.now()+30000, status:'Driver controleert Heist-uitnodiging zonder blijvende actielock' };
+      }
 
       const activePhase = ['inviting','waiting_accept','started'].includes(heistPhase) || hasPendingLeaderHeist();
       const saved = Number(GM_Get(K_HEIST_NEXT_AVAILABLE_AT, 0)) || 0;
