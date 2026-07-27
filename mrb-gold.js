@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mrb script NL - MRB Gold Edition
 // @namespace    https://barafranca.nl
-// @version      11.11.30
+// @version      11.11.31
 // @description  MRB Gold Edition Captcha Badge Status Fix
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -17007,25 +17007,24 @@ if (pausedCaptcha){
 
 })();
 
-// Gedeelde aliases voor alle zelfstandige modules onder deze regel.
-// var voorkomt een temporal-dead-zone tijdens het initialiseren van de hoofd-IIFE.
+// Gedeelde helpers voor alle zelfstandige modules onder deze regel.
+// Gebruik unieke namen om iedere botsing met de centrale addBlock-functie uit te sluiten.
 var __mrbShared = window.__MRB_GOLD_SHARED_HELPERS__ || {};
-var addBlock = function(){
-  if (typeof __mrbShared.addBlock !== 'function') {
+function mrbSharedAddBlock(){
+  var fn = __mrbShared && __mrbShared.addBlock;
+  if (typeof fn !== 'function') {
     throw new Error('MRB gedeelde helper addBlock ontbreekt');
   }
-  return __mrbShared.addBlock.apply(null, arguments);
-};
-var GM_Get = function(key, fallback){
-  return typeof __mrbShared.GM_Get === 'function'
-    ? __mrbShared.GM_Get(key, fallback)
-    : GM_getValue(key, fallback);
-};
-var GM_Set = function(key, value){
-  return typeof __mrbShared.GM_Set === 'function'
-    ? __mrbShared.GM_Set(key, value)
-    : GM_setValue(key, value);
-};
+  return fn.apply(null, arguments);
+}
+function mrbSharedGet(key, fallback){
+  var fn = __mrbShared && __mrbShared.GM_Get;
+  return typeof fn === 'function' ? fn(key, fallback) : GM_getValue(key, fallback);
+}
+function mrbSharedSet(key, value){
+  var fn = __mrbShared && __mrbShared.GM_Set;
+  return typeof fn === 'function' ? fn(key, value) : GM_setValue(key, value);
+}
 
 // =====================================================================
 // MRB AUTOJAT HOOGSTE PERCENTAGE PATCH
@@ -17038,7 +17037,7 @@ var GM_Set = function(key, value){
   const CLICK_COOLDOWN_MS = 10000;
 
   function gmGet(k,d){
-    try { return GM_Get(k,d); }
+    try { return mrbSharedGet(k,d); }
     catch(e){
       try { return GM_getValue(k,d); }
       catch(e2){ return d; }
@@ -17046,7 +17045,7 @@ var GM_Set = function(key, value){
   }
 
   function gmSet(k,v){
-    try { GM_Set(k,v); }
+    try { mrbSharedSet(k,v); }
     catch(e){
       try { GM_setValue(k,v); }
       catch(e2){}
@@ -17401,14 +17400,14 @@ var GM_Set = function(key, value){
 
   function loadLog(){
     try {
-      const raw = GM_Get(K_LOG, '[]');
+      const raw = mrbSharedGet(K_LOG, '[]');
       const value = typeof raw === 'string' ? JSON.parse(raw) : raw;
       return Array.isArray(value) ? value : [];
     } catch(e) { return []; }
   }
 
   function saveLog(items){
-    try { GM_Set(K_LOG, JSON.stringify(items.slice(-MAX))); } catch(e) {}
+    try { mrbSharedSet(K_LOG, JSON.stringify(items.slice(-MAX))); } catch(e) {}
   }
 
   function add(kind, message, source=''){
@@ -17431,7 +17430,7 @@ var GM_Set = function(key, value){
     add('Promise', reason?.stack || reason?.message || String(reason || 'Onbekende Promise-fout'));
   });
 
-  const block = addBlock(`
+  const block = mrbSharedAddBlock(`
     <h4>V9 Diagnose</h4>
     <div class="gm-row" style="gap:7px;align-items:center;">
       <div id="mrbV9DiagStatus" class="gm-status" style="margin:0;"></div>
@@ -17492,7 +17491,7 @@ var GM_Set = function(key, value){
   const ACTION_TTL = 45_000;
   const CONTINUATION_TTL = 30_000;
 
-  let enabled = !!GM_Get(K_ENABLED, true);
+  let enabled = !!mrbSharedGet(K_ENABLED, true);
   let currentTask = null;
   let navigationLock = null;
   let actionLock = null;
@@ -17508,11 +17507,11 @@ var GM_Set = function(key, value){
     catch(e) { return fallback; }
   }
   function loadLog(){
-    const value = safeJson(GM_Get(K_LOG, '[]'), []);
+    const value = safeJson(mrbSharedGet(K_LOG, '[]'), []);
     return Array.isArray(value) ? value : [];
   }
   function saveLog(items){
-    try { GM_Set(K_LOG, JSON.stringify(items.slice(-MAX_LOG))); } catch(e) {}
+    try { mrbSharedSet(K_LOG, JSON.stringify(items.slice(-MAX_LOG))); } catch(e) {}
   }
   function log(type, text, taskId=''){
     const items = loadLog();
@@ -17939,7 +17938,7 @@ var GM_Set = function(key, value){
     runnerTimer = setTimeout(tick, delay);
   }
 
-  const block = addBlock(`
+  const block = mrbSharedAddBlock(`
     <h4>Core Planner</h4>
     <div class="gm-row" style="gap:7px;align-items:center;">
       <button id="mrbV9PlannerToggle" class="gm-btn">${enabled ? 'Stop' : 'Start'}</button>
@@ -17995,7 +17994,7 @@ var GM_Set = function(key, value){
 
   block.querySelector('#mrbV9PlannerToggle')?.addEventListener('click', () => {
     enabled = !enabled;
-    GM_Set(K_ENABLED, enabled);
+    mrbSharedSet(K_ENABLED, enabled);
     if (!enabled) { releaseNavigation(); releaseAction(); }
     scheduleRunner();
     render();
@@ -18595,8 +18594,8 @@ var GM_Set = function(key, value){
 
   function clean(v){ return String(v ?? '').replace(/\s+/g,' ').trim(); }
   function parseJson(raw, fallback){ try { return typeof raw === 'string' ? JSON.parse(raw) : raw; } catch(e){ return fallback; } }
-  function events(){ const v=parseJson(GM_Get(K_EVENTS,'[]'),[]); return Array.isArray(v)?v:[]; }
-  function saveEvents(list){ try { GM_Set(K_EVENTS, JSON.stringify(list.slice(-MAX_EVENTS))); } catch(e){} }
+  function events(){ const v=parseJson(mrbSharedGet(K_EVENTS,'[]'),[]); return Array.isArray(v)?v:[]; }
+  function saveEvents(list){ try { mrbSharedSet(K_EVENTS, JSON.stringify(list.slice(-MAX_EVENTS))); } catch(e){} }
   function addEvent(type, text){
     const list=events();
     list.push({ts:Date.now(),type:clean(type),text:clean(text).slice(0,320)});
@@ -18617,7 +18616,7 @@ var GM_Set = function(key, value){
     try { return typeof gm_isGateVisible === 'function' && gm_isGateVisible(); } catch(e) { return false; }
   }
 
-  const block = addBlock(`
+  const block = mrbSharedAddBlock(`
     <h4>V10 Systeem</h4>
     <div class="gm-row" style="gap:7px;align-items:center;">
       <div id="mrbV10Status" class="gm-status" style="margin:0;"></div>
@@ -18685,7 +18684,7 @@ var GM_Set = function(key, value){
     watchedTaskId=''; watchedSince=0;
 
     // Alleen na een herhaalde ernstige vastloper en nooit tijdens captcha/login.
-    const lastReload=Number(GM_Get(K_RELOAD,0))||0;
+    const lastReload=Number(mrbSharedGet(K_RELOAD,0))||0;
     if (!gateVisible() && now-lastReload>RELOAD_COOLDOWN_MS && current===lastRecoveryTask && now-lastRecoveryAt<1000){
       // Geen directe reload bij de eerste recovery; planner krijgt eerst de retry.
     }
@@ -18742,7 +18741,7 @@ var GM_Set = function(key, value){
 (function MRBV1002RegistrationStatus(){
   'use strict';
   const EXPECTED = ['v9-crimes-cars','v9-bullets','v9-heist','v9-race','v9-lackey-timer','v9-dnd','v9-boozen','v9-oc'];
-  const block = addBlock(`
+  const block = mrbSharedAddBlock(`
     <h4>V10 Registratie</h4>
     <div id="mrbV10RegSummary" class="gm-status"></div>
     <div id="mrbV10RegList" style="font-size:11px;line-height:1.45;margin-top:5px;"></div>
@@ -18938,11 +18937,11 @@ var GM_Set = function(key, value){
     // Driver controleert periodiek op een uitnodiging, ook zonder eigen timerlabel.
     if (role !== 'slave' && role !== 'driver' && !heistAvailableNow()) return;
 
-    const last = Number(GM_Get(K_LAST_NAV, 0)) || 0;
+    const last = Number(mrbSharedGet(K_LAST_NAV, 0)) || 0;
     if (Date.now() - last < NAV_COOLDOWN_MS) return;
 
     localBusy = true;
-    GM_Set(K_LAST_NAV, Date.now());
+    mrbSharedSet(K_LAST_NAV, Date.now());
     try { unsafeWindow.mrbV9Planner?.log?.('wake', `Heist eerste navigatie (${role})`, 'v9-heist'); } catch(e) {}
     loadGroupCrimes();
     setTimeout(() => { localBusy = false; }, 12_000);
