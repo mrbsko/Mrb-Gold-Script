@@ -20,11 +20,9 @@
 // @run-at       document-end
 // ==/UserScript==
 
-// v11.11.37: Race volledig teruggezet naar de laatst werkende implementatie uit v11.11.32; alle Race-wijzigingen uit .33-.36 verwijderd, overige fixes behouden.
+// v11.11.37: Gerichte Race-rollback — de complete Race-module is exact teruggezet naar v11.11.32; alle overige v11.11.36-modules en fixes blijven behouden.
 
 // v11.11.32: Harde TDZ-fix — de interne menuhelper heet nergens meer addBlock; alle hoofdmodules gebruiken mrbCoreAddBlock en alleen de gedeelde API behoudt de propertynaam addBlock.
-// v11.11.35: Race-actielockfix — Race geeft de centrale actielock altijd vrij wanneer alleen een toekomstplan wordt ingepland of een controle klaar is.
-// v11.11.33: Race-reactiefix — uitnodigen, accepteren en auto kiezen worden direct gewekt door paginawijzigingen; lange 5-15s Race-polls verkort.
 // v11.11.29: Loader-scopefix — centrale menu-, opslag- en timerhelpers worden gedeeld met alle losse modules buiten de hoofd-IIFE.
 // v11.11.26: Captcha-badgefix — UIT/Start krijgt altijd voorrang; het woord captcha alleen maakt een module niet meer actief.
 // v11.11.27: Module-uitfix — Captcha Alert stopt ook de achtergrondscan volledig; Test geluid wijzigt de aan/uit-status niet.
