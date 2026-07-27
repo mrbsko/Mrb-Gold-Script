@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mrb script NL - MRB Gold Edition
 // @namespace    https://barafranca.nl
-// @version      11.12.01
+// @version      11.12.02
 // @description  MRB Gold Edition CPU Performance Hotfix
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -20,6 +20,7 @@
 // @run-at       document-end
 // ==/UserScript==
 
+// v11.12.02: Loader-scope hersteld voor modules buiten de hoofd-IIFE; geen terugval meer door ontbrekende intervalhelpers.
 // v11.12.01: Race planner voert een verlopen racestart nu echt uit in plaats van hem opnieuw in te plannen.
 // v11.12.00: Stable Base (gebaseerd op v11.11.24) — voert de JavaScript-link MakeTransfer(token) rechtstreeks in de paginacontext uit en controleert alleen de positieve Driver-uitbetaling.
 // v11.11.21: CPU-hotfix - adaptieve rustige puls, zware globale DOM-observers begrensd en slapende modules veroorzaken geen permanente scans.
@@ -145,6 +146,15 @@
 // - Planner- en registratieself-heals minder agressief gemaakt.
 // - Menuherstel teruggebracht naar een rustige veiligheidscontrole.
 // =====================================================================
+
+// =====================================================================
+// MRB GOLD EDITION v11.12.02 - LOADER TIMER SCOPE FIX
+// Sommige geisoleerde modules staan buiten de hoofd-IIFE. De GitHub-loader
+// voert het bestand uit via new Function, waardoor zij deze globale helpers
+// nodig hebben. Binnen de hoofd-IIFE blijft de centrale pulsmanager leidend.
+// =====================================================================
+const mrbSetInterval = window.setInterval.bind(window);
+const mrbClearInterval = window.clearInterval.bind(window);
 
 // =====================================================================
 // MRB GOLD EDITION v10.1.0 - FASE 1: OPGESCHOONDE STABIELE BASIS
