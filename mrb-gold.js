@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mrb script NL - MRB Gold Edition
 // @namespace    https://barafranca.nl
-// @version      11.12.02
-// @description  MRB Gold Edition CPU Performance Hotfix
+// @version      11.12.03
+// @description  MRB Gold Edition Captcha Badge Status Fix
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
 // @include      https://*.barafranca.nl/*
@@ -20,9 +20,24 @@
 // @run-at       document-end
 // ==/UserScript==
 
-// v11.12.02: Loader-scope hersteld voor modules buiten de hoofd-IIFE; geen terugval meer door ontbrekende intervalhelpers.
-// v11.12.01: Race planner voert een verlopen racestart nu echt uit in plaats van hem opnieuw in te plannen.
-// v11.12.00: Stable Base (gebaseerd op v11.11.24) — voert de JavaScript-link MakeTransfer(token) rechtstreeks in de paginacontext uit en controleert alleen de positieve Driver-uitbetaling.
+// v11.12.03: Nieuwe stabiele basis rechtstreeks opgebouwd uit werkende v11.11.54; geen terugbouw naar v11.11.24.
+// v11.11.53: Centrale navigatiebeveiliging — blokkeert navigatiestormen, dubbele doelen en alle automatische navigatie tijdens Cloudflare.
+// v11.11.54: Session Manager gekoppeld aan de centrale Navigation Guard; sessie/timersync wacht op navigatierust en start nooit tijdens Cloudflare of een recente paginawissel.
+// v11.11.48: Race due-planfix — een verlopen startplan voert nu daadwerkelijk de Race-flow uit in plaats van opnieuw een startplan te maken.
+// v11.11.47: Race Core uit v11.2.0 hersteld; volledige Race-cyclus onder één centrale actielock en lokale watcher uit bij plannerbeheer.
+// v11.11.38: Race due-planfix — verlopen start- en info-plannen worden daadwerkelijk uitgevoerd in plaats van opnieuw ingepland.
+// v11.11.32: Harde TDZ-fix — de interne menuhelper heet nergens meer addBlock; alle hoofdmodules gebruiken mrbCoreAddBlock en alleen de gedeelde API behoudt de propertynaam addBlock.
+// v11.11.35: Race-actielockfix — Race geeft de centrale actielock altijd vrij wanneer alleen een toekomstplan wordt ingepland of een controle klaar is.
+// v11.11.33: Race-reactiefix — uitnodigen, accepteren en auto kiezen worden direct gewekt door paginawijzigingen; lange 5-15s Race-polls verkort.
+// v11.11.29: Loader-scopefix — centrale menu-, opslag- en timerhelpers worden gedeeld met alle losse modules buiten de hoofd-IIFE.
+// v11.11.26: Captcha-badgefix — UIT/Start krijgt altijd voorrang; het woord captcha alleen maakt een module niet meer actief.
+// v11.11.27: Module-uitfix — Captcha Alert stopt ook de achtergrondscan volledig; Test geluid wijzigt de aan/uit-status niet.
+// v11.11.52: Heist gebruikt nog maar een bewaakte GroupCrimes-ingang; lokale navigatiewatcher uitgeschakeld en verouderde pending-state wordt door een lopende echte timer ongeldig gemaakt.
+// v11.11.51: Heist opent Groepsmisdaden uitsluitend bij een werkelijk vrije timer of een aantoonbaar actieve Heist-flow; oude eerste-navigatie- en idle-fallbacks zijn afgeschermd.
+// v11.11.50: Heist planner navigeert zelfstandig zodra de opgeslagen timer verloopt; geen afhankelijkheid meer van losse navigatiewatcher.
+// v11.11.45: Heist-flow gecontroleerd tegen v11.11.24; winstoverdracht gebruikt directe paginafunctie, paginacontext-injectie en native klikfallback.
+// v11.11.46: Crimes/Cars planner respecteert de echte module-timers; alleen een actieve interne flow krijgt een snelle vervolgcontrole.
+// v11.11.24: Heist-winstfix — voert de JavaScript-link MakeTransfer(token) rechtstreeks in de paginacontext uit en controleert alleen de positieve Driver-uitbetaling.
 // v11.11.21: CPU-hotfix - adaptieve rustige puls, zware globale DOM-observers begrensd en slapende modules veroorzaken geen permanente scans.
 // v11.8.0: Heist 2.0 — één plannerautoriteit, dubbele lokale navigatielussen uitgeschakeld onder plannerbeheer en centrale state-registratie.
 // v11.10.1: OC rolverdeling hersteld: Driver kiest auto, Explosievenexpert kiest C4, Wapenexpert vult 100 kogels en 2 Tommy Guns in.
@@ -148,10 +163,11 @@
 // =====================================================================
 
 // =====================================================================
-// MRB GOLD EDITION v11.12.02 - LOADER TIMER SCOPE FIX
-// Sommige geisoleerde modules staan buiten de hoofd-IIFE. De GitHub-loader
-// voert het bestand uit via new Function, waardoor zij deze globale helpers
-// nodig hebben. Binnen de hoofd-IIFE blijft de centrale pulsmanager leidend.
+// MRB GOLD EDITION v11.11.28 - LOADER TIMER SCOPE FIX
+// Sommige later toegevoegde, geisoleerde modules staan buiten de hoofd-IIFE.
+// Deze gedeelde fallbacks zorgen dat mrbSetInterval/mrbClearInterval daar
+// ook bestaan wanneer het script door de GitHub-loader via new Function draait.
+// Binnen de hoofd-IIFE blijft de centrale pulsmanager deze namen lokaal overschrijven.
 // =====================================================================
 const mrbSetInterval = window.setInterval.bind(window);
 const mrbClearInterval = window.clearInterval.bind(window);
@@ -1176,22 +1192,28 @@ if(status){
       .replace(/\s+/g, ' ')
       .trim();
 
-    const btnText = Array.from(block.querySelectorAll('button'))
-      .filter(b => !b.classList.contains('gm-min') && !b.classList.contains('gm-order'))
-      .map(b => String(b.textContent || '').replace(/\s+/g, ' ').trim())
-      .join(' ');
-
+    const buttons = Array.from(block.querySelectorAll('button'))
+      .filter(b => !b.classList.contains('gm-min') && !b.classList.contains('gm-order'));
+    const buttonLabels = buttons.map(b => String(b.textContent || '').replace(/\s+/g, ' ').trim());
+    const btnText = buttonLabels.join(' ');
     const hay = (statusText + ' ' + btnText).toLowerCase();
 
-    if (/captcha|human-check|zichtbaar|🔊/.test(hay)) return { state:'captcha', label:'CAPTCHA' };
+    // Een expliciete Start-knop of UIT-status is altijd leidend. Dit voorkomt
+    // dat de tekst "Geen captcha actief" door het woord captcha als actief telt.
+    const hasStartButton = buttonLabels.some(t => /^start$/i.test(t));
+    const hasStopButton = buttonLabels.some(t => /^stop$/i.test(t));
+    const explicitlyOff = /\buit\b|gestopt|⛔|inactive|\boff\b/i.test(statusText);
+    if (hasStartButton || explicitlyOff) return { state:'inactive', label:'UIT' };
 
-    // Bij de meeste modules betekent knoptekst "Stop" dat de module actief is.
-    if (/\bstop\b/.test(hay) || /actief|✅|running|aan\b/.test(hay)) {
-      if (!/\buit\b|gestopt|⛔/.test(hay) || /\bstop\b/.test(hay)) return { state:'active', label:'ACTIEF' };
-    }
+    // CAPTCHA alleen tonen wanneer de module aan staat en de status werkelijk
+    // een zichtbare/actieve human-check meldt, niet bij "geen captcha".
+    const captchaVisible = /captcha|human-check|menselijke controle|🔊/i.test(statusText) &&
+      !/geen captcha|captcha niet|niet zichtbaar|geen human-check/i.test(statusText);
+    if (hasStopButton && captchaVisible) return { state:'captcha', label:'CAPTCHA' };
 
-    if (/\bstart\b/.test(hay) || /\buit\b|gestopt|⛔|inactive|off\b/.test(hay)) {
-      return { state:'inactive', label:'UIT' };
+    // Bij de meeste modules betekent een exacte Stop-knop dat de module actief is.
+    if (hasStopButton || /actief|✅|running|\baan\b/i.test(statusText)) {
+      return { state:'active', label:'ACTIEF' };
     }
 
     return { state:'unknown', label:'' };
@@ -1305,7 +1327,7 @@ if(status){
   }
 
   // addBlock
-  function addBlock(html, idHint=''){
+  function mrbCoreAddBlock(html, idHint=''){
     const menu = (window.__MRB_GOLD_MENU__ && window.__MRB_GOLD_MENU__.wrap) ? window.__MRB_GOLD_MENU__ : (function(){
       const w = buildMenu();
       return window.__MRB_GOLD_MENU__ || { wrap: w, blocksRoot: w.querySelector('.gm-blocks') };
@@ -1352,6 +1374,13 @@ if(status){
     setCollapsed(collapsed);
     return el;
   }
+
+  // v11.11.30 — Exporteer helpers direct nadat addBlock gereed is.
+  window.__MRB_GOLD_SHARED_HELPERS__ = Object.assign(
+    window.__MRB_GOLD_SHARED_HELPERS__ || {},
+    { addBlock: mrbCoreAddBlock, GM_Get, GM_Set, mrbSetInterval, mrbClearInterval, buildMenu }
+  );
+
   // =====================================================================
   // v11.11.3 — SPOT OVERVAL NIEUWE ZELFSTANDIGE CORE
   // Oude Spot Overval-code volledig vervangen. De UI en state-machine starten
@@ -1718,7 +1747,7 @@ if(status){
       driverDebug={invite:false,acceptClicked:false,carControl:false,carSelected:false,confirm:false,confirmClicked:false,ready:false};
     }
 
-    const block=addBlock(`
+    const block=mrbCoreAddBlock(`
       <h4>Spot Overval</h4>
       <div class="gm-row">
         <label><input type="radio" name="spotRoleV3" value="leader" ${role==='leader'?'checked':''}> Leider</label>
@@ -2383,7 +2412,7 @@ Naam3"></textarea><br><br>
   let optOutMaster = GM_Get(K_OPTOUT, false);
 
   // UI — Settings blok (Partner/OC rechtsboven grid, Save onderaan)
-  const block = addBlock(`
+  const block = mrbCoreAddBlock(`
     <h4>Settings</h4>
 
     <div class="gm-row" style="justify-content:flex-end;width:100%;">
@@ -2548,7 +2577,7 @@ Naam3"></textarea><br><br>
   const minVal = (typeof unsafeWindow.mrbDelayMinSec === 'function') ? unsafeWindow.mrbDelayMinSec() : Number(GM_Get('mrb_delay_min_sec', 2));
   const maxVal = (typeof unsafeWindow.mrbDelayMaxSec === 'function') ? unsafeWindow.mrbDelayMaxSec() : Number(GM_Get('mrb_delay_max_sec', 5));
 
-  const block = addBlock(`
+  const block = mrbCoreAddBlock(`
     <h4>Timer</h4>
     <div class="gm-row" style="align-items:center;gap:7px;">
       <label>Min</label>
@@ -2704,7 +2733,7 @@ Naam3"></textarea><br><br>
     lastDetectedRank: null
   };
 
-  const block = addBlock(`
+  const block = mrbCoreAddBlock(`
     <h4>Dashboard</h4>
     <div id="mrbV81DashRoot"></div>
   `, '00-dashboard-rank');
@@ -3250,7 +3279,7 @@ Naam3"></textarea><br><br>
   let lastPopup = 0;
   let audioUnlocked = false;
 
-  const block = addBlock(`
+  const block = mrbCoreAddBlock(`
     <h4>Captcha Alert</h4>
 
     <div class="gm-row" style="align-items:center;gap:8px;">
@@ -3492,9 +3521,35 @@ Naam3"></textarea><br><br>
     }
   }
 
+  function stopScan(){
+    if (scanTimer) {
+      mrbClearInterval(scanTimer);
+      clearTimeout(scanTimer);
+      scanTimer = null;
+    }
+    try {
+      if (window.__mrbCaptchaScanTimer) {
+        mrbClearInterval(window.__mrbCaptchaScanTimer);
+        clearTimeout(window.__mrbCaptchaScanTimer);
+        window.__mrbCaptchaScanTimer = null;
+      }
+    } catch(e) {}
+    try {
+      clearTimeout(window.__mrbCaptchaAlertTickV829);
+      window.__mrbCaptchaAlertTickV829 = null;
+    } catch(e) {}
+  }
+
+  function startScan(){
+    if (!on || scanTimer) return;
+    scanTimer = mrbSetInterval(tick, 1500);
+    window.__mrbCaptchaScanTimer = scanTimer;
+  }
+
   function tick(){
     if (!on) {
       stopSound();
+      stopScan();
       updateStatus();
       return;
     }
@@ -3511,11 +3566,13 @@ Naam3"></textarea><br><br>
 
     if (on) {
       getAudioCtx(); // user-gesture unlock
+      startScan();
       tick();
     } else {
       stopSound();
+      stopScan();
     }
-    updateStatus(on ? 'Captcha Alert gestart.' : 'Captcha Alert gestopt.');
+    updateStatus(on ? 'Captcha Alert gestart.' : 'Captcha Alert volledig gestopt.');
   });
 
   block.querySelector('#mrbCaptchaSave')?.addEventListener('click', () => {
@@ -3524,16 +3581,19 @@ Naam3"></textarea><br><br>
   });
 
   block.querySelector('#mrbCaptchaTest')?.addEventListener('click', () => {
+    // Testen mag de module niet ongemerkt inschakelen.
+    const wasOn = on;
     saveSettings();
-    on = true;
     soundOn = true;
-    GM_Set(K_ON, true);
     GM_Set(K_SOUND, true);
     const cb = block.querySelector('#mrbCaptchaSound');
     if (cb) cb.checked = true;
 
     const ok = playBeep(true);
-    updateStatus(ok ? 'Testgeluid afgespeeld. Captcha Alert staat aan.' : 'Testgeluid kon niet starten. Controleer browser/site geluidstoestemming.');
+    on = wasOn;
+    GM_Set(K_ON, on);
+    if (!on) { stopSound(); stopScan(); }
+    updateStatus(ok ? `Testgeluid afgespeeld. Captcha Alert blijft ${on ? 'aan' : 'uit'}.` : 'Testgeluid kon niet starten. Controleer browser/site geluidstoestemming.');
   });
 
   block.querySelector('#mrbCaptchaStopSound')?.addEventListener('click', () => {
@@ -3561,14 +3621,18 @@ Naam3"></textarea><br><br>
 
   function start(){
     updateStatus();
-    tick();
 
-    // CPU fix: geen full-document MutationObserver meer. De 1,5 s scan
-    // detecteert captcha's betrouwbaar zonder duizenden callbacks per minuut.
+    // Geen full-document MutationObserver. De scan bestaat uitsluitend zolang
+    // de module aan staat; UIT betekent dus ook echt geen captcha-achtergrondscan.
     try { mo.disconnect(); } catch (_) {}
 
-    scanTimer = mrbSetInterval(tick, 1500);
-    window.__mrbCaptchaScanTimer = scanTimer;
+    if (on) {
+      startScan();
+      tick();
+    } else {
+      stopSound();
+      stopScan();
+    }
   }
 
   if (document.readyState === 'loading') {
@@ -3664,7 +3728,7 @@ Naam3"></textarea><br><br>
   const clean=s=>String(s||'').replace(/\s+/g,' ').trim();
   const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 
-  const block=addBlock(`
+  const block=mrbCoreAddBlock(`
     <h4>Bodyguard Trainer</h4>
     <div class="gm-row" style="gap:8px;align-items:center;">
       <button id="mrbBgToggle" class="gm-btn">${on?'Stop':'Start'}</button>
@@ -4042,7 +4106,7 @@ Naam3"></textarea><br><br>
   const ID_TO_CITY = Object.fromEntries(Object.entries(CITY_TO_ID).map(([k,v]) => [v,k]));
   const CITY_NAMES = Object.keys(CITY_TO_ID);
 
-  const block = addBlock(`
+  const block = mrbCoreAddBlock(`
     <h4>D&D</h4>
 
     <div class="gm-row" style="align-items:center;gap:8px;">
@@ -5887,25 +5951,6 @@ try {
   GM_Set("race_role", raceRole);
   let raceAutoTravel  = GM_Get("race_autoTravel", false); // auto-travel voor driver
   let racePlannerManaged = false;
-  let raceCorePhase = 'IDLE';
-  let raceCoreDetail = 'gereed';
-  let raceCoreUpdatedAt = Date.now();
-
-  function raceRegistryState(phase, detail=''){
-    raceCorePhase = String(phase || 'IDLE');
-    raceCoreDetail = String(detail || '');
-    raceCoreUpdatedAt = Date.now();
-    try {
-      unsafeWindow.mrbModuleStateRegistry?.set?.('Race', {
-        phase: raceCorePhase,
-        detail: raceCoreDetail,
-        updatedAt: raceCoreUpdatedAt,
-        plannerManaged: !!racePlannerManaged,
-        running: !!scriptAan,
-        role: raceRole
-      });
-    } catch(e) {}
-  }
 
   // persistente idle-planning
   const K_RACE_PLAN = 'race_idlePlan_v1'; // { type:'start'|'info', at:number, createdAt:number }
@@ -5953,7 +5998,7 @@ try {
     if(failsafeTimer) clearTimeout(failsafeTimer);
   };
 
-  const block = addBlock(`
+  const block = mrbCoreAddBlock(`
     <h4>Race</h4>
     <div class="gm-row">
       <label style="display:flex;align-items:center;gap:6px;">
@@ -6245,7 +6290,6 @@ try {
   }
 
   function raceAutoTravelToCityName(cityName){
-    raceRegistryState('TRAVEL', 'naar racestad reizen');
     const code = raceCityNameToCode(cityName);
     if (!code){
       console.warn('[Race] Auto-Travel: stad niet herkend:', cityName);
@@ -6542,7 +6586,6 @@ try {
   }
 
   function leader_startRace(){
-    raceRegistryState('LEADER_OPEN', 'racepagina openen');
     if(!scriptAan) return;
     if (isLoggedOut()) return pauseForGate('leader_startRace: uitgelogd');
 
@@ -6559,7 +6602,6 @@ try {
   }
 
   function leader_raceFlow(){
-    raceRegistryState('LEADER_INVITE', 'uitnodiging voorbereiden');
     if(!scriptAan) return;
     if (isLoggedOut()) return pauseForGate('leader_raceFlow: uitgelogd');
     const body = document.body.innerText || '';
@@ -6618,7 +6660,6 @@ try {
   }
 
   function leader_checkPartner(retries){
-    raceRegistryState('WAITING_DRIVER', 'wacht op Driver');
     if(!scriptAan) return;
     if (isLoggedOut()) return pauseForGate('leader_checkPartner: uitgelogd');
     if(retries>=3){ goInfo(); return; }
@@ -6646,7 +6687,6 @@ try {
   }
 
   function leader_tryStart(){
-    raceRegistryState('STARTING', 'Race starten');
     if(!scriptAan) return;
     if (isLoggedOut()) return pauseForGate('leader_tryStart: uitgelogd');
 
@@ -6667,7 +6707,6 @@ try {
   }
 
   function leader_checkDone(){
-    raceRegistryState('RUNNING', 'wacht op race-resultaat');
     if(!scriptAan) return;
     if (isLoggedOut()) return pauseForGate('leader_checkDone: uitgelogd');
     const $ = $jq();
@@ -6686,7 +6725,6 @@ try {
 
   // ------------------ DRIVER FLOW ------------------
   function slave_startRace(){
-    raceRegistryState('DRIVER_OPEN', 'uitnodiging openen');
     if(!scriptAan) return;
     if (isLoggedOut()) return pauseForGate('slave_startRace: uitgelogd');
 
@@ -6696,7 +6734,6 @@ try {
   }
 
   function slave_acceptLoop(){
-    raceRegistryState('DRIVER_ACCEPT', 'uitnodiging accepteren');
     if(!scriptAan) return;
     if (isLoggedOut()) return pauseForGate('slave_acceptLoop: uitgelogd');
     const $ = $jq();
@@ -6724,7 +6761,7 @@ try {
 
     if (handleSlaveTravelToRaceCity()) return;
 
-    if ($('#game_container:contains("Select our car for the race")').length){
+    if ($('#game_container:contains("Select our car for the race"), #game_container:contains("Selecteer je auto voor de race")').length){
       slave_selectCar();
       return;
     }
@@ -6752,18 +6789,17 @@ try {
   }
 
   function slave_selectCar(){
-    raceRegistryState('DRIVER_CAR', 'auto selecteren');
     if(!scriptAan) return;
     if (isLoggedOut()) return pauseForGate('slave_selectCar: uitgelogd');
 
     const body = document.body?.innerText || '';
-    const onSelectCar = /Select our car for the race/i.test(body) || document.querySelector('select');
+    const onSelectCar = /Select our car for the race|Selecteer je auto voor de race/i.test(body) || document.querySelector('select');
 
     if (onSelectCar){
       raceSelectFirstAvailableCar();
 
       const submit = Array.from(document.querySelectorAll('input[type="submit"], button[type="submit"], button'))
-        .find(b => /select|ready|race|go|submit/i.test((b.value || b.textContent || ''))) || document.querySelector('input[type="submit"], button[type="submit"]');
+        .find(b => /select|ready|race|go|ga|submit/i.test((b.value || b.textContent || ''))) || document.querySelector('input[type="submit"], button[type="submit"]');
 
       if (submit){
         try{ submit.focus(); }catch{}
@@ -6784,7 +6820,6 @@ try {
 
   // ------------------ AVAILABILITY (gedeeld) ------------------
   function checkAvailability(fromInfoSync=false){
-    raceRegistryState('CHECK_TIMER', 'Race-timer controleren');
     if(!scriptAan) return;
     if (isLoggedOut()) return pauseForGate('checkAvailability: uitgelogd');
 
@@ -6912,7 +6947,6 @@ try {
     paint();
 
     if (scriptAan){
-      raceRegistryState('STARTING', 'module gestart');
       clearAll();
       clearRacePlan(); // echte nieuwe start = opnieuw 1x info-sync
 
@@ -6932,7 +6966,6 @@ try {
 
       bootstrapRaceIdle();
     } else {
-      raceRegistryState('OFF', 'module gestopt');
       clearAll();
       clearRacePlan();
       raceReleaseAction();
@@ -6955,43 +6988,41 @@ try {
     setPlannerManaged(on){
       racePlannerManaged = !!on;
       if (racePlannerManaged && loopTimer) { clearTimeout(loopTimer); loopTimer = null; }
-      raceRegistryState(racePlannerManaged ? 'PLANNER_READY' : 'LOCAL_MODE', racePlannerManaged ? 'centrale planner gekoppeld' : 'lokale fallback');
       paint();
       if (racePlannerManaged && scriptAan) bootstrapRaceIdle();
     },
     isRunning(){ return !!scriptAan; },
-    getState(){ return {phase:raceCorePhase,detail:raceCoreDetail,updatedAt:raceCoreUpdatedAt,plannerManaged:racePlannerManaged,role:raceRole,running:scriptAan}; },
     nextAt(){
       const plan = loadRacePlan();
       return plan && Number(plan.at) ? Number(plan.at) : Date.now()+1500;
     },
     wake(context){
-      if (!scriptAan) { raceReleaseAction(); raceRegistryState('OFF', 'module staat uit'); return { delayMs:15000, status:'module staat uit' }; }
+      if (!scriptAan) { raceReleaseAction(); return { delayMs:15000, status:'module staat uit' }; }
       if (!raceAcquireAction(context)) {
-        raceRegistryState('WAIT_ACTION_LOCK', 'wacht op centrale actielock');
         return { delayMs:1000, status:'wacht op centrale actielock' };
       }
-      raceRegistryState('PLANNER_WAKE', 'planner controleert Race');
       const plan = loadRacePlan();
       if (plan && Number(plan.at) > Date.now()+300) {
+        raceReleaseAction();
         return { nextAt:Number(plan.at), status:plan.type === 'start' ? 'racestart gepland' : 'race-timer gepland' };
       }
 
-      // v11.12.01: een verlopen plannerplan moet worden uitgevoerd.
-      // Voorheen werd het plan gewist en opnieuw via checkAvailability ingepland.
-      // Daardoor bleef de Leider op information.php staan en navigeerde Race nooit.
+      // Een verlopen plan moet worden UITGEVOERD. De vorige versie verwijderde
+      // het plan en las daarna opnieuw de info-timer. Bij status 'Nu' ontstond
+      // daardoor steeds een nieuw startplan, zodat /races.php nooit werd geopend.
       if (plan && plan.type === 'start') {
         clearRacePlan();
         if (raceRole === 'leader') leader_startRace();
         else slave_startRace();
-        return { nextAt:Date.now()+5000, status:'racestart uitgevoerd' };
+        return { nextAt:Date.now()+5000, status:'Race-flow gestart' };
       }
 
       if (plan && plan.type === 'info') {
         clearRacePlan();
+        raceReleaseAction();
         guiLoad('/information.php');
         next(()=>checkAvailability(true), randomDelay(3000,6000));
-        return { nextAt:Date.now()+5000, status:'race-timer opnieuw controleren' };
+        return { nextAt:Date.now()+5000, status:'Race-timer controleren' };
       }
 
       clearRacePlan();
@@ -7705,7 +7736,7 @@ try {
         next(()=>{
           if(!scriptAan || heistHardStopped) return;
           if (heistRole === 'slave'){
-            loadPage('/?module=GroupCrimes');
+            if (!heistOpenGroupCrimes('driver-na-travel')) return;
             next(slave_acceptLoop, randomDelay(1800,3200));
           } else {
             loadPage('/information.php');
@@ -7949,7 +7980,7 @@ try {
   }
 
   // ---------- UI ----------
-  const block = addBlock(`
+  const block = mrbCoreAddBlock(`
     <h4>Heist</h4>
     <div class="gm-row">
       <label style="display:flex;align-items:center;gap:6px;">
@@ -8051,6 +8082,9 @@ try {
   let heistPendingSince = Number(GM_Get(K_HEIST_PENDING_SINCE, 0)) || 0;
   let heistStartedAt = 0;
   let heistLeaderFinishLastNav = 0;
+  // Alleen een actuele lezing "Nu" op Information mag een nieuwe Heist-flow openen.
+  // Een opgeslagen 0 betekent ook "onbekend" en is dus niet voldoende.
+  let heistTimerReadyConfirmed = false;
 
   function setHeistPhase(phase, pending=false){
     heistPhase = ['idle','inviting','waiting_accept','started'].includes(phase) ? phase : 'idle';
@@ -8067,9 +8101,46 @@ try {
 
   function hasPendingLeaderHeist(){
     if (heistRole !== 'leader' || !scriptAan) return false;
+
+    // Een echte toekomstige timer heeft altijd voorrang op oude opgeslagen fasen.
+    // Hiermee kan een verouderde pendingSince/waiting_accept-status na refresh niet
+    // alsnog iedere 10-20 seconden Groepsmisdaden blijven openen.
+    const savedAt = Number(GM_Get(K_HEIST_NEXT_AVAILABLE_AT, 0)) || 0;
+    if (savedAt > Date.now() + 2000){
+      if (heistPhase !== 'idle' || heistPendingSince){
+        heistPhase = 'idle';
+        heistPendingSince = 0;
+        GM_Set(K_HEIST_PHASE, 'idle');
+        GM_Set(K_HEIST_PENDING_SINCE, 0);
+      }
+      return false;
+    }
+
     if (['waiting_accept','started'].includes(heistPhase)) return true;
     // Herstel na een volledige pagina-refresh: maximaal 45 minuten actief houden.
     return heistPendingSince > 0 && (Date.now() - heistPendingSince) < 45 * 60 * 1000;
+  }
+
+  function heistActiveFlow(){
+    return ['inviting','waiting_accept','started'].includes(heistPhase) || hasPendingLeaderHeist();
+  }
+
+  // Enige toegestane ingang naar de gedeelde pagina Groepsmisdaden.
+  // Een nieuwe flow vereist een zojuist op Information bevestigde "Nu"-timer.
+  // Een bestaande uitnodiging/startflow mag uiteraard wel worden afgerond.
+  function heistOpenGroupCrimes(reason=''){
+    if (!scriptAan || heistHardStopped || heistBlockedByOtherGroupCrime()) return false;
+    if (isLoggedOut()) return false;
+    const savedAt = Number(GM_Get(K_HEIST_NEXT_AVAILABLE_AT, 0)) || 0;
+    const active = heistActiveFlow();
+    if (!active && !heistTimerReadyConfirmed){
+      heistReleaseAction();
+      if (savedAt > Date.now()) heistPlannerSchedule(savedAt + 1500, 'wacht op echte Heist-timer');
+      heistRegistryState('COOLDOWN', `GroupCrimes geblokkeerd${reason ? `: ${reason}` : ''}`);
+      return false;
+    }
+    loadPage('/?module=GroupCrimes');
+    return true;
   }
 
   const MAX_ACCEPT_CHECKS = 30;
@@ -8364,6 +8435,7 @@ try {
       const txt = readHeistCellText();
 
       if (/^(Nu|NOW|Now)$/i.test(txt)){
+        heistTimerReadyConfirmed = true;
         GM_Set(K_HEIST_NEXT_AVAILABLE_AT, 0);
         if (heistRole === 'leader'){
           maybePrepareLeaderStart();
@@ -8380,6 +8452,7 @@ try {
         }
 
         if (wait > 0){
+          heistTimerReadyConfirmed = false;
           if (maybeDoCooldownTravel(wait)) return;
           scheduleAvailabilityRecheck(wait);
         } else {
@@ -8417,7 +8490,7 @@ try {
     next(()=>{
       if(!scriptAan || heistHardStopped) return;
       if (isLoggedOut()) return pauseForGate('Uitgelogd tijdens accept-check');
-      loadPage('/?module=GroupCrimes');
+      if (!heistOpenGroupCrimes('accept-check')) return;
       next(()=>inspectGroupCrimes(false), randomDelay(1000,2000));
     }, randomDelay(10000,15000));
   }
@@ -8428,12 +8501,24 @@ try {
     if(!scriptAan || heistHardStopped) return;
     if (isLoggedOut()) return pauseForGate('Uitgelogd bij leader_start');
 
+    // v11.11.51 harde timer-guard: een oude timeout/watcher mag nooit een
+    // nieuwe Leider-flow openen zolang de echte opgeslagen Heist-timer loopt.
+    // Alleen een reeds actieve flow mag GroupCrimes blijven bezoeken.
+    const savedAt = Number(GM_Get(K_HEIST_NEXT_AVAILABLE_AT, 0)) || 0;
+    if (heistPhase === 'idle' && !heistTimerReadyConfirmed){
+      heistReleaseAction();
+      if (savedAt > Date.now()) heistPlannerSchedule(savedAt + 1500, 'wacht op echte Heist-timer');
+      heistRegistryState('COOLDOWN', 'leider geblokkeerd: timer niet als Nu bevestigd');
+      return;
+    }
+
     ensureHeistDailyReset();
 
     setHeistPhase('inviting');
     heistCycleSuccessRecorded = false;
     resetAcceptChecks();
-    loadPage('/?module=GroupCrimes');
+    if (!heistOpenGroupCrimes('leader-start')) return;
+    heistTimerReadyConfirmed = false;
 
     if (failsafeTimer) clearTimeout(failsafeTimer);
     failsafeTimer = setTimeout(()=>{ if(scriptAan && !heistHardStopped){ goInfo(); } }, 60_000);
@@ -8555,7 +8640,7 @@ try {
       if (!elapsed || elapsed < 120000){
         return next(()=>{
           if(!scriptAan || heistHardStopped) return;
-          loadPage('/?module=GroupCrimes');
+          heistOpenGroupCrimes('actieve-flow');
           next(()=>inspectGroupCrimes(false), randomDelay(1200,2200));
         }, randomDelay(5000,8000));
       }
@@ -8573,10 +8658,19 @@ try {
     }
 
     if (failsafeTimer) clearTimeout(failsafeTimer);
+
+    // v11.11.51: zonder actieve uitnodiging/startstatus niet eindeloos op
+    // Groepsmisdaden blijven terugkomen. Eerst Information lezen en daar de
+    // echte timer opnieuw vastleggen.
+    if (heistPhase === 'idle') {
+      heistReleaseAction();
+      return next(goInfo, randomDelay(3000,6000));
+    }
+
     next(()=>{
       if(!scriptAan || heistHardStopped) return;
       if (isLoggedOut()) return pauseForGate('Uitgelogd bij fallback GroupCrimes');
-      loadPage('/?module=GroupCrimes');
+      heistOpenGroupCrimes('actieve-flow');
       next(()=>inspectGroupCrimes(false), randomDelay(1000,2000));
     }, randomDelay(15000,20000));
   }
@@ -8604,19 +8698,35 @@ try {
 
     const href = String(action.getAttribute?.('href') || action.href || '').trim();
     const match = href.match(/MakeTransfer\s*\(\s*['"]([^'"]+)['"]\s*\)/i);
+    const token = match?.[1] || '';
 
-    if (match && match[1]) {
+    // 1. Voorkeursroute: roep de echte paginafunctie rechtstreeks aan.
+    if (token) {
       try {
         if (typeof unsafeWindow.MakeTransfer === 'function') {
-          unsafeWindow.MakeTransfer(match[1]);
-          console.log('[Heist] Winst verstuurd via MakeTransfer().');
+          unsafeWindow.MakeTransfer(token);
+          console.log('[Heist] Driver-winst verstuurd via unsafeWindow.MakeTransfer().');
           return true;
         }
       } catch (e) {
-        try { console.warn('[Heist] MakeTransfer() direct mislukt; klikfallback wordt gebruikt.', e); } catch(_) {}
+        try { console.warn('[Heist] Directe MakeTransfer-aanroep mislukt.', e); } catch(_) {}
+      }
+
+      // 2. Edge/Safari/Tampermonkey-fallback: voer de aanroep expliciet in de
+      // paginacontext uit. Het token komt uitsluitend uit de bestaande href.
+      try {
+        const script = document.createElement('script');
+        script.textContent = `try { if (typeof MakeTransfer === 'function') { MakeTransfer(${JSON.stringify(token)}); } } catch (e) { console.error('[Heist] page MakeTransfer failed', e); }`;
+        (document.head || document.documentElement).appendChild(script);
+        script.remove();
+        console.log('[Heist] Driver-winst via paginacontext-injectie gestart.');
+        return true;
+      } catch (e) {
+        try { console.warn('[Heist] Paginacontext-injectie mislukt; native klikfallback.', e); } catch(_) {}
       }
     }
 
+    // 3. Laatste fallback: exact de zichtbare Verstuur-link aanklikken.
     return heistSafeClick(action);
   }
 
@@ -8866,9 +8976,21 @@ try {
   function slave_start(){
     if(!scriptAan || heistHardStopped) return;
     if (isLoggedOut()) return pauseForGate('Uitgelogd bij slave_start');
+
+    // v11.11.51: ook de Driver mag niet periodiek GroupCrimes openen terwijl
+    // zijn eigen Heist-timer nog loopt. Een actieve accept/start-flow blijft
+    // wel toegestaan.
+    const savedAt = Number(GM_Get(K_HEIST_NEXT_AVAILABLE_AT, 0)) || 0;
+    if (heistPhase === 'idle' && savedAt > Date.now() + 2000){
+      heistReleaseAction();
+      heistPlannerSchedule(savedAt + 1500, 'wacht op echte Heist-timer');
+      heistRegistryState('COOLDOWN', 'Driver geblokkeerd door Heist-timer');
+      return;
+    }
+
     ensureHeistDailyReset();
     resetSlaveChecks();
-    loadPage('/?module=GroupCrimes');
+    heistOpenGroupCrimes('actieve-flow');
     next(slave_acceptLoop, randomDelay(1500,3000));
   }
 
@@ -8916,7 +9038,7 @@ try {
       return next(()=>{
         if(!scriptAan || heistHardStopped) return;
         if (isLoggedOut()) return pauseForGate('Uitgelogd tussen driver-checks');
-        loadPage('/?module=GroupCrimes');
+        heistOpenGroupCrimes('actieve-flow');
         next(slave_acceptLoop, randomDelay(15000,30000));
       }, randomDelay(10000,20000));
     }
@@ -8926,7 +9048,7 @@ try {
     next(()=>{
       if(!scriptAan || heistHardStopped) return;
       if (isLoggedOut()) return pauseForGate('Uitgelogd tussen driver-overig');
-      loadPage('/?module=GroupCrimes');
+      heistOpenGroupCrimes('actieve-flow');
       next(slave_acceptLoop, randomDelay(15000,30000));
     }, randomDelay(10000,20000));
   }
@@ -9173,7 +9295,7 @@ try {
 
     heistLeaderFinishLastNav = now;
     try { console.log('[Heist Finish] Leider keert terug naar GroupCrimes voor Driver-ready/start'); } catch(e) {}
-    loadPage('/?module=GroupCrimes');
+    heistOpenGroupCrimes('actieve-flow');
     setTimeout(() => {
       try {
         const activeLink = findActiveLeaderHeistLink();
@@ -9410,16 +9532,13 @@ try {
     }
   }
 
-  heistLocalNavTimer = mrbSetInterval(heistLocalNavigationTick, 2500);
-  window.addEventListener('hashchange', () => setTimeout(heistLocalNavigationTick, 350), true);
-  window.addEventListener('popstate', () => setTimeout(heistLocalNavigationTick, 350), true);
-  document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) setTimeout(heistLocalNavigationTick, 350);
-  }, true);
+  // v11.11.52: geen tweede lokale navigatieautoriteit meer.
+  // De centrale planner is de enige runner die een nieuwe Heist-cyclus mag starten.
+  heistLocalNavTimer = null;
 
   // ---- V9 fase 5 planner-interface ----
   unsafeWindow.mrbV9Heist = {
-    version:'11.8.0',
+    version:'11.11.52',
     isRunning:()=>!!scriptAan,
     role:()=>heistRole,
     setPlannerManaged:(on)=>{
@@ -9467,8 +9586,27 @@ try {
         heistRegistryState('COOLDOWN', partnerWait > 0 ? 'partner-cooldown' : 'Heist-timer');
       }
 
+      // v11.11.50: zodra de opgeslagen Heist-timer werkelijk verlopen is,
+      // laat de planner de eerste navigatie zelf uitvoeren. Daarmee is Heist niet
+      // meer afhankelijk van de losse FirstNavigation-watcher of een toevallige
+      // Information-page. De bestaande checkAvailability() bevestigt daarna Nu.
+      const nowTs = Date.now();
+      const onInformation = /\/information\.php/i.test(String(location.pathname || location.href || ''));
+      const savedDue = saved > 0 && saved <= nowTs;
+      const leaderDue = heistRole === 'leader' && (savedDue || !saved);
+
+      if (!activePhase && leaderDue && !onInformation) {
+        heistRegistryState('TIMER_DUE', 'Heist-timer verlopen; Information openen');
+        loadPage('/information.php');
+        heistTouchAction();
+        return {
+          nextAt: nowTs + 2500,
+          status: 'Heist-timer verlopen — Information controleren'
+        };
+      }
+
       checkAvailability();
-      const nextAt = partnerWait > 0 ? Date.now()+partnerWait : (saved > Date.now() ? saved+3000 : Date.now()+5000);
+      const nextAt = partnerWait > 0 ? Date.now()+partnerWait : (saved > Date.now() ? saved+3000 : Date.now()+2500);
       if (activePhase) {
         heistTouchAction();
         heistRegistryState(heistPhase, heistRole === 'leader' ? 'Leider-flow' : 'Driver-flow');
@@ -9592,7 +9730,7 @@ try {
   let rumAmount = Number(GM_Get(K_RUM, 40)) || 40;
   let cocaineAmount = Number(GM_Get(K_COKE, 13)) || 13;
 
-  const block = addBlock(`
+  const block = mrbCoreAddBlock(`
     <h4>Boozen</h4>
 
     <div class="gm-row" style="align-items:center;gap:8px;">
@@ -10204,7 +10342,7 @@ try {
   function release(context){ try{context?.releaseAction?.();}catch(e){} }
   unsafeWindow.mrbOC2Control={version:'11.10.6',isEnabled:()=>enabled,isPlannerManaged:()=>plannerManaged,role:()=>role,state:()=>state};
 
-  const block=addBlock(`
+  const block=mrbCoreAddBlock(`
     <h4>OC</h4>
     <div class="gm-row">
       <label><input type="radio" name="ocRoleV117" value="leader" ${role==='leader'?'checked':''}> Leider</label>
@@ -10574,7 +10712,7 @@ try {
   let resumePhase = '';
 
   // ---- UI
-  const block = addBlock(`
+  const block = mrbCoreAddBlock(`
     <h4>Crimes</h4>
 
     <button id="ccToggle" class="gm-btn">${running ? 'Stop' : 'Start'}</button>
@@ -12021,7 +12159,7 @@ if (pausedCaptcha){
   const K_PLANNER_NEXT = 'v9_bullets_next_at';
 
   // ---------- UI ----------
-  const block = addBlock(`
+  const block = mrbCoreAddBlock(`
     <h4>Bullets</h4>
 
     <div class="gm-row" style="gap:8px; align-items:center; flex-wrap:wrap;">
@@ -13091,7 +13229,7 @@ if (pausedCaptcha){
   })();
 
   // --- UI Block ---
-  const block = addBlock(`
+  const block = mrbCoreAddBlock(`
     <h4>Travel</h4>
     <div class="gm-row" style="align-items:center;gap:8px;">
       <button id="trToggle" class="gm-btn">${on ? 'Stop' : 'Start'}</button>
@@ -13322,7 +13460,7 @@ if (pausedCaptcha){
   let on = GM_Get(K_ON, false);
   let timer = null;
 
-  const block = addBlock(`
+  const block = mrbCoreAddBlock(`
     <h4>Slots</h4>
     <div class="gm-row">
       <button id="slToggle" class="gm-btn">${on?'Stop':'Start'}</button>
@@ -13440,9 +13578,10 @@ if (pausedCaptcha){
   let active=GM_Get(K_ACTIVE,true)!==false;
   let nextTs=Number(GM_Get(K_NEXTTS,0))||0;
   let plannerManaged=false;
+  let navigationGuardManaged=false;
   let legacyTimer=null;
 
-  const block = addBlock(`
+  const block = mrbCoreAddBlock(`
     <h4>Session Manager</h4>
     <div class="gm-row">
       <button id="rfToggle" class="gm-btn">${active ? 'Stop' : 'Start'}</button>
@@ -13468,7 +13607,7 @@ if (pausedCaptcha){
     block.querySelector('#rfToggle').textContent=active?'Stop':'Start';
     const gated=gateVisible();
     block.querySelector('#rfStatus').innerHTML=active
-      ? (gated ? '<span class="bad">⏸ Sessie/gate</span>' : `<span class="ok">✅ Actief${plannerManaged?' — 🧭 Core':''}</span>`)
+      ? (gated ? '<span class="bad">⏸ Sessie/gate</span>' : `<span class="ok">✅ Actief${plannerManaged?' — 🧭 Core':''}${navigationGuardManaged?' — 🛡 Guard':''}</span>`)
       : '<span class="bad">⛔</span>';
     const info=block.querySelector('#rfInfo');
     if(info) info.textContent=message || (active&&nextTs?`Sessiekontrole over ${fmt(nextTs-Date.now())}`:'-');
@@ -13512,6 +13651,20 @@ if (pausedCaptcha){
       return {nextAt:nextTs,status:'sessie/gate zichtbaar'};
     }
 
+    // De Session Manager veroorzaakt zelf geen zichtbare navigatie of reload.
+    // Wacht bovendien tot de centrale Navigation Guard minimaal vijf seconden
+    // navigatierust meldt. Zo valt timersync nooit samen met Race/Heist/D&D/Cars.
+    try{
+      const guard=unsafeWindow.mrbNavigationGuard;
+      if(guard && !guard.isQuiet(5000)){
+        const wait=Math.max(1000,Number(guard.msUntilQuiet(5000))||5000);
+        nextTs=Date.now()+wait;
+        GM_Set(K_NEXTTS,nextTs);
+        ui(`Wacht op navigatierust (${fmt(wait)})`);
+        return {nextAt:nextTs,status:'wacht op Navigation Guard'};
+      }
+    }catch(e){}
+
     // Gebruik de reeds aanwezige achtergrond-timersync indien beschikbaar.
     // Geen zichtbare navigatie en geen volledige page reload.
     try { unsafeWindow.mrbBackgroundTimerSync?.request?.('session-manager'); } catch(e){}
@@ -13526,6 +13679,7 @@ if (pausedCaptcha){
 
   unsafeWindow.mrbV11Refresh={
     setPlannerManaged(v){ plannerManaged=!!v; if(plannerManaged)clearLegacy(); else armLegacy(); ui(); },
+    setNavigationGuardManaged(v){ navigationGuardManaged=!!v; ui(); },
     isRunning(){ return !!active; },
     nextAt(){ normalizeNext(); return active?nextTs:Date.now()+PERIOD_MS; },
     wake
@@ -13565,7 +13719,7 @@ if (pausedCaptcha){
   let busy = false;
 
   // ---- UI ----
-  const block = addBlock(`
+  const block = mrbCoreAddBlock(`
     <h4>Fill lackey</h4>
 
     <div class="gm-row" style="align-items:center;gap:8px;">
@@ -14469,7 +14623,7 @@ if (pausedCaptcha){
   let shMinutes  = String(getV(K_MINUTES, '') || ''); // ✅ SH timer value
   let bbMode     = String(getV(K_BBMODE, 'Free') || 'Free'); // '16' | 'Free'
 
-  const block = addBlock(`
+  const block = mrbCoreAddBlock(`
     <h4>Prefill</h4>
 
     <div class="gm-row" style="gap:8px;align-items:center;flex-wrap:wrap;">
@@ -14688,7 +14842,7 @@ if (pausedCaptcha){
   let lastShotTs = 0;
 
   // ---- UI ----
-  const block = addBlock(`
+  const block = mrbCoreAddBlock(`
     <h4>Sniper</h4>
     <div class="gm-row" style="gap:8px;align-items:center;">
       <button id="snToggle" class="gm-btn">${running?'Stop':'Start'}</button>
@@ -15033,7 +15187,7 @@ if (pausedCaptcha){
   }
 
   // UI block (Reset-knop verwijderd)
-  const block = addBlock(`
+  const block = mrbCoreAddBlock(`
     <h4>Enteren</h4>
     <div class="gm-row" style="gap:8px;align-items:center;">
       <button id="enToggle" class="gm-btn">${on?'Stop':'Start'}</button>
@@ -15208,7 +15362,7 @@ if (pausedCaptcha){
   let plannerRegistered=false;
   let localNextAt=Number(GM_Get('mrb_milestones_local_next_at',0))||0;
 
-  const block=addBlock(`
+  const block=mrbCoreAddBlock(`
     <h4>Milestones</h4>
     <div class="gm-row">
       <button id="mcToggle" class="gm-btn">${active?'Stop':'Start'}</button>
@@ -15440,7 +15594,7 @@ if (pausedCaptcha){
   let qtyGrenade = null; // item 5
   let qtyMolotov = null; // item 6
 
-  const block = addBlock(`
+  const block = mrbCoreAddBlock(`
     <h4>Molotov</h4>
     <div class="gm-row">
       <button id="mbToggle" class="gm-btn">${running?'Stop':'Start'}</button>
@@ -15949,7 +16103,7 @@ if (pausedCaptcha){
   let busy = false;
   let plannerManaged = false;
 
-  const block = addBlock(`
+  const block = mrbCoreAddBlock(`
     <h4>Lackey Timer</h4>
     <div class="gm-row" style="align-items:center;gap:8px;">
       <button id="ltToggle" class="gm-btn">${running ? 'Stop' : 'Start'}</button>
@@ -16975,6 +17129,24 @@ if (pausedCaptcha){
 
 })();
 
+// Gedeelde helpers voor alle zelfstandige modules onder deze regel.
+// Gebruik unieke namen om iedere botsing met de centrale addBlock-functie uit te sluiten.
+var __mrbShared = window.__MRB_GOLD_SHARED_HELPERS__ || {};
+function mrbSharedAddBlock(){
+  var fn = __mrbShared && __mrbShared.addBlock;
+  if (typeof fn !== 'function') {
+    throw new Error('MRB gedeelde helper addBlock ontbreekt');
+  }
+  return fn.apply(null, arguments);
+}
+function mrbSharedGet(key, fallback){
+  var fn = __mrbShared && __mrbShared.GM_Get;
+  return typeof fn === 'function' ? fn(key, fallback) : GM_getValue(key, fallback);
+}
+function mrbSharedSet(key, value){
+  var fn = __mrbShared && __mrbShared.GM_Set;
+  return typeof fn === 'function' ? fn(key, value) : GM_setValue(key, value);
+}
 
 // =====================================================================
 // MRB AUTOJAT HOOGSTE PERCENTAGE PATCH
@@ -16987,7 +17159,7 @@ if (pausedCaptcha){
   const CLICK_COOLDOWN_MS = 10000;
 
   function gmGet(k,d){
-    try { return GM_Get(k,d); }
+    try { return mrbSharedGet(k,d); }
     catch(e){
       try { return GM_getValue(k,d); }
       catch(e2){ return d; }
@@ -16995,7 +17167,7 @@ if (pausedCaptcha){
   }
 
   function gmSet(k,v){
-    try { GM_Set(k,v); }
+    try { mrbSharedSet(k,v); }
     catch(e){
       try { GM_setValue(k,v); }
       catch(e2){}
@@ -17350,14 +17522,14 @@ if (pausedCaptcha){
 
   function loadLog(){
     try {
-      const raw = GM_Get(K_LOG, '[]');
+      const raw = mrbSharedGet(K_LOG, '[]');
       const value = typeof raw === 'string' ? JSON.parse(raw) : raw;
       return Array.isArray(value) ? value : [];
     } catch(e) { return []; }
   }
 
   function saveLog(items){
-    try { GM_Set(K_LOG, JSON.stringify(items.slice(-MAX))); } catch(e) {}
+    try { mrbSharedSet(K_LOG, JSON.stringify(items.slice(-MAX))); } catch(e) {}
   }
 
   function add(kind, message, source=''){
@@ -17380,7 +17552,7 @@ if (pausedCaptcha){
     add('Promise', reason?.stack || reason?.message || String(reason || 'Onbekende Promise-fout'));
   });
 
-  const block = addBlock(`
+  const block = mrbSharedAddBlock(`
     <h4>V9 Diagnose</h4>
     <div class="gm-row" style="gap:7px;align-items:center;">
       <div id="mrbV9DiagStatus" class="gm-status" style="margin:0;"></div>
@@ -17391,6 +17563,9 @@ if (pausedCaptcha){
       <div id="mrbV9DiagLog" style="font-size:11px;line-height:1.4;margin-top:5px;max-height:180px;overflow:auto;"></div>
     </details>
   `, '00-v9-diagnostics');
+
+  // Interne diagnose blijft volledig actief, maar hoort niet in het gebruikersmenu.
+  block.remove();
 
   function formatTime(ts){
     try { return new Date(ts).toLocaleTimeString('nl-NL', {hour:'2-digit', minute:'2-digit', second:'2-digit'}); }
@@ -17440,14 +17615,24 @@ if (pausedCaptcha){
   const NAV_TTL = 20_000;
   const ACTION_TTL = 45_000;
   const CONTINUATION_TTL = 30_000;
+  // v11.11.53: harde centrale navigatiepoort. Alle modules die mrbNavigate
+  // gebruiken delen voortaan dezelfde minimale tussenruimte. Een geblokkeerde
+  // aanvraag telt als afgehandeld, zodat oude `mrbNavigate(...) || loadPage(...)`
+  // fallbacks de beveiliging niet alsnog kunnen omzeilen.
+  const NAV_GUARD_MIN_GAP = 3500;
+  const NAV_GUARD_SAME_TARGET_GAP = 10_000;
 
-  let enabled = !!GM_Get(K_ENABLED, true);
+  let enabled = !!mrbSharedGet(K_ENABLED, true);
   let currentTask = null;
   let navigationLock = null;
   let actionLock = null;
   let runnerTimer = null;
   let navigationContinuation = null;
   let navigationSequence = 0;
+  let lastGuardedNavigationAt = 0;
+  let lastGuardedNavigationTarget = '';
+  let lastGuardedNavigationOwner = '';
+  let navigationGuardBlocked = 0;
   const tasks = new Map();
 
   function now(){ return Date.now(); }
@@ -17457,11 +17642,11 @@ if (pausedCaptcha){
     catch(e) { return fallback; }
   }
   function loadLog(){
-    const value = safeJson(GM_Get(K_LOG, '[]'), []);
+    const value = safeJson(mrbSharedGet(K_LOG, '[]'), []);
     return Array.isArray(value) ? value : [];
   }
   function saveLog(items){
-    try { GM_Set(K_LOG, JSON.stringify(items.slice(-MAX_LOG))); } catch(e) {}
+    try { mrbSharedSet(K_LOG, JSON.stringify(items.slice(-MAX_LOG))); } catch(e) {}
   }
   function log(type, text, taskId=''){
     const items = loadLog();
@@ -17560,18 +17745,55 @@ if (pausedCaptcha){
     return value;
   }
 
+  function navigationGuardCloudflareActive(){
+    try {
+      if (unsafeWindow.__mrbCloudflareRecovery) return true;
+      if (typeof gm_isCloudflareCheck === 'function' && gm_isCloudflareCheck()) return true;
+      const body = String(document.body?.innerText || '').replace(/\s+/g, ' ');
+      return /Beveiliging wordt geverifieerd|Verifying you are human|Verify you are human|Dit kan enkele seconden duren|This may take a few seconds/i.test(body) ||
+        !!document.querySelector('form[action*="cdn-cgi"],script[src*="cdn-cgi/challenge-platform"],#challenge-running,#cf-challenge-running,iframe[src*="challenges.cloudflare.com"]');
+    } catch(e) { return false; }
+  }
+
+  function navigationGuardBlock(reason, owner, normalized){
+    navigationGuardBlocked += 1;
+    log('nav-blok', `${owner}: ${normalized} — ${reason}`, owner);
+    // BELANGRIJK: true betekent hier "centraal afgehandeld". Veel oudere
+    // modules hebben een directe GUI.loadPage-fallback achter een || staan.
+    // false zou die fallback activeren en de navigatiestorm juist voortzetten.
+    return true;
+  }
+
   function navigate(target, options={}){
     const normalized = normalizeNavigationTarget(target);
     if (!normalized) return false;
 
     const owner = clean(options.owner || options.source || currentTask?.id || 'mrb-direct');
+    const forced = options.force === true;
+    const ts = now();
+
+    if (!forced && navigationGuardCloudflareActive()) {
+      return navigationGuardBlock('Cloudflare actief; alle automatisering gepauzeerd', owner, normalized);
+    }
+
+    if (!forced && lastGuardedNavigationAt) {
+      const elapsed = ts - lastGuardedNavigationAt;
+      if (normalized === lastGuardedNavigationTarget && elapsed < NAV_GUARD_SAME_TARGET_GAP) {
+        return navigationGuardBlock(`dubbel doel binnen ${NAV_GUARD_SAME_TARGET_GAP / 1000}s`, owner, normalized);
+      }
+      if (elapsed < NAV_GUARD_MIN_GAP) {
+        return navigationGuardBlock(`centrale rustpauze nog ${Math.ceil((NAV_GUARD_MIN_GAP - elapsed) / 1000)}s`, owner, normalized);
+      }
+    }
+
     releaseExpiredNavigationLock();
     const alreadyOwned = !!navigationLock && navigationLock.owner === owner;
     if (!canNavigate(owner)) {
-      log('nav-wacht', `${owner} wacht: ${normalized}`, owner);
-      return false;
+      return navigationGuardBlock(`navigatielock van ${navigationLock?.owner || 'andere module'}`, owner, normalized);
     }
-    if (!alreadyOwned && !acquireNavigation(owner, Number(options.ttl) || NAV_TTL)) return false;
+    if (!alreadyOwned && !acquireNavigation(owner, Number(options.ttl) || NAV_TTL)) {
+      return navigationGuardBlock('navigatielock niet verkregen', owner, normalized);
+    }
 
     try {
       const gui = unsafeWindow?.omerta?.GUI?.container;
@@ -17587,6 +17809,9 @@ if (pausedCaptcha){
         location.href = normalized;
       }
       navigationSequence += 1;
+      lastGuardedNavigationAt = ts;
+      lastGuardedNavigationTarget = normalized;
+      lastGuardedNavigationOwner = owner;
       // Een planner-module die navigeert krijgt altijd zelf eerst de kans om op
       // de nieuwe pagina zijn vervolgactie uit te voeren. Dit voorkomt dat de
       // Bodyguard Trainer de zojuist geopende Crimes/Race/Heist-pagina overneemt.
@@ -17888,7 +18113,7 @@ if (pausedCaptcha){
     runnerTimer = setTimeout(tick, delay);
   }
 
-  const block = addBlock(`
+  const block = mrbSharedAddBlock(`
     <h4>Core Planner</h4>
     <div class="gm-row" style="gap:7px;align-items:center;">
       <button id="mrbV9PlannerToggle" class="gm-btn">${enabled ? 'Stop' : 'Start'}</button>
@@ -17944,7 +18169,7 @@ if (pausedCaptcha){
 
   block.querySelector('#mrbV9PlannerToggle')?.addEventListener('click', () => {
     enabled = !enabled;
-    GM_Set(K_ENABLED, enabled);
+    mrbSharedSet(K_ENABLED, enabled);
     if (!enabled) { releaseNavigation(); releaseAction(); }
     scheduleRunner();
     render();
@@ -17991,6 +18216,15 @@ if (pausedCaptcha){
     navigationOwner:() => { releaseExpiredNavigationLock(); return navigationLock?.owner || null; },
     actionOwner:() => { releaseExpiredNavigationLock(); return actionLock?.owner || null; },
     continuationOwner:() => { releaseExpiredNavigationLock(); return navigationContinuation?.owner || null; },
+    navigationGuard:() => ({
+      minGapMs:NAV_GUARD_MIN_GAP,
+      sameTargetGapMs:NAV_GUARD_SAME_TARGET_GAP,
+      lastAt:lastGuardedNavigationAt,
+      lastTarget:lastGuardedNavigationTarget,
+      lastOwner:lastGuardedNavigationOwner,
+      blocked:navigationGuardBlocked,
+      cloudflare:navigationGuardCloudflareActive()
+    }),
     log
   };
 
@@ -18007,6 +18241,30 @@ if (pausedCaptcha){
   // Centrale, lichte navigatie-API voor alle modules. Dit overschrijft de
   // website-loader niet; modules roepen hem alleen bewust aan.
   unsafeWindow.mrbNavigate = (target, options={}) => navigate(target, options);
+
+  // Gedeelde status/API voor niet-navigerende onderhoudstaken zoals de
+  // Session Manager. Die kunnen hiermee wachten tot de navigatielaag rustig is
+  // zonder zelf een tweede planner, reload of directe loadPage te starten.
+  unsafeWindow.mrbNavigationGuard = Object.freeze({
+    version:'11.11.54',
+    isCloudflareActive:()=>navigationGuardCloudflareActive(),
+    isQuiet(minQuietMs=5000){
+      const quiet=Math.max(0,Number(minQuietMs)||0);
+      releaseExpiredNavigationLock();
+      if(navigationGuardCloudflareActive()) return false;
+      if(navigationLock) return false;
+      return !lastGuardedNavigationAt || now()-lastGuardedNavigationAt>=quiet;
+    },
+    msUntilQuiet(minQuietMs=5000){
+      const quiet=Math.max(0,Number(minQuietMs)||0);
+      releaseExpiredNavigationLock();
+      if(navigationGuardCloudflareActive()) return 15000;
+      const byTime=lastGuardedNavigationAt?Math.max(0,quiet-(now()-lastGuardedNavigationAt)):0;
+      const byLock=navigationLock?Math.max(0,navigationLock.until-now()):0;
+      return Math.max(byTime,byLock);
+    },
+    snapshot:()=>plannerApi.navigationGuard()
+  });
 
   // Zelfherstel na handmatige clicks/hash-navigatie. Dit hergebruikt exact dezelfde
   // plannerinstantie en behoudt dus alle geregistreerde taken en interne planning.
@@ -18087,14 +18345,31 @@ if (pausedCaptcha){
 
         const nextAt = cc.wake();
         const state = cc.state();
-        if (state.busy || state.current || state.confirmPendingKind || state.forcedRetryKind) {
+        if (state.busy || state.confirmPendingKind || state.forcedRetryKind) {
           context.touchAction(45_000);
         } else {
+          // Een achtergebleven `current`-waarde mag de centrale planner niet blokkeren.
+          // Alleen een aantoonbaar actieve actie houdt de lease vast.
           context.releaseAction();
         }
+        const nowTs = Date.now();
+        const dueAt = Number(nextAt || cc.nextAt?.() || (nowTs + 15_000));
+        const activeFlow = !!(
+          state.busy ||
+          state.confirmPendingKind ||
+          state.forcedRetryKind
+        );
+
         return {
-          nextAt: Math.min(Number(nextAt || Date.now()+5000), Date.now()+1000),
-          status: state.busy ? `exclusief bezig: ${state.current || 'actie'}` : 'timers bewaakt'
+          // Alleen tijdens een lopende Crimes/Cars-actie snel opnieuw controleren.
+          // In rust wordt de echte interne timer gevolgd, zodat de module niet
+          // voortijdig naar Crimes of Cars blijft navigeren.
+          nextAt: activeFlow
+            ? nowTs + 1000
+            : Math.max(nowTs + 1000, Number.isFinite(dueAt) ? dueAt : nowTs + 15_000),
+          status: activeFlow
+            ? `exclusief bezig: ${state.confirmPendingKind || state.forcedRetryKind || state.current || 'actie'}`
+            : 'wacht op echte Crimes/Cars-timer'
         };
       }
     });
@@ -18290,6 +18565,7 @@ if (pausedCaptcha){
     const refresh=unsafeWindow.mrbV11Refresh;
     if(!planner||!refresh){ if(++attempts<240)setTimeout(connect,250); return; }
     refresh.setPlannerManaged(true);
+    refresh.setNavigationGuardManaged?.(true);
     planner.registerTask({
       id:'v11-refresh',
       title:'Session Manager',
@@ -18544,8 +18820,8 @@ if (pausedCaptcha){
 
   function clean(v){ return String(v ?? '').replace(/\s+/g,' ').trim(); }
   function parseJson(raw, fallback){ try { return typeof raw === 'string' ? JSON.parse(raw) : raw; } catch(e){ return fallback; } }
-  function events(){ const v=parseJson(GM_Get(K_EVENTS,'[]'),[]); return Array.isArray(v)?v:[]; }
-  function saveEvents(list){ try { GM_Set(K_EVENTS, JSON.stringify(list.slice(-MAX_EVENTS))); } catch(e){} }
+  function events(){ const v=parseJson(mrbSharedGet(K_EVENTS,'[]'),[]); return Array.isArray(v)?v:[]; }
+  function saveEvents(list){ try { mrbSharedSet(K_EVENTS, JSON.stringify(list.slice(-MAX_EVENTS))); } catch(e){} }
   function addEvent(type, text){
     const list=events();
     list.push({ts:Date.now(),type:clean(type),text:clean(text).slice(0,320)});
@@ -18566,7 +18842,7 @@ if (pausedCaptcha){
     try { return typeof gm_isGateVisible === 'function' && gm_isGateVisible(); } catch(e) { return false; }
   }
 
-  const block = addBlock(`
+  const block = mrbSharedAddBlock(`
     <h4>V10 Systeem</h4>
     <div class="gm-row" style="gap:7px;align-items:center;">
       <div id="mrbV10Status" class="gm-status" style="margin:0;"></div>
@@ -18579,6 +18855,9 @@ if (pausedCaptcha){
       <div id="mrbV10Tasks" style="font-size:11px;line-height:1.45;margin-top:5px;max-height:190px;overflow:auto;"></div>
     </details>
   `, '00-v10-final-system');
+
+  // Interne systeemcontrole blijft volledig actief, maar hoort niet in het gebruikersmenu.
+  block.remove();
 
   function inspect(){
     const planner=unsafeWindow.mrbV9Planner;
@@ -18634,7 +18913,7 @@ if (pausedCaptcha){
     watchedTaskId=''; watchedSince=0;
 
     // Alleen na een herhaalde ernstige vastloper en nooit tijdens captcha/login.
-    const lastReload=Number(GM_Get(K_RELOAD,0))||0;
+    const lastReload=Number(mrbSharedGet(K_RELOAD,0))||0;
     if (!gateVisible() && now-lastReload>RELOAD_COOLDOWN_MS && current===lastRecoveryTask && now-lastRecoveryAt<1000){
       // Geen directe reload bij de eerste recovery; planner krijgt eerst de retry.
     }
@@ -18691,12 +18970,15 @@ if (pausedCaptcha){
 (function MRBV1002RegistrationStatus(){
   'use strict';
   const EXPECTED = ['v9-crimes-cars','v9-bullets','v9-heist','v9-race','v9-lackey-timer','v9-dnd','v9-boozen','v9-oc'];
-  const block = addBlock(`
+  const block = mrbSharedAddBlock(`
     <h4>V10 Registratie</h4>
     <div id="mrbV10RegSummary" class="gm-status"></div>
     <div id="mrbV10RegList" style="font-size:11px;line-height:1.45;margin-top:5px;"></div>
     <div class="gm-row" style="margin-top:6px;"><button id="mrbV10RegRetry" class="gm-btn">Opnieuw koppelen</button></div>
   `,'00-v10-registration');
+
+  // Interne registratiestatus blijft volledig actief, maar hoort niet in het gebruikersmenu.
+  block.remove();
 
   function render(){
     const p=unsafeWindow.mrbV9Planner;
@@ -18883,22 +19165,30 @@ if (pausedCaptcha){
     if (!plannerIsQuiet() || !crimesCarsAreQuiet()) return;
 
     const role = String(heist.role?.() || 'leader').toLowerCase();
-    // Leider alleen als de timer werkelijk op Nu staat.
-    // Driver controleert periodiek op een uitnodiging, ook zonder eigen timerlabel.
-    if (role !== 'slave' && role !== 'driver' && !heistAvailableNow()) return;
+    const state = heist.state?.() || {};
+    const savedAt = Number(state.nextAt || 0) || 0;
+    const activePhase = /^(inviting|waiting_accept|started)$/i.test(String(state.phase || ''));
 
-    const last = Number(GM_Get(K_LAST_NAV, 0)) || 0;
+    // v11.11.51: deze oude eerste-navigatiewatcher mag de centrale planner
+    // nooit omzeilen. Voor Leider en Driver geldt dezelfde harde regel:
+    // alleen bij Nu/Now of tijdens een aantoonbaar actieve Heist-flow.
+    if (!activePhase) {
+      if (savedAt > Date.now() + 2000) return;
+      if (!heistAvailableNow()) return;
+    }
+
+    const last = Number(mrbSharedGet(K_LAST_NAV, 0)) || 0;
     if (Date.now() - last < NAV_COOLDOWN_MS) return;
 
     localBusy = true;
-    GM_Set(K_LAST_NAV, Date.now());
+    mrbSharedSet(K_LAST_NAV, Date.now());
     try { unsafeWindow.mrbV9Planner?.log?.('wake', `Heist eerste navigatie (${role})`, 'v9-heist'); } catch(e) {}
     loadGroupCrimes();
     setTimeout(() => { localBusy = false; }, 12_000);
   }
 
-  mrbSetInterval(tick, CHECK_MS);
-  setTimeout(tick, 3000);
+  // v11.11.52: deze oude geisoleerde eerste-navigatiewatcher is volledig uit.
+  // Alleen mrbV9Heist.wake() mag een nieuwe Heist-cyclus starten.
 })();
 
 
