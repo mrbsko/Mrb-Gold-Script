@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mrb script NL - MRB Gold Edition
 // @namespace    https://barafranca.nl
-// @version      11.11.51
+// @version      11.11.52
 // @description  MRB Gold Edition Captcha Badge Status Fix
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -29,6 +29,7 @@
 // v11.11.29: Loader-scopefix — centrale menu-, opslag- en timerhelpers worden gedeeld met alle losse modules buiten de hoofd-IIFE.
 // v11.11.26: Captcha-badgefix — UIT/Start krijgt altijd voorrang; het woord captcha alleen maakt een module niet meer actief.
 // v11.11.27: Module-uitfix — Captcha Alert stopt ook de achtergrondscan volledig; Test geluid wijzigt de aan/uit-status niet.
+// v11.11.52: Heist gebruikt nog maar een bewaakte GroupCrimes-ingang; lokale navigatiewatcher uitgeschakeld en verouderde pending-state wordt door een lopende echte timer ongeldig gemaakt.
 // v11.11.51: Heist opent Groepsmisdaden uitsluitend bij een werkelijk vrije timer of een aantoonbaar actieve Heist-flow; oude eerste-navigatie- en idle-fallbacks zijn afgeschermd.
 // v11.11.50: Heist planner navigeert zelfstandig zodra de opgeslagen timer verloopt; geen afhankelijkheid meer van losse navigatiewatcher.
 // v11.11.45: Heist-flow gecontroleerd tegen v11.11.24; winstoverdracht gebruikt directe paginafunctie, paginacontext-injectie en native klikfallback.
@@ -7732,7 +7733,7 @@ try {
         next(()=>{
           if(!scriptAan || heistHardStopped) return;
           if (heistRole === 'slave'){
-            loadPage('/?module=GroupCrimes');
+            if (!heistOpenGroupCrimes('driver-na-travel')) return;
             next(slave_acceptLoop, randomDelay(1800,3200));
           } else {
             loadPage('/information.php');
@@ -8078,6 +8079,9 @@ try {
   let heistPendingSince = Number(GM_Get(K_HEIST_PENDING_SINCE, 0)) || 0;
   let heistStartedAt = 0;
   let heistLeaderFinishLastNav = 0;
+  // Alleen een actuele lezing "Nu" op Information mag een nieuwe Heist-flow openen.
+  // Een opgeslagen 0 betekent ook "onbekend" en is dus niet voldoende.
+  let heistTimerReadyConfirmed = false;
 
   function setHeistPhase(phase, pending=false){
     heistPhase = ['idle','inviting','waiting_accept','started'].includes(phase) ? phase : 'idle';
@@ -8094,9 +8098,46 @@ try {
 
   function hasPendingLeaderHeist(){
     if (heistRole !== 'leader' || !scriptAan) return false;
+
+    // Een echte toekomstige timer heeft altijd voorrang op oude opgeslagen fasen.
+    // Hiermee kan een verouderde pendingSince/waiting_accept-status na refresh niet
+    // alsnog iedere 10-20 seconden Groepsmisdaden blijven openen.
+    const savedAt = Number(GM_Get(K_HEIST_NEXT_AVAILABLE_AT, 0)) || 0;
+    if (savedAt > Date.now() + 2000){
+      if (heistPhase !== 'idle' || heistPendingSince){
+        heistPhase = 'idle';
+        heistPendingSince = 0;
+        GM_Set(K_HEIST_PHASE, 'idle');
+        GM_Set(K_HEIST_PENDING_SINCE, 0);
+      }
+      return false;
+    }
+
     if (['waiting_accept','started'].includes(heistPhase)) return true;
     // Herstel na een volledige pagina-refresh: maximaal 45 minuten actief houden.
     return heistPendingSince > 0 && (Date.now() - heistPendingSince) < 45 * 60 * 1000;
+  }
+
+  function heistActiveFlow(){
+    return ['inviting','waiting_accept','started'].includes(heistPhase) || hasPendingLeaderHeist();
+  }
+
+  // Enige toegestane ingang naar de gedeelde pagina Groepsmisdaden.
+  // Een nieuwe flow vereist een zojuist op Information bevestigde "Nu"-timer.
+  // Een bestaande uitnodiging/startflow mag uiteraard wel worden afgerond.
+  function heistOpenGroupCrimes(reason=''){
+    if (!scriptAan || heistHardStopped || heistBlockedByOtherGroupCrime()) return false;
+    if (isLoggedOut()) return false;
+    const savedAt = Number(GM_Get(K_HEIST_NEXT_AVAILABLE_AT, 0)) || 0;
+    const active = heistActiveFlow();
+    if (!active && !heistTimerReadyConfirmed){
+      heistReleaseAction();
+      if (savedAt > Date.now()) heistPlannerSchedule(savedAt + 1500, 'wacht op echte Heist-timer');
+      heistRegistryState('COOLDOWN', `GroupCrimes geblokkeerd${reason ? `: ${reason}` : ''}`);
+      return false;
+    }
+    loadPage('/?module=GroupCrimes');
+    return true;
   }
 
   const MAX_ACCEPT_CHECKS = 30;
@@ -8391,6 +8432,7 @@ try {
       const txt = readHeistCellText();
 
       if (/^(Nu|NOW|Now)$/i.test(txt)){
+        heistTimerReadyConfirmed = true;
         GM_Set(K_HEIST_NEXT_AVAILABLE_AT, 0);
         if (heistRole === 'leader'){
           maybePrepareLeaderStart();
@@ -8407,6 +8449,7 @@ try {
         }
 
         if (wait > 0){
+          heistTimerReadyConfirmed = false;
           if (maybeDoCooldownTravel(wait)) return;
           scheduleAvailabilityRecheck(wait);
         } else {
@@ -8444,7 +8487,7 @@ try {
     next(()=>{
       if(!scriptAan || heistHardStopped) return;
       if (isLoggedOut()) return pauseForGate('Uitgelogd tijdens accept-check');
-      loadPage('/?module=GroupCrimes');
+      if (!heistOpenGroupCrimes('accept-check')) return;
       next(()=>inspectGroupCrimes(false), randomDelay(1000,2000));
     }, randomDelay(10000,15000));
   }
@@ -8459,10 +8502,10 @@ try {
     // nieuwe Leider-flow openen zolang de echte opgeslagen Heist-timer loopt.
     // Alleen een reeds actieve flow mag GroupCrimes blijven bezoeken.
     const savedAt = Number(GM_Get(K_HEIST_NEXT_AVAILABLE_AT, 0)) || 0;
-    if (heistPhase === 'idle' && savedAt > Date.now() + 2000){
+    if (heistPhase === 'idle' && !heistTimerReadyConfirmed){
       heistReleaseAction();
-      heistPlannerSchedule(savedAt + 1500, 'wacht op echte Heist-timer');
-      heistRegistryState('COOLDOWN', 'leider geblokkeerd door Heist-timer');
+      if (savedAt > Date.now()) heistPlannerSchedule(savedAt + 1500, 'wacht op echte Heist-timer');
+      heistRegistryState('COOLDOWN', 'leider geblokkeerd: timer niet als Nu bevestigd');
       return;
     }
 
@@ -8471,7 +8514,8 @@ try {
     setHeistPhase('inviting');
     heistCycleSuccessRecorded = false;
     resetAcceptChecks();
-    loadPage('/?module=GroupCrimes');
+    if (!heistOpenGroupCrimes('leader-start')) return;
+    heistTimerReadyConfirmed = false;
 
     if (failsafeTimer) clearTimeout(failsafeTimer);
     failsafeTimer = setTimeout(()=>{ if(scriptAan && !heistHardStopped){ goInfo(); } }, 60_000);
@@ -8593,7 +8637,7 @@ try {
       if (!elapsed || elapsed < 120000){
         return next(()=>{
           if(!scriptAan || heistHardStopped) return;
-          loadPage('/?module=GroupCrimes');
+          heistOpenGroupCrimes('actieve-flow');
           next(()=>inspectGroupCrimes(false), randomDelay(1200,2200));
         }, randomDelay(5000,8000));
       }
@@ -8623,7 +8667,7 @@ try {
     next(()=>{
       if(!scriptAan || heistHardStopped) return;
       if (isLoggedOut()) return pauseForGate('Uitgelogd bij fallback GroupCrimes');
-      loadPage('/?module=GroupCrimes');
+      heistOpenGroupCrimes('actieve-flow');
       next(()=>inspectGroupCrimes(false), randomDelay(1000,2000));
     }, randomDelay(15000,20000));
   }
@@ -8943,7 +8987,7 @@ try {
 
     ensureHeistDailyReset();
     resetSlaveChecks();
-    loadPage('/?module=GroupCrimes');
+    heistOpenGroupCrimes('actieve-flow');
     next(slave_acceptLoop, randomDelay(1500,3000));
   }
 
@@ -8991,7 +9035,7 @@ try {
       return next(()=>{
         if(!scriptAan || heistHardStopped) return;
         if (isLoggedOut()) return pauseForGate('Uitgelogd tussen driver-checks');
-        loadPage('/?module=GroupCrimes');
+        heistOpenGroupCrimes('actieve-flow');
         next(slave_acceptLoop, randomDelay(15000,30000));
       }, randomDelay(10000,20000));
     }
@@ -9001,7 +9045,7 @@ try {
     next(()=>{
       if(!scriptAan || heistHardStopped) return;
       if (isLoggedOut()) return pauseForGate('Uitgelogd tussen driver-overig');
-      loadPage('/?module=GroupCrimes');
+      heistOpenGroupCrimes('actieve-flow');
       next(slave_acceptLoop, randomDelay(15000,30000));
     }, randomDelay(10000,20000));
   }
@@ -9248,7 +9292,7 @@ try {
 
     heistLeaderFinishLastNav = now;
     try { console.log('[Heist Finish] Leider keert terug naar GroupCrimes voor Driver-ready/start'); } catch(e) {}
-    loadPage('/?module=GroupCrimes');
+    heistOpenGroupCrimes('actieve-flow');
     setTimeout(() => {
       try {
         const activeLink = findActiveLeaderHeistLink();
@@ -9485,16 +9529,13 @@ try {
     }
   }
 
-  heistLocalNavTimer = mrbSetInterval(heistLocalNavigationTick, 2500);
-  window.addEventListener('hashchange', () => setTimeout(heistLocalNavigationTick, 350), true);
-  window.addEventListener('popstate', () => setTimeout(heistLocalNavigationTick, 350), true);
-  document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) setTimeout(heistLocalNavigationTick, 350);
-  }, true);
+  // v11.11.52: geen tweede lokale navigatieautoriteit meer.
+  // De centrale planner is de enige runner die een nieuwe Heist-cyclus mag starten.
+  heistLocalNavTimer = null;
 
   // ---- V9 fase 5 planner-interface ----
   unsafeWindow.mrbV9Heist = {
-    version:'11.11.51',
+    version:'11.11.52',
     isRunning:()=>!!scriptAan,
     role:()=>heistRole,
     setPlannerManaged:(on)=>{
@@ -19043,8 +19084,8 @@ function mrbSharedSet(key, value){
     setTimeout(() => { localBusy = false; }, 12_000);
   }
 
-  mrbSetInterval(tick, CHECK_MS);
-  setTimeout(tick, 3000);
+  // v11.11.52: deze oude geisoleerde eerste-navigatiewatcher is volledig uit.
+  // Alleen mrbV9Heist.wake() mag een nieuwe Heist-cyclus starten.
 })();
 
 
