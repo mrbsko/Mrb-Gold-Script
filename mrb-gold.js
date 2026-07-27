@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mrb script NL - MRB Gold Edition
 // @namespace    https://barafranca.nl
-// @version      11.11.46
+// @version      11.11.47
 // @description  MRB Gold Edition Captcha Badge Status Fix
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -20,6 +20,7 @@
 // @run-at       document-end
 // ==/UserScript==
 
+// v11.11.47: Race Core uit v11.2.0 hersteld; volledige Race-cyclus onder één centrale actielock en lokale watcher uit bij plannerbeheer.
 // v11.11.38: Race due-planfix — verlopen start- en info-plannen worden daadwerkelijk uitgevoerd in plaats van opnieuw ingepland.
 // v11.11.32: Harde TDZ-fix — de interne menuhelper heet nergens meer addBlock; alle hoofdmodules gebruiken mrbCoreAddBlock en alleen de gedeelde API behoudt de propertynaam addBlock.
 // v11.11.35: Race-actielockfix — Race geeft de centrale actielock altijd vrij wanneer alleen een toekomstplan wordt ingepland of een controle klaar is.
@@ -5943,25 +5944,6 @@ try {
   GM_Set("race_role", raceRole);
   let raceAutoTravel  = GM_Get("race_autoTravel", false); // auto-travel voor driver
   let racePlannerManaged = false;
-  let raceCorePhase = 'IDLE';
-  let raceCoreDetail = 'gereed';
-  let raceCoreUpdatedAt = Date.now();
-
-  function raceRegistryState(phase, detail=''){
-    raceCorePhase = String(phase || 'IDLE');
-    raceCoreDetail = String(detail || '');
-    raceCoreUpdatedAt = Date.now();
-    try {
-      unsafeWindow.mrbModuleStateRegistry?.set?.('Race', {
-        phase: raceCorePhase,
-        detail: raceCoreDetail,
-        updatedAt: raceCoreUpdatedAt,
-        plannerManaged: !!racePlannerManaged,
-        running: !!scriptAan,
-        role: raceRole
-      });
-    } catch(e) {}
-  }
 
   // persistente idle-planning
   const K_RACE_PLAN = 'race_idlePlan_v1'; // { type:'start'|'info', at:number, createdAt:number }
@@ -6134,14 +6116,6 @@ try {
         return;
       }
 
-      if (latest.type === 'driver_check'){
-        clearRacePlan();
-        if (isLoggedOut()) return pauseForGate('Geplande Driver-uitnodigingscheck tijdens gate');
-        if (raceRole !== 'slave') return bootstrapRaceIdle();
-        slave_startRace();
-        return;
-      }
-
       if (latest.type === 'info'){
         clearRacePlan();
         if (isLoggedOut()) return pauseForGate('Geplande info-check tijdens gate');
@@ -6157,13 +6131,9 @@ try {
   }
 
   function planRaceStart(){
-    // Alleen de Leider maakt een race aan. De Driver controleert uitsluitend
-    // periodiek op een bestaande uitnodiging.
-    if (raceRole !== 'leader'){
-      planDriverInviteCheck();
-      return;
-    }
-    const delay = randomDelay(4000,10000);
+    const delay = (raceRole === 'leader')
+      ? randomDelay(4000,10000)
+      : randomDelay(10000,15000);
 
     saveRacePlan({
       type: 'start',
@@ -6172,17 +6142,6 @@ try {
       role: raceRole
     });
 
-    armStoredRacePlan();
-  }
-
-  function planDriverInviteCheck(waitMs=randomDelay(30000,50000)){
-    raceReleaseAction();
-    saveRacePlan({
-      type: 'driver_check',
-      at: Date.now() + Math.max(1000, waitMs),
-      createdAt: Date.now(),
-      role: 'slave'
-    });
     armStoredRacePlan();
   }
 
@@ -6206,14 +6165,6 @@ try {
     const existingPlan = loadRacePlan();
     if (existingPlan && existingPlan.type && existingPlan.at){
       armStoredRacePlan();
-      return;
-    }
-
-    // De Driver gebruikt niet de eigen Race-timer en mag nooit een race
-    // aanmaken. Hij opent de Race-pagina alleen kort om een bestaande
-    // uitnodiging te controleren.
-    if (raceRole === 'slave'){
-      planDriverInviteCheck(randomDelay(1500,3000));
       return;
     }
 
@@ -6332,7 +6283,6 @@ try {
   }
 
   function raceAutoTravelToCityName(cityName){
-    raceRegistryState('TRAVEL', 'naar racestad reizen');
     const code = raceCityNameToCode(cityName);
     if (!code){
       console.warn('[Race] Auto-Travel: stad niet herkend:', cityName);
@@ -6629,11 +6579,6 @@ try {
   }
 
   function leader_startRace(){
-    if (raceRole !== 'leader'){
-      planDriverInviteCheck();
-      return;
-    }
-    raceRegistryState('LEADER_OPEN', 'racepagina openen');
     if(!scriptAan) return;
     if (isLoggedOut()) return pauseForGate('leader_startRace: uitgelogd');
 
@@ -6650,11 +6595,6 @@ try {
   }
 
   function leader_raceFlow(){
-    if (raceRole !== 'leader'){
-      planDriverInviteCheck();
-      return;
-    }
-    raceRegistryState('LEADER_INVITE', 'uitnodiging voorbereiden');
     if(!scriptAan) return;
     if (isLoggedOut()) return pauseForGate('leader_raceFlow: uitgelogd');
     const body = document.body.innerText || '';
@@ -6693,7 +6633,7 @@ try {
         raceSelectFirstAvailableCar();
         raceSafeClick(inviteBtn);
         if(failsafeTimer) clearTimeout(failsafeTimer);
-        next(()=> leader_checkPartner(0), randomDelay(1500,2500));
+        next(()=> leader_checkPartner(0), randomDelay(10000,15000));
       }, actionDelay());
       return;
     }
@@ -6713,7 +6653,6 @@ try {
   }
 
   function leader_checkPartner(retries){
-    raceRegistryState('WAITING_DRIVER', 'wacht op Driver');
     if(!scriptAan) return;
     if (isLoggedOut()) return pauseForGate('leader_checkPartner: uitgelogd');
     if(retries>=3){ goInfo(); return; }
@@ -6732,16 +6671,15 @@ try {
       }
 
       if (/invited|accepted|uitgenodigd|geaccepteerd|waiting|wachten/i.test(body)){
-        next(()=> leader_checkPartner(retries+1), randomDelay(2500,4000));
+        next(()=> leader_checkPartner(retries+1), randomDelay(10000,15000));
         return;
       }
 
-      next(leader_raceFlow, randomDelay(800,1400));
+      next(leader_raceFlow, randomDelay(2000,4000));
     }, randomDelay(1000,2000));
   }
 
   function leader_tryStart(){
-    raceRegistryState('STARTING', 'Race starten');
     if(!scriptAan) return;
     if (isLoggedOut()) return pauseForGate('leader_tryStart: uitgelogd');
 
@@ -6762,7 +6700,6 @@ try {
   }
 
   function leader_checkDone(){
-    raceRegistryState('RUNNING', 'wacht op race-resultaat');
     if(!scriptAan) return;
     if (isLoggedOut()) return pauseForGate('leader_checkDone: uitgelogd');
     const $ = $jq();
@@ -6781,8 +6718,6 @@ try {
 
   // ------------------ DRIVER FLOW ------------------
   function slave_startRace(){
-    if (raceRole !== 'slave') return bootstrapRaceIdle();
-    raceRegistryState('DRIVER_OPEN', 'bestaande uitnodiging controleren');
     if(!scriptAan) return;
     if (isLoggedOut()) return pauseForGate('slave_startRace: uitgelogd');
 
@@ -6792,8 +6727,6 @@ try {
   }
 
   function slave_acceptLoop(){
-    if (raceRole !== 'slave') return bootstrapRaceIdle();
-    raceRegistryState('DRIVER_ACCEPT', 'bestaande uitnodiging controleren');
     if(!scriptAan) return;
     if (isLoggedOut()) return pauseForGate('slave_acceptLoop: uitgelogd');
     const $ = $jq();
@@ -6802,17 +6735,20 @@ try {
     const body = document.body.innerText || '';
 
     if (isTired(body)){
-      clearRacePlan();
-      guiLoad('/information.php');
-      planDriverInviteCheck(randomDelay(45000,75000));
+      next(()=>{
+        clearRacePlan();
+        guiLoad('/information.php');
+        next(()=>checkAvailability(true), randomDelay(10000,20000));
+      }, randomDelay(10000,20000));
       return;
     }
 
     if (alreadyAcceptedMsg(body)){
-      console.log("⏳ Race al geaccepteerd — wachten op afronding.");
-      clearRacePlan();
-      guiLoad('/information.php');
-      planDriverInviteCheck(randomDelay(30000,50000));
+      console.log("⏳ Race al geaccepteerd — accept-flow opnieuw starten.");
+      next(()=>{
+        guiLoad('/races.php');
+        next(slave_acceptLoop, randomDelay(1500,4000));
+      }, randomDelay(3000,6000));
       return;
     }
 
@@ -6826,27 +6762,26 @@ try {
     const accept = $('a').filter(function(){ return /(Accepteer|Accept)/i.test($(this).text()); });
     if (accept.length){
       accept[0].click();
-      next(slave_selectCar, randomDelay(500,900));
+      next(slave_selectCar, actionDelay());
       return;
     }
 
     if (body.includes("You're still tired from your last race")){
-      clearRacePlan();
-      guiLoad('/information.php');
-      planDriverInviteCheck(randomDelay(45000,75000));
+      next(()=>{
+        clearRacePlan();
+        guiLoad('/information.php');
+        next(()=>checkAvailability(true), randomDelay(10000,40000));
+      }, randomDelay(10000,40000));
       return;
     }
 
-    // Geen uitnodiging gevonden: nooit naar het uitnodigingsformulier gaan en
-    // niet op de Race-pagina blijven hangen. Terug naar informatie en later
-    // opnieuw kort controleren.
-    clearRacePlan();
-    guiLoad('/information.php');
-    planDriverInviteCheck(randomDelay(30000,50000));
+    next(()=>{
+      guiLoad('/races.php');
+      next(slave_acceptLoop, randomDelay(1500,4000));
+    }, randomDelay(5000,10000));
   }
 
   function slave_selectCar(){
-    raceRegistryState('DRIVER_CAR', 'auto selecteren');
     if(!scriptAan) return;
     if (isLoggedOut()) return pauseForGate('slave_selectCar: uitgelogd');
 
@@ -6863,61 +6798,17 @@ try {
         try{ submit.focus(); }catch{}
         try{ submit.click(); }catch{}
         next(()=>{
-          clearRacePlan();
-          guiLoad('/information.php');
-          planDriverInviteCheck(randomDelay(30000,50000));
+          next(()=>{
+            clearRacePlan();
+            guiLoad('/information.php');
+            next(()=>checkAvailability(true), randomDelay(10000,20000));
+          }, randomDelay(18000,40000));
         }, actionDelay());
         return;
       }
     }
 
-    next(slave_selectCar, randomDelay(500,900));
-  }
-
-  // v11.11.36 — snelle Race-reacties uitsluitend op de echte Race-pagina.
-  // De observer mag vanaf Mijn account of andere spelpagina's nooit zelf een
-  // Race-stap starten. De Core Planner blijft exclusief verantwoordelijk voor
-  // de eerste navigatie naar /races.php. Op de Race-pagina versnelt deze laag
-  // alleen accepteren, auto kiezen, uitnodigen en starten.
-  let raceDomWakeTimer = 0;
-  function raceIsActualRacePage(){
-    return /(?:^|\/)races\.php(?:$|[?#])/i.test(String(location.pathname || '') + String(location.search || '') + String(location.hash || ''))
-      || /\/races\.php(?:[?#]|$)/i.test(String(location.href || ''));
-  }
-
-  function raceScheduleDomWake(){
-    if (!scriptAan || isLoggedOut() || !raceIsActualRacePage()) return;
-    clearTimeout(raceDomWakeTimer);
-    raceDomWakeTimer = setTimeout(()=>{
-      if (!scriptAan || isLoggedOut() || !raceIsActualRacePage()) return;
-      const root = document.querySelector('#game_container') || document.body;
-      const body = String(root?.innerText || '');
-
-      if (raceRole === 'slave') {
-        const hasAccept = Array.from(root?.querySelectorAll?.('a, button, input[type="submit"]') || [])
-          .some(el => /(Accepteer|Accept)/i.test(String(el.textContent || el.value || '')));
-        const hasCar = /Select our car for the race/i.test(body) || !!root?.querySelector?.('select');
-        if (hasCar) { next(slave_selectCar, 100); return; }
-        if (hasAccept) { next(slave_acceptLoop, 100); return; }
-      } else {
-        if (raceFindRaceStartButton()) { next(leader_tryStart, 100); return; }
-        if (raceFindGoToInvitesButton() || raceFindSendInviteButton()) { next(leader_raceFlow, 100); return; }
-      }
-    }, 140);
-  }
-
-  const raceDomRoot = document.querySelector('#game_container') || document.body;
-  if (raceDomRoot) {
-    const raceDomObserver = new MutationObserver(mutations=>{
-      if (!raceIsActualRacePage()) return;
-      for (const mutation of mutations) {
-        if (mutation.type === 'childList' && (mutation.addedNodes?.length || mutation.removedNodes?.length)) {
-          raceScheduleDomWake();
-          return;
-        }
-      }
-    });
-    raceDomObserver.observe(raceDomRoot, {childList:true, subtree:true});
+    next(slave_selectCar, randomDelay(5000,10000));
   }
 
   // ------------------ AVAILABILITY (gedeeld) ------------------
@@ -6925,15 +6816,6 @@ try {
     if(!scriptAan) return;
     if (isLoggedOut()) return pauseForGate('checkAvailability: uitgelogd');
 
-    // Alleen de Leider gebruikt de Race-cooldown om een nieuwe race te maken.
-    // De Driver controleert uitsluitend op een bestaande uitnodiging.
-    if (raceRole === 'slave'){
-      raceRegistryState('DRIVER_WAIT_INVITE', 'wacht op bestaande uitnodiging');
-      planDriverInviteCheck();
-      return;
-    }
-
-    raceRegistryState('CHECK_TIMER', 'Race-timer controleren');
     if (!/information\.php/i.test(location.href)){
       if (armStoredRacePlan()) return;
 
@@ -7058,7 +6940,6 @@ try {
     paint();
 
     if (scriptAan){
-      raceRegistryState('STARTING', 'module gestart');
       clearAll();
       clearRacePlan(); // echte nieuwe start = opnieuw 1x info-sync
 
@@ -7078,7 +6959,6 @@ try {
 
       bootstrapRaceIdle();
     } else {
-      raceRegistryState('OFF', 'module gestopt');
       clearAll();
       clearRacePlan();
       raceReleaseAction();
@@ -7101,71 +6981,24 @@ try {
     setPlannerManaged(on){
       racePlannerManaged = !!on;
       if (racePlannerManaged && loopTimer) { clearTimeout(loopTimer); loopTimer = null; }
-      raceRegistryState(racePlannerManaged ? 'PLANNER_READY' : 'LOCAL_MODE', racePlannerManaged ? 'centrale planner gekoppeld' : 'lokale fallback');
       paint();
       if (racePlannerManaged && scriptAan) bootstrapRaceIdle();
     },
     isRunning(){ return !!scriptAan; },
-    getState(){ return {phase:raceCorePhase,detail:raceCoreDetail,updatedAt:raceCoreUpdatedAt,plannerManaged:racePlannerManaged,role:raceRole,running:scriptAan}; },
     nextAt(){
       const plan = loadRacePlan();
       return plan && Number(plan.at) ? Number(plan.at) : Date.now()+1500;
     },
     wake(context){
-      if (!scriptAan) { raceReleaseAction(); raceRegistryState('OFF', 'module staat uit'); return { delayMs:15000, status:'module staat uit' }; }
+      if (!scriptAan) { raceReleaseAction(); return { delayMs:15000, status:'module staat uit' }; }
       if (!raceAcquireAction(context)) {
-        raceRegistryState('WAIT_ACTION_LOCK', 'wacht op centrale actielock');
         return { delayMs:1000, status:'wacht op centrale actielock' };
       }
-
-      raceRegistryState('PLANNER_WAKE', 'planner controleert Race');
       const plan = loadRacePlan();
-      const now = Date.now();
-
-      // Een toekomstplan houdt geen exclusieve actielock vast.
-      if (plan && Number(plan.at) > now + 300) {
-        raceReleaseAction();
-        const plannedStatus = plan.type === 'start' ? 'racestart gepland'
-          : plan.type === 'driver_check' ? 'wacht op Race-uitnodiging'
-          : 'race-timer gepland';
-        return { nextAt:Number(plan.at), status:plannedStatus };
+      if (plan && Number(plan.at) > Date.now()+300) {
+        return { nextAt:Number(plan.at), status:plan.type === 'start' ? 'racestart gepland' : 'race-timer gepland' };
       }
-
-      // Driver controleert alleen op een bestaande uitnodiging.
-      if (plan && plan.type === 'driver_check') {
-        clearRacePlan();
-        if (raceRole === 'slave') slave_startRace();
-        else bootstrapRaceIdle();
-        return { delayMs:5000, status:'Race-uitnodiging controleren' };
-      }
-
-      // Voer een verlopen racestart daadwerkelijk uit.
-      if (plan && plan.type === 'start') {
-        clearRacePlan();
-        if (raceRole !== 'leader'){
-          planDriverInviteCheck();
-          return { delayMs:5000, status:'Driver wacht op uitnodiging' };
-        }
-        raceRegistryState('START_DUE', 'Leider-flow starten');
-        leader_startRace();
-        return { delayMs:5000, status:'racestart uitgevoerd' };
-      }
-
-      // Voer een verlopen timercontrole daadwerkelijk uit.
-      if (plan && plan.type === 'info') {
-        clearRacePlan();
-        raceRegistryState('INFO_DUE', 'Race-timer opnieuw controleren');
-        if (/information\.php/i.test(location.href)) {
-          checkAvailability(true);
-        } else {
-          guiLoad('/information.php');
-          next(()=>checkAvailability(true), randomDelay(3000,6000));
-        }
-        return { delayMs:5000, status:'race-timer controleren' };
-      }
-
-      // Zonder opgeslagen plan de normale informatie-sync starten.
-      raceReleaseAction();
+      clearRacePlan();
       bootstrapRaceIdle();
       const nextPlan = loadRacePlan();
       return { nextAt:nextPlan && Number(nextPlan.at) ? Number(nextPlan.at) : Date.now()+5000, status:'race gecontroleerd' };
