@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         MRB Gold Edition Loader v3.1 Status
+// @name         MRB Gold Edition Loader v3.1.1 Status Fix
 // @namespace    https://barafranca.nl
-// @version      3.1.0
-// @description  Stabiele GitHub-loader met zichtbare versie/status, sandbox-koppeling, dubbele reservekopie en automatische rollback.
+// @version      3.1.1
+// @description  GitHub-loader met zichtbare status, veilige cachefallback en herstel zonder vastlopende herlaadlus.
 // @author       Mrb
 // @match        http://barafranca.nl/*
 // @match        https://barafranca.nl/*
@@ -24,7 +24,7 @@
 (function () {
     'use strict';
 
-    const LOADER_VERSION = '3.1.0';
+    const LOADER_VERSION = '3.1.1';
     const SCRIPT_URL = 'https://raw.githubusercontent.com/Mrbsko/Mrb-Gold-Script/main/mrb-gold.js';
 
     const KEY = Object.freeze({
@@ -97,7 +97,8 @@
                 `MRB-versie: ${d.scriptVersion || 'onbekend'}`,
                 `Bron: ${d.source || 'onbekend'}`,
                 `Hash: ${d.hash || 'onbekend'}`,
-                `Laatste controle: ${d.checkedAt ? new Date(d.checkedAt).toLocaleString('nl-NL') : 'onbekend'}`
+                `Laatste controle: ${d.checkedAt ? new Date(d.checkedAt).toLocaleString('nl-NL') : 'onbekend'}`,
+                d.error ? `Fout: ${d.error}` : ''
             ].join('\n'));
         });
         (document.documentElement || document.body).appendChild(box);
@@ -125,7 +126,8 @@
             source: details.source || '',
             scriptVersion: details.scriptVersion || '',
             hash: details.hash || '',
-            checkedAt: details.checkedAt || Date.now()
+            checkedAt: details.checkedAt || Date.now(),
+            error: details.error || ''
         };
         pageWindow.__MRB_LOADER_STATUS__ = snapshot;
 
@@ -243,7 +245,8 @@
             return true;
         } catch (error) {
             pageWindow[SCRIPT_GUARD] = false;
-            setVisibleStatus(`Starten mislukt via ${sourceLabel}`, 'error', { source: sourceLabel });
+            const errorText = `${error?.name || 'Fout'}: ${error?.message || String(error)}`;
+            setVisibleStatus(`Starten mislukt: ${error?.message || error}`, 'error', { source: sourceLabel, error: errorText });
             fail(`Uitvoeren via ${sourceLabel} mislukt.`, error);
             return false;
         }
@@ -286,14 +289,30 @@
     }
 
     function requestRecoveryReload(mode, reason) {
+        const target = readSlot(mode === 'previous' ? 'previous' : 'current');
+        if (!isValidScript(target.code)) {
+            sessionStorage.removeItem(RECOVERY_KEY);
+            sessionStorage.removeItem(RECOVERY_COUNT_KEY);
+            setVisibleStatus('Startfout; geen werkende reserveversie beschikbaar', 'error', {
+                source: 'github',
+                error: reason
+            });
+            fail(`Geen geldige reserveversie voor rollback. ${reason}`);
+            return false;
+        }
+
         const count = Number(sessionStorage.getItem(RECOVERY_COUNT_KEY) || 0);
         if (count >= MAX_RECOVERY_RELOADS) {
+            sessionStorage.removeItem(RECOVERY_KEY);
+            sessionStorage.removeItem(RECOVERY_COUNT_KEY);
+            setVisibleStatus('Rollback gestopt; controleer de fout in de console', 'error', { error: reason });
             fail(`Automatische rollback gestopt na ${count} herstelpogingen. Laatste reden: ${reason}`);
             return false;
         }
 
         sessionStorage.setItem(RECOVERY_KEY, mode);
         sessionStorage.setItem(RECOVERY_COUNT_KEY, String(count + 1));
+        setVisibleStatus(`Werkende reserveversie laden (${mode})…`, 'warn', { source: mode });
         warn(`Pagina wordt eenmaal herladen voor rollback naar ${mode}. Reden: ${reason}`);
         window.setTimeout(() => location.reload(), 500);
         return true;
@@ -323,19 +342,20 @@
         const mode = String(sessionStorage.getItem(RECOVERY_KEY) || '');
         if (!mode) return false;
 
-        if (mode === 'previous') {
-            sessionStorage.removeItem(RECOVERY_KEY);
-            runSlot('previous', 'Automatische rollback na een uitvoerfout.', false);
-            return true;
-        }
-
-        if (mode === 'current') {
-            sessionStorage.removeItem(RECOVERY_KEY);
-            runSlot('current', 'Automatisch herstel met de laatst werkende versie.', true);
-            return true;
-        }
-
         sessionStorage.removeItem(RECOVERY_KEY);
+
+        if (mode === 'previous') {
+            const started = runSlot('previous', 'Automatische rollback na een uitvoerfout.', false);
+            if (started) return true;
+        } else if (mode === 'current') {
+            const started = runSlot('current', 'Automatisch herstel met de laatst werkende versie.', true);
+            if (started) return true;
+        }
+
+        // Geen bruikbare cache: herstelstatus wissen en GitHub normaal opnieuw controleren.
+        sessionStorage.removeItem(RECOVERY_COUNT_KEY);
+        warn('Herstelmodus bevatte geen werkende reserveversie; GitHub wordt opnieuw gecontroleerd.');
+        setVisibleStatus('Geen reserveversie; GitHub opnieuw controleren…', 'warn');
         return false;
     }
 
