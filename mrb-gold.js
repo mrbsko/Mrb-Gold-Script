@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mrb script NL - MRB Gold Edition
 // @namespace    https://barafranca.nl
-// @version      11.11.31
+// @version      11.11.32
 // @description  MRB Gold Edition Captcha Badge Status Fix
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -20,6 +20,7 @@
 // @run-at       document-end
 // ==/UserScript==
 
+// v11.11.32: Harde TDZ-fix — de interne menuhelper heet nergens meer addBlock; alle hoofdmodules gebruiken mrbCoreAddBlock en alleen de gedeelde API behoudt de propertynaam addBlock.
 // v11.11.29: Loader-scopefix — centrale menu-, opslag- en timerhelpers worden gedeeld met alle losse modules buiten de hoofd-IIFE.
 // v11.11.26: Captcha-badgefix — UIT/Start krijgt altijd voorrang; het woord captcha alleen maakt een module niet meer actief.
 // v11.11.27: Module-uitfix — Captcha Alert stopt ook de achtergrondscan volledig; Test geluid wijzigt de aan/uit-status niet.
@@ -1313,7 +1314,7 @@ if(status){
   }
 
   // addBlock
-  function addBlock(html, idHint=''){
+  function mrbCoreAddBlock(html, idHint=''){
     const menu = (window.__MRB_GOLD_MENU__ && window.__MRB_GOLD_MENU__.wrap) ? window.__MRB_GOLD_MENU__ : (function(){
       const w = buildMenu();
       return window.__MRB_GOLD_MENU__ || { wrap: w, blocksRoot: w.querySelector('.gm-blocks') };
@@ -1364,7 +1365,7 @@ if(status){
   // v11.11.30 — Exporteer helpers direct nadat addBlock gereed is.
   window.__MRB_GOLD_SHARED_HELPERS__ = Object.assign(
     window.__MRB_GOLD_SHARED_HELPERS__ || {},
-    { addBlock, GM_Get, GM_Set, mrbSetInterval, mrbClearInterval, buildMenu }
+    { addBlock: mrbCoreAddBlock, GM_Get, GM_Set, mrbSetInterval, mrbClearInterval, buildMenu }
   );
 
   // =====================================================================
@@ -1733,7 +1734,7 @@ if(status){
       driverDebug={invite:false,acceptClicked:false,carControl:false,carSelected:false,confirm:false,confirmClicked:false,ready:false};
     }
 
-    const block=addBlock(`
+    const block=mrbCoreAddBlock(`
       <h4>Spot Overval</h4>
       <div class="gm-row">
         <label><input type="radio" name="spotRoleV3" value="leader" ${role==='leader'?'checked':''}> Leider</label>
@@ -2398,7 +2399,7 @@ Naam3"></textarea><br><br>
   let optOutMaster = GM_Get(K_OPTOUT, false);
 
   // UI — Settings blok (Partner/OC rechtsboven grid, Save onderaan)
-  const block = addBlock(`
+  const block = mrbCoreAddBlock(`
     <h4>Settings</h4>
 
     <div class="gm-row" style="justify-content:flex-end;width:100%;">
@@ -2563,7 +2564,7 @@ Naam3"></textarea><br><br>
   const minVal = (typeof unsafeWindow.mrbDelayMinSec === 'function') ? unsafeWindow.mrbDelayMinSec() : Number(GM_Get('mrb_delay_min_sec', 2));
   const maxVal = (typeof unsafeWindow.mrbDelayMaxSec === 'function') ? unsafeWindow.mrbDelayMaxSec() : Number(GM_Get('mrb_delay_max_sec', 5));
 
-  const block = addBlock(`
+  const block = mrbCoreAddBlock(`
     <h4>Timer</h4>
     <div class="gm-row" style="align-items:center;gap:7px;">
       <label>Min</label>
@@ -2719,7 +2720,7 @@ Naam3"></textarea><br><br>
     lastDetectedRank: null
   };
 
-  const block = addBlock(`
+  const block = mrbCoreAddBlock(`
     <h4>Dashboard</h4>
     <div id="mrbV81DashRoot"></div>
   `, '00-dashboard-rank');
@@ -3265,7 +3266,7 @@ Naam3"></textarea><br><br>
   let lastPopup = 0;
   let audioUnlocked = false;
 
-  const block = addBlock(`
+  const block = mrbCoreAddBlock(`
     <h4>Captcha Alert</h4>
 
     <div class="gm-row" style="align-items:center;gap:8px;">
@@ -3714,7 +3715,7 @@ Naam3"></textarea><br><br>
   const clean=s=>String(s||'').replace(/\s+/g,' ').trim();
   const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 
-  const block=addBlock(`
+  const block=mrbCoreAddBlock(`
     <h4>Bodyguard Trainer</h4>
     <div class="gm-row" style="gap:8px;align-items:center;">
       <button id="mrbBgToggle" class="gm-btn">${on?'Stop':'Start'}</button>
@@ -4092,7 +4093,7 @@ Naam3"></textarea><br><br>
   const ID_TO_CITY = Object.fromEntries(Object.entries(CITY_TO_ID).map(([k,v]) => [v,k]));
   const CITY_NAMES = Object.keys(CITY_TO_ID);
 
-  const block = addBlock(`
+  const block = mrbCoreAddBlock(`
     <h4>D&D</h4>
 
     <div class="gm-row" style="align-items:center;gap:8px;">
@@ -6003,7 +6004,7 @@ try {
     if(failsafeTimer) clearTimeout(failsafeTimer);
   };
 
-  const block = addBlock(`
+  const block = mrbCoreAddBlock(`
     <h4>Race</h4>
     <div class="gm-row">
       <label style="display:flex;align-items:center;gap:6px;">
@@ -7981,7 +7982,7 @@ try {
   }
 
   // ---------- UI ----------
-  const block = addBlock(`
+  const block = mrbCoreAddBlock(`
     <h4>Heist</h4>
     <div class="gm-row">
       <label style="display:flex;align-items:center;gap:6px;">
@@ -9624,7 +9625,7 @@ try {
   let rumAmount = Number(GM_Get(K_RUM, 40)) || 40;
   let cocaineAmount = Number(GM_Get(K_COKE, 13)) || 13;
 
-  const block = addBlock(`
+  const block = mrbCoreAddBlock(`
     <h4>Boozen</h4>
 
     <div class="gm-row" style="align-items:center;gap:8px;">
@@ -10236,7 +10237,7 @@ try {
   function release(context){ try{context?.releaseAction?.();}catch(e){} }
   unsafeWindow.mrbOC2Control={version:'11.10.6',isEnabled:()=>enabled,isPlannerManaged:()=>plannerManaged,role:()=>role,state:()=>state};
 
-  const block=addBlock(`
+  const block=mrbCoreAddBlock(`
     <h4>OC</h4>
     <div class="gm-row">
       <label><input type="radio" name="ocRoleV117" value="leader" ${role==='leader'?'checked':''}> Leider</label>
@@ -10606,7 +10607,7 @@ try {
   let resumePhase = '';
 
   // ---- UI
-  const block = addBlock(`
+  const block = mrbCoreAddBlock(`
     <h4>Crimes</h4>
 
     <button id="ccToggle" class="gm-btn">${running ? 'Stop' : 'Start'}</button>
@@ -12053,7 +12054,7 @@ if (pausedCaptcha){
   const K_PLANNER_NEXT = 'v9_bullets_next_at';
 
   // ---------- UI ----------
-  const block = addBlock(`
+  const block = mrbCoreAddBlock(`
     <h4>Bullets</h4>
 
     <div class="gm-row" style="gap:8px; align-items:center; flex-wrap:wrap;">
@@ -13123,7 +13124,7 @@ if (pausedCaptcha){
   })();
 
   // --- UI Block ---
-  const block = addBlock(`
+  const block = mrbCoreAddBlock(`
     <h4>Travel</h4>
     <div class="gm-row" style="align-items:center;gap:8px;">
       <button id="trToggle" class="gm-btn">${on ? 'Stop' : 'Start'}</button>
@@ -13354,7 +13355,7 @@ if (pausedCaptcha){
   let on = GM_Get(K_ON, false);
   let timer = null;
 
-  const block = addBlock(`
+  const block = mrbCoreAddBlock(`
     <h4>Slots</h4>
     <div class="gm-row">
       <button id="slToggle" class="gm-btn">${on?'Stop':'Start'}</button>
@@ -13474,7 +13475,7 @@ if (pausedCaptcha){
   let plannerManaged=false;
   let legacyTimer=null;
 
-  const block = addBlock(`
+  const block = mrbCoreAddBlock(`
     <h4>Session Manager</h4>
     <div class="gm-row">
       <button id="rfToggle" class="gm-btn">${active ? 'Stop' : 'Start'}</button>
@@ -13597,7 +13598,7 @@ if (pausedCaptcha){
   let busy = false;
 
   // ---- UI ----
-  const block = addBlock(`
+  const block = mrbCoreAddBlock(`
     <h4>Fill lackey</h4>
 
     <div class="gm-row" style="align-items:center;gap:8px;">
@@ -14501,7 +14502,7 @@ if (pausedCaptcha){
   let shMinutes  = String(getV(K_MINUTES, '') || ''); // ✅ SH timer value
   let bbMode     = String(getV(K_BBMODE, 'Free') || 'Free'); // '16' | 'Free'
 
-  const block = addBlock(`
+  const block = mrbCoreAddBlock(`
     <h4>Prefill</h4>
 
     <div class="gm-row" style="gap:8px;align-items:center;flex-wrap:wrap;">
@@ -14720,7 +14721,7 @@ if (pausedCaptcha){
   let lastShotTs = 0;
 
   // ---- UI ----
-  const block = addBlock(`
+  const block = mrbCoreAddBlock(`
     <h4>Sniper</h4>
     <div class="gm-row" style="gap:8px;align-items:center;">
       <button id="snToggle" class="gm-btn">${running?'Stop':'Start'}</button>
@@ -15065,7 +15066,7 @@ if (pausedCaptcha){
   }
 
   // UI block (Reset-knop verwijderd)
-  const block = addBlock(`
+  const block = mrbCoreAddBlock(`
     <h4>Enteren</h4>
     <div class="gm-row" style="gap:8px;align-items:center;">
       <button id="enToggle" class="gm-btn">${on?'Stop':'Start'}</button>
@@ -15240,7 +15241,7 @@ if (pausedCaptcha){
   let plannerRegistered=false;
   let localNextAt=Number(GM_Get('mrb_milestones_local_next_at',0))||0;
 
-  const block=addBlock(`
+  const block=mrbCoreAddBlock(`
     <h4>Milestones</h4>
     <div class="gm-row">
       <button id="mcToggle" class="gm-btn">${active?'Stop':'Start'}</button>
@@ -15472,7 +15473,7 @@ if (pausedCaptcha){
   let qtyGrenade = null; // item 5
   let qtyMolotov = null; // item 6
 
-  const block = addBlock(`
+  const block = mrbCoreAddBlock(`
     <h4>Molotov</h4>
     <div class="gm-row">
       <button id="mbToggle" class="gm-btn">${running?'Stop':'Start'}</button>
@@ -15981,7 +15982,7 @@ if (pausedCaptcha){
   let busy = false;
   let plannerManaged = false;
 
-  const block = addBlock(`
+  const block = mrbCoreAddBlock(`
     <h4>Lackey Timer</h4>
     <div class="gm-row" style="align-items:center;gap:8px;">
       <button id="ltToggle" class="gm-btn">${running ? 'Stop' : 'Start'}</button>
