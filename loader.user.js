@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         MRB Gold Edition Loader v3.0 Stable
+// @name         MRB Gold Edition Loader v3.1 Status
 // @namespace    https://barafranca.nl
-// @version      3.0.0
-// @description  Stabiele GitHub-loader voor MRB Gold met sandbox-koppeling, dubbele reservekopie en automatische rollback.
+// @version      3.1.0
+// @description  Stabiele GitHub-loader met zichtbare versie/status, sandbox-koppeling, dubbele reservekopie en automatische rollback.
 // @author       Mrb
 // @match        http://barafranca.nl/*
 // @match        https://barafranca.nl/*
@@ -24,7 +24,7 @@
 (function () {
     'use strict';
 
-    const LOADER_VERSION = '3.0.0';
+    const LOADER_VERSION = '3.1.0';
     const SCRIPT_URL = 'https://raw.githubusercontent.com/Mrbsko/Mrb-Gold-Script/main/mrb-gold.js';
 
     const KEY = Object.freeze({
@@ -36,7 +36,10 @@
         previousHash: 'mrb_loader_v3_previous_hash',
         lastSource: 'mrb_loader_v3_last_source',
         lastError: 'mrb_loader_v3_last_error',
-        lastSuccess: 'mrb_loader_v3_last_success'
+        lastSuccess: 'mrb_loader_v3_last_success',
+        lastVersion: 'mrb_loader_v3_last_version',
+        lastHash: 'mrb_loader_v3_last_started_hash',
+        lastChecked: 'mrb_loader_v3_last_checked'
     });
 
     const RUN_GUARD = '__MRB_GOLD_LOADER_V3_ACTIVE__';
@@ -52,11 +55,95 @@
 
     const pageWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
 
+
+    // Zichtbare loaderstatus. Blijft compact rechtsboven staan en kan worden
+    // aangeklikt voor details. De status wordt ook beschikbaar op unsafeWindow.
+    const STATUS_ID = 'mrbLoaderStatusV31';
+    let statusHideTimer = 0;
+
+    function extractScriptVersion(code) {
+        const match = String(code || '').match(/^\s*\/\/\s*@version\s+([^\r\n]+)/mi);
+        return match ? String(match[1]).trim() : 'onbekend';
+    }
+
+    function ensureStatusBox() {
+        let box = document.getElementById(STATUS_ID);
+        if (box) return box;
+        box = document.createElement('div');
+        box.id = STATUS_ID;
+        box.setAttribute('role', 'status');
+        box.title = 'Klik voor loaderdetails';
+        Object.assign(box.style, {
+            position: 'fixed',
+            top: '10px',
+            right: '10px',
+            zIndex: '2147483647',
+            maxWidth: '340px',
+            padding: '7px 10px',
+            borderRadius: '9px',
+            border: '1px solid rgba(212,175,55,.85)',
+            background: 'rgba(20,16,8,.96)',
+            color: '#ffe08a',
+            font: '12px/1.35 Arial,sans-serif',
+            boxShadow: '0 4px 18px rgba(0,0,0,.45)',
+            cursor: 'pointer',
+            userSelect: 'none'
+        });
+        box.addEventListener('click', () => {
+            const d = pageWindow.__MRB_LOADER_STATUS__ || {};
+            alert([
+                `MRB Loader v${LOADER_VERSION}`,
+                `Status: ${d.message || 'onbekend'}`,
+                `MRB-versie: ${d.scriptVersion || 'onbekend'}`,
+                `Bron: ${d.source || 'onbekend'}`,
+                `Hash: ${d.hash || 'onbekend'}`,
+                `Laatste controle: ${d.checkedAt ? new Date(d.checkedAt).toLocaleString('nl-NL') : 'onbekend'}`
+            ].join('\n'));
+        });
+        (document.documentElement || document.body).appendChild(box);
+        return box;
+    }
+
+    function setVisibleStatus(message, state = 'info', details = {}, autoHideMs = 0) {
+        const colors = {
+            info:  { border: 'rgba(212,175,55,.85)', color: '#ffe08a', icon: '⏳' },
+            ok:    { border: 'rgba(105,255,135,.65)', color: '#b8ffbf', icon: '✅' },
+            warn:  { border: 'rgba(255,190,70,.75)', color: '#ffe08a', icon: '⚠️' },
+            error: { border: 'rgba(255,100,100,.75)', color: '#ffb5b5', icon: '❌' }
+        };
+        const theme = colors[state] || colors.info;
+        const box = ensureStatusBox();
+        box.style.borderColor = theme.border;
+        box.style.color = theme.color;
+        box.textContent = `${theme.icon} ${message}`;
+        box.style.display = 'block';
+
+        const snapshot = {
+            loaderVersion: LOADER_VERSION,
+            message,
+            state,
+            source: details.source || '',
+            scriptVersion: details.scriptVersion || '',
+            hash: details.hash || '',
+            checkedAt: details.checkedAt || Date.now()
+        };
+        pageWindow.__MRB_LOADER_STATUS__ = snapshot;
+
+        if (statusHideTimer) window.clearTimeout(statusHideTimer);
+        if (autoHideMs > 0) {
+            statusHideTimer = window.setTimeout(() => {
+                box.style.opacity = '0.72';
+                box.textContent = `✅ MRB ${snapshot.scriptVersion || ''} geladen`;
+            }, autoHideMs);
+        }
+    }
+
     if (pageWindow[RUN_GUARD]) {
         console.info('[MRB Loader v3] Loader is op deze pagina al actief.');
         return;
     }
     pageWindow[RUN_GUARD] = true;
+    setVisibleStatus('Controleren op de nieuwste MRB-versie…', 'info');
 
     function log(message, ...extra) {
         console.info(`[MRB Loader v${LOADER_VERSION}] ${message}`, ...extra);
@@ -122,6 +209,7 @@
         try {
             runner = compileScript(code, sourceLabel);
         } catch (error) {
+            setVisibleStatus(`Compileren mislukt via ${sourceLabel}`, 'error', { source: sourceLabel });
             fail(`Compileren via ${sourceLabel} mislukt.`, error);
             return false;
         }
@@ -137,15 +225,25 @@
                 GM_xmlhttpRequest
             );
 
+            const startedHash = simpleHash(code);
+            const scriptVersion = extractScriptVersion(code);
+            const checkedAt = Date.now();
             GM_setValue(KEY.lastSource, sourceLabel);
-            GM_setValue(KEY.lastSuccess, Date.now());
+            GM_setValue(KEY.lastSuccess, checkedAt);
+            GM_setValue(KEY.lastChecked, checkedAt);
+            GM_setValue(KEY.lastVersion, scriptVersion);
+            GM_setValue(KEY.lastHash, startedHash);
             GM_setValue(KEY.lastError, '');
             sessionStorage.removeItem(RECOVERY_KEY);
             sessionStorage.removeItem(RECOVERY_COUNT_KEY);
-            log(`MRB Gold gestart via ${sourceLabel}.`);
+            setVisibleStatus(`MRB v${scriptVersion} geladen via ${sourceLabel} • ${startedHash}`, 'ok', {
+                source: sourceLabel, scriptVersion, hash: startedHash, checkedAt
+            }, 7000);
+            log(`MRB Gold v${scriptVersion} gestart via ${sourceLabel} (hash ${startedHash}).`);
             return true;
         } catch (error) {
             pageWindow[SCRIPT_GUARD] = false;
+            setVisibleStatus(`Starten mislukt via ${sourceLabel}`, 'error', { source: sourceLabel });
             fail(`Uitvoeren via ${sourceLabel} mislukt.`, error);
             return false;
         }
@@ -211,6 +309,7 @@
             return false;
         }
 
+        setVisibleStatus(`${reason || 'GitHub niet beschikbaar.'} Reserveversie starten…`, 'warn', { source: slot });
         warn(`${reason || 'GitHub niet beschikbaar.'} Start ${slotDescription(slot, data)}.`);
         if (executeScript(data.code, slot === 'previous' ? 'cache-previous' : 'cache-current')) return true;
 
@@ -243,6 +342,7 @@
     function retryOrUseCache(attempt, reason) {
         if (attempt < MAX_ATTEMPTS) {
             const wait = RETRY_DELAY_MS * attempt;
+            setVisibleStatus(`${reason} Nieuwe poging volgt…`, 'warn');
             warn(`${reason} Nieuwe poging over ${Math.round(wait / 1000)} seconden.`);
             window.setTimeout(() => downloadLatest(attempt + 1), wait);
             return;
@@ -255,6 +355,7 @@
         const separator = SCRIPT_URL.includes('?') ? '&' : '?';
         const freshUrl = `${SCRIPT_URL}${separator}mrb_v3=${Date.now()}_${attempt}`;
 
+        setVisibleStatus(`GitHub controleren (${attempt}/${MAX_ATTEMPTS})…`, 'info');
         log(`GitHub-versie ophalen, poging ${attempt}/${MAX_ATTEMPTS}.`);
 
         GM_xmlhttpRequest({
