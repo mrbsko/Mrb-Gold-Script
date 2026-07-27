@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mrb script NL - MRB Gold Edition
 // @namespace    https://barafranca.nl
-// @version      11.11.50
+// @version      11.11.51
 // @description  MRB Gold Edition Captcha Badge Status Fix
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -29,6 +29,7 @@
 // v11.11.29: Loader-scopefix — centrale menu-, opslag- en timerhelpers worden gedeeld met alle losse modules buiten de hoofd-IIFE.
 // v11.11.26: Captcha-badgefix — UIT/Start krijgt altijd voorrang; het woord captcha alleen maakt een module niet meer actief.
 // v11.11.27: Module-uitfix — Captcha Alert stopt ook de achtergrondscan volledig; Test geluid wijzigt de aan/uit-status niet.
+// v11.11.51: Heist opent Groepsmisdaden uitsluitend bij een werkelijk vrije timer of een aantoonbaar actieve Heist-flow; oude eerste-navigatie- en idle-fallbacks zijn afgeschermd.
 // v11.11.50: Heist planner navigeert zelfstandig zodra de opgeslagen timer verloopt; geen afhankelijkheid meer van losse navigatiewatcher.
 // v11.11.45: Heist-flow gecontroleerd tegen v11.11.24; winstoverdracht gebruikt directe paginafunctie, paginacontext-injectie en native klikfallback.
 // v11.11.46: Crimes/Cars planner respecteert de echte module-timers; alleen een actieve interne flow krijgt een snelle vervolgcontrole.
@@ -8454,6 +8455,17 @@ try {
     if(!scriptAan || heistHardStopped) return;
     if (isLoggedOut()) return pauseForGate('Uitgelogd bij leader_start');
 
+    // v11.11.51 harde timer-guard: een oude timeout/watcher mag nooit een
+    // nieuwe Leider-flow openen zolang de echte opgeslagen Heist-timer loopt.
+    // Alleen een reeds actieve flow mag GroupCrimes blijven bezoeken.
+    const savedAt = Number(GM_Get(K_HEIST_NEXT_AVAILABLE_AT, 0)) || 0;
+    if (heistPhase === 'idle' && savedAt > Date.now() + 2000){
+      heistReleaseAction();
+      heistPlannerSchedule(savedAt + 1500, 'wacht op echte Heist-timer');
+      heistRegistryState('COOLDOWN', 'leider geblokkeerd door Heist-timer');
+      return;
+    }
+
     ensureHeistDailyReset();
 
     setHeistPhase('inviting');
@@ -8599,6 +8611,15 @@ try {
     }
 
     if (failsafeTimer) clearTimeout(failsafeTimer);
+
+    // v11.11.51: zonder actieve uitnodiging/startstatus niet eindeloos op
+    // Groepsmisdaden blijven terugkomen. Eerst Information lezen en daar de
+    // echte timer opnieuw vastleggen.
+    if (heistPhase === 'idle') {
+      heistReleaseAction();
+      return next(goInfo, randomDelay(3000,6000));
+    }
+
     next(()=>{
       if(!scriptAan || heistHardStopped) return;
       if (isLoggedOut()) return pauseForGate('Uitgelogd bij fallback GroupCrimes');
@@ -8908,6 +8929,18 @@ try {
   function slave_start(){
     if(!scriptAan || heistHardStopped) return;
     if (isLoggedOut()) return pauseForGate('Uitgelogd bij slave_start');
+
+    // v11.11.51: ook de Driver mag niet periodiek GroupCrimes openen terwijl
+    // zijn eigen Heist-timer nog loopt. Een actieve accept/start-flow blijft
+    // wel toegestaan.
+    const savedAt = Number(GM_Get(K_HEIST_NEXT_AVAILABLE_AT, 0)) || 0;
+    if (heistPhase === 'idle' && savedAt > Date.now() + 2000){
+      heistReleaseAction();
+      heistPlannerSchedule(savedAt + 1500, 'wacht op echte Heist-timer');
+      heistRegistryState('COOLDOWN', 'Driver geblokkeerd door Heist-timer');
+      return;
+    }
+
     ensureHeistDailyReset();
     resetSlaveChecks();
     loadPage('/?module=GroupCrimes');
@@ -9461,7 +9494,7 @@ try {
 
   // ---- V9 fase 5 planner-interface ----
   unsafeWindow.mrbV9Heist = {
-    version:'11.8.0',
+    version:'11.11.51',
     isRunning:()=>!!scriptAan,
     role:()=>heistRole,
     setPlannerManaged:(on)=>{
@@ -18988,9 +19021,17 @@ function mrbSharedSet(key, value){
     if (!plannerIsQuiet() || !crimesCarsAreQuiet()) return;
 
     const role = String(heist.role?.() || 'leader').toLowerCase();
-    // Leider alleen als de timer werkelijk op Nu staat.
-    // Driver controleert periodiek op een uitnodiging, ook zonder eigen timerlabel.
-    if (role !== 'slave' && role !== 'driver' && !heistAvailableNow()) return;
+    const state = heist.state?.() || {};
+    const savedAt = Number(state.nextAt || 0) || 0;
+    const activePhase = /^(inviting|waiting_accept|started)$/i.test(String(state.phase || ''));
+
+    // v11.11.51: deze oude eerste-navigatiewatcher mag de centrale planner
+    // nooit omzeilen. Voor Leider en Driver geldt dezelfde harde regel:
+    // alleen bij Nu/Now of tijdens een aantoonbaar actieve Heist-flow.
+    if (!activePhase) {
+      if (savedAt > Date.now() + 2000) return;
+      if (!heistAvailableNow()) return;
+    }
 
     const last = Number(mrbSharedGet(K_LAST_NAV, 0)) || 0;
     if (Date.now() - last < NAV_COOLDOWN_MS) return;
