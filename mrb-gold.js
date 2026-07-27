@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mrb script NL - MRB Gold Edition
 // @namespace    https://barafranca.nl
-// @version      11.12.00
+// @version      11.12.01
 // @description  MRB Gold Edition CPU Performance Hotfix
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -20,6 +20,7 @@
 // @run-at       document-end
 // ==/UserScript==
 
+// v11.12.01: Race planner voert een verlopen racestart nu echt uit in plaats van hem opnieuw in te plannen.
 // v11.12.00: Stable Base (gebaseerd op v11.11.24) — voert de JavaScript-link MakeTransfer(token) rechtstreeks in de paginacontext uit en controleert alleen de positieve Driver-uitbetaling.
 // v11.11.21: CPU-hotfix - adaptieve rustige puls, zware globale DOM-observers begrensd en slapende modules veroorzaken geen permanente scans.
 // v11.8.0: Heist 2.0 — één plannerautoriteit, dubbele lokale navigatielussen uitgeschakeld onder plannerbeheer en centrale state-registratie.
@@ -6965,6 +6966,24 @@ try {
       if (plan && Number(plan.at) > Date.now()+300) {
         return { nextAt:Number(plan.at), status:plan.type === 'start' ? 'racestart gepland' : 'race-timer gepland' };
       }
+
+      // v11.12.01: een verlopen plannerplan moet worden uitgevoerd.
+      // Voorheen werd het plan gewist en opnieuw via checkAvailability ingepland.
+      // Daardoor bleef de Leider op information.php staan en navigeerde Race nooit.
+      if (plan && plan.type === 'start') {
+        clearRacePlan();
+        if (raceRole === 'leader') leader_startRace();
+        else slave_startRace();
+        return { nextAt:Date.now()+5000, status:'racestart uitgevoerd' };
+      }
+
+      if (plan && plan.type === 'info') {
+        clearRacePlan();
+        guiLoad('/information.php');
+        next(()=>checkAvailability(true), randomDelay(3000,6000));
+        return { nextAt:Date.now()+5000, status:'race-timer opnieuw controleren' };
+      }
+
       clearRacePlan();
       bootstrapRaceIdle();
       const nextPlan = loadRacePlan();
