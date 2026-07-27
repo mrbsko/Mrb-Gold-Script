@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         MRB Gold Edition Loader v3.1.1 Status Fix
+// @name         MRB Gold Edition Loader v3.1.3 Reload Loop Fix
 // @namespace    https://barafranca.nl
-// @version      3.1.1
-// @description  GitHub-loader met zichtbare status, veilige cachefallback en herstel zonder vastlopende herlaadlus.
+// @version      3.1.3
+// @description  GitHub-loader met zichtbare status, veilige cachefallback en herstel zonder herlaadlus.
 // @author       Mrb
 // @match        http://barafranca.nl/*
 // @match        https://barafranca.nl/*
@@ -24,7 +24,7 @@
 (function () {
     'use strict';
 
-    const LOADER_VERSION = '3.1.1';
+    const LOADER_VERSION = '3.1.3';
     const SCRIPT_URL = 'https://raw.githubusercontent.com/Mrbsko/Mrb-Gold-Script/main/mrb-gold.js';
 
     const KEY = Object.freeze({
@@ -342,21 +342,33 @@
         const mode = String(sessionStorage.getItem(RECOVERY_KEY) || '');
         if (!mode) return false;
 
+        // De herstelvlag eerst wissen, zodat deze paginalaad nooit opnieuw in een lus komt.
         sessionStorage.removeItem(RECOVERY_KEY);
+        sessionStorage.removeItem(RECOVERY_COUNT_KEY);
 
-        if (mode === 'previous') {
-            const started = runSlot('previous', 'Automatische rollback na een uitvoerfout.', false);
-            if (started) return true;
-        } else if (mode === 'current') {
-            const started = runSlot('current', 'Automatisch herstel met de laatst werkende versie.', true);
-            if (started) return true;
+        const preferredSlot = mode === 'previous' ? 'previous' : 'current';
+        setVisibleStatus('Werkende reserveversie rechtstreeks starten…', 'warn', {
+            source: preferredSlot
+        });
+        warn(`Herstelmodus ${mode}: reserveversie wordt zonder extra herladen gestart.`);
+
+        // Geen nieuwe reload aanvragen wanneer de cache zelf niet start. Probeer hooguit
+        // de andere cache direct op dezelfde pagina en stop daarna met een zichtbare fout.
+        if (runSlot(preferredSlot, 'Herstel na een fout in de GitHub-versie.', false)) {
+            return true;
         }
 
-        // Geen bruikbare cache: herstelstatus wissen en GitHub normaal opnieuw controleren.
-        sessionStorage.removeItem(RECOVERY_COUNT_KEY);
-        warn('Herstelmodus bevatte geen werkende reserveversie; GitHub wordt opnieuw gecontroleerd.');
-        setVisibleStatus('Geen reserveversie; GitHub opnieuw controleren…', 'warn');
-        return false;
+        const alternateSlot = preferredSlot === 'current' ? 'previous' : 'current';
+        if (runSlot(alternateSlot, 'Eerste reserveversie kon niet worden gestart.', false)) {
+            return true;
+        }
+
+        setVisibleStatus('Geen werkende reserveversie beschikbaar; herladen is gestopt', 'error', {
+            source: 'recovery',
+            error: 'Beide reserveversies konden niet worden gestart.'
+        });
+        fail('Herstel gestopt: beide reserveversies zijn ongeldig of gaven een startfout.');
+        return true;
     }
 
     function retryOrUseCache(attempt, reason) {
