@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mrb script NL - MRB Gold Edition
 // @namespace    https://barafranca.nl
-// @version      11.11.33
+// @version      11.11.35
 // @description  MRB Gold Edition Captcha Badge Status Fix
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -21,6 +21,7 @@
 // ==/UserScript==
 
 // v11.11.32: Harde TDZ-fix — de interne menuhelper heet nergens meer addBlock; alle hoofdmodules gebruiken mrbCoreAddBlock en alleen de gedeelde API behoudt de propertynaam addBlock.
+// v11.11.35: Race-actielockfix — Race geeft de centrale actielock altijd vrij wanneer alleen een toekomstplan wordt ingepland of een controle klaar is.
 // v11.11.33: Race-reactiefix — uitnodigen, accepteren en auto kiezen worden direct gewekt door paginawijzigingen; lange 5-15s Race-polls verkort.
 // v11.11.29: Loader-scopefix — centrale menu-, opslag- en timerhelpers worden gedeeld met alle losse modules buiten de hoofd-IIFE.
 // v11.11.26: Captcha-badgefix — UIT/Start krijgt altijd voorrang; het woord captcha alleen maakt een module niet meer actief.
@@ -7063,11 +7064,18 @@ try {
       raceRegistryState('PLANNER_WAKE', 'planner controleert Race');
       const plan = loadRacePlan();
       if (plan && Number(plan.at) > Date.now()+300) {
+        // Alleen wachten op een toekomstig Race-moment vereist geen exclusieve
+        // spelactie. Geef de plannerlock direct vrij zodat Crimes, Cars, D&D,
+        // Heist en andere modules ondertussen normaal kunnen draaien.
+        raceReleaseAction();
         return { nextAt:Number(plan.at), status:plan.type === 'start' ? 'racestart gepland' : 'race-timer gepland' };
       }
       clearRacePlan();
       bootstrapRaceIdle();
       const nextPlan = loadRacePlan();
+      // De wake-up heeft alleen planning bijgewerkt. Een eventuele echte Race-flow
+      // neemt later zelf opnieuw de lock wanneer er daadwerkelijk geklikt wordt.
+      raceReleaseAction();
       return { nextAt:nextPlan && Number(nextPlan.at) ? Number(nextPlan.at) : Date.now()+5000, status:'race gecontroleerd' };
     }
   };
@@ -17481,6 +17489,9 @@ function mrbSharedSet(key, value){
     </details>
   `, '00-v9-diagnostics');
 
+  // Interne diagnose blijft volledig actief, maar hoort niet in het gebruikersmenu.
+  block.remove();
+
   function formatTime(ts){
     try { return new Date(ts).toLocaleTimeString('nl-NL', {hour:'2-digit', minute:'2-digit', second:'2-digit'}); }
     catch(e) { return '-'; }
@@ -18669,6 +18680,9 @@ function mrbSharedSet(key, value){
     </details>
   `, '00-v10-final-system');
 
+  // Interne systeemcontrole blijft volledig actief, maar hoort niet in het gebruikersmenu.
+  block.remove();
+
   function inspect(){
     const planner=unsafeWindow.mrbV9Planner;
     const tasks=planner?.listTasks?.() || [];
@@ -18786,6 +18800,9 @@ function mrbSharedSet(key, value){
     <div id="mrbV10RegList" style="font-size:11px;line-height:1.45;margin-top:5px;"></div>
     <div class="gm-row" style="margin-top:6px;"><button id="mrbV10RegRetry" class="gm-btn">Opnieuw koppelen</button></div>
   `,'00-v10-registration');
+
+  // Interne registratiestatus blijft volledig actief, maar hoort niet in het gebruikersmenu.
+  block.remove();
 
   function render(){
     const p=unsafeWindow.mrbV9Planner;
