@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mrb script NL - MRB Gold Edition
 // @namespace    https://barafranca.nl
-// @version      11.11.54
+// @version      11.11.55
 // @description  MRB Gold Edition Captcha Badge Status Fix
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -21,6 +21,7 @@
 // ==/UserScript==
 
 // v11.11.53: Centrale navigatiebeveiliging — blokkeert navigatiestormen, dubbele doelen en alle automatische navigatie tijdens Cloudflare.
+// v11.11.55: Race-navigation retryfix — een door de centrale guard tijdelijk geblokkeerde Race-navigatie wordt eenmaal veilig opnieuw aangeboden in plaats van stil verloren te gaan.
 // v11.11.54: Session Manager gekoppeld aan de centrale Navigation Guard; sessie/timersync wacht op navigatierust en start nooit tijdens Cloudflare of een recente paginawissel.
 // v11.11.48: Race due-planfix — een verlopen startplan voert nu daadwerkelijk de Race-flow uit in plaats van opnieuw een startplan te maken.
 // v11.11.47: Race Core uit v11.2.0 hersteld; volledige Race-cyclus onder één centrale actielock en lokale watcher uit bij plannerbeheer.
@@ -6024,7 +6025,7 @@ try {
   const $jq = ()=> (unsafeWindow.$ || unsafeWindow.jQuery || null);
 
   const guiLoad = (path)=>{
-    if (unsafeWindow.mrbNavigate?.(path,{source:'race'})) return;
+    if (unsafeWindow.mrbNavigate?.(path,{source:'race',retryBlocked:true})) return;
     try { unsafeWindow.omerta.GUI.container.loadPage(path); }
     catch { if (path.startsWith('/')) location.href = path; else location.href = '/'+path.replace(/^\//,''); }
   };
@@ -17632,6 +17633,7 @@ function mrbSharedSet(key, value){
   let lastGuardedNavigationTarget = '';
   let lastGuardedNavigationOwner = '';
   let navigationGuardBlocked = 0;
+  const guardedRetryTimers = new Map();
   const tasks = new Map();
 
   function now(){ return Date.now(); }
@@ -17763,6 +17765,23 @@ function mrbSharedSet(key, value){
     return true;
   }
 
+  // Alleen modules die dit expliciet aanvragen krijgen een uitgestelde retry.
+  // Dit voorkomt dat een tijdelijke guard-blokkade de Race-state-machine laat
+  // doorlopen alsof de doelpagina al geopend is, zonder oude globale loops terug
+  // te brengen. Per eigenaar blijft maximaal één laatste aanvraag in de wachtrij.
+  function queueGuardedRetry(target, options, delayMs=1000){
+    if(options?.retryBlocked !== true) return;
+    const owner=clean(options.owner || options.source || currentTask?.id || 'mrb-direct');
+    const old=guardedRetryTimers.get(owner);
+    if(old) clearTimeout(old);
+    const wait=Math.max(500,Math.min(25000,Number(delayMs)||1000));
+    const timer=setTimeout(()=>{
+      guardedRetryTimers.delete(owner);
+      navigate(target,{...options,retryBlocked:true});
+    },wait);
+    guardedRetryTimers.set(owner,timer);
+  }
+
   function navigate(target, options={}){
     const normalized = normalizeNavigationTarget(target);
     if (!normalized) return false;
@@ -17772,15 +17791,18 @@ function mrbSharedSet(key, value){
     const ts = now();
 
     if (!forced && navigationGuardCloudflareActive()) {
+      queueGuardedRetry(normalized,options,15000);
       return navigationGuardBlock('Cloudflare actief; alle automatisering gepauzeerd', owner, normalized);
     }
 
     if (!forced && lastGuardedNavigationAt) {
       const elapsed = ts - lastGuardedNavigationAt;
       if (normalized === lastGuardedNavigationTarget && elapsed < NAV_GUARD_SAME_TARGET_GAP) {
+        queueGuardedRetry(normalized,options,NAV_GUARD_SAME_TARGET_GAP-elapsed+150);
         return navigationGuardBlock(`dubbel doel binnen ${NAV_GUARD_SAME_TARGET_GAP / 1000}s`, owner, normalized);
       }
       if (elapsed < NAV_GUARD_MIN_GAP) {
+        queueGuardedRetry(normalized,options,NAV_GUARD_MIN_GAP-elapsed+150);
         return navigationGuardBlock(`centrale rustpauze nog ${Math.ceil((NAV_GUARD_MIN_GAP - elapsed) / 1000)}s`, owner, normalized);
       }
     }
@@ -17788,9 +17810,11 @@ function mrbSharedSet(key, value){
     releaseExpiredNavigationLock();
     const alreadyOwned = !!navigationLock && navigationLock.owner === owner;
     if (!canNavigate(owner)) {
+      queueGuardedRetry(normalized,options,Math.max(1000,(navigationLock?.until||ts+1000)-ts+150));
       return navigationGuardBlock(`navigatielock van ${navigationLock?.owner || 'andere module'}`, owner, normalized);
     }
     if (!alreadyOwned && !acquireNavigation(owner, Number(options.ttl) || NAV_TTL)) {
+      queueGuardedRetry(normalized,options,1000);
       return navigationGuardBlock('navigatielock niet verkregen', owner, normalized);
     }
 
@@ -18245,7 +18269,7 @@ function mrbSharedSet(key, value){
   // Session Manager. Die kunnen hiermee wachten tot de navigatielaag rustig is
   // zonder zelf een tweede planner, reload of directe loadPage te starten.
   unsafeWindow.mrbNavigationGuard = Object.freeze({
-    version:'11.11.54',
+    version:'11.11.55',
     isCloudflareActive:()=>navigationGuardCloudflareActive(),
     isQuiet(minQuietMs=5000){
       const quiet=Math.max(0,Number(minQuietMs)||0);
