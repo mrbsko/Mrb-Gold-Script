@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MRB Gold Edition Loader
 // @namespace    https://barafranca.nl
-// @version      4.0.0
+// @version      11.12.40
 // @description  Laadt automatisch de nieuwste MRB Gold-versie vanaf GitHub met stille cache en rollback.
 // @author       Mrb
 // @match        http://barafranca.nl/*
@@ -29,7 +29,7 @@
 (function () {
     'use strict';
 
-    const LOADER_VERSION = '4.0.0';
+    const LOADER_VERSION = '11.12.40';
     const SCRIPT_URL = 'https://raw.githubusercontent.com/mrbsko/Mrb-Gold-Script/main/mrb-gold.js';
     const REQUEST_TIMEOUT = 30000;
     const MIN_SCRIPT_LENGTH = 50000;
