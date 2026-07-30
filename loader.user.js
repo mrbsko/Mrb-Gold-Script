@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         MRB Gold Edition Loader v3.1 Source Status
+// @name         MRB Gold Edition Loader
 // @namespace    https://barafranca.nl
 // @version      3.1.0
 // @description  Laadt MRB Gold vanaf GitHub met rollback en toont bron, versie, hash en laadstatus.
