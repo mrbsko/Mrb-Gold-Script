@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         MRB Gold Edition Loader
+// @name         MRB Gold Edition Loader v3.2 Persistent Status
 // @namespace    https://barafranca.nl
-// @version      3.1.0
-// @description  Laadt MRB Gold vanaf GitHub met rollback en toont bron, versie, hash en laadstatus.
+// @version      3.2.0
+// @description  Laadt MRB Gold vanaf GitHub met rollback en blijvende bron-, versie- en foutstatus.
 // @author       Mrb
 // @match        http://barafranca.nl/*
 // @match        https://barafranca.nl/*
@@ -26,7 +26,7 @@
 (function () {
     'use strict';
 
-    const LOADER_VERSION = '3.1.0';
+    const LOADER_VERSION = '3.2.0';
     const SCRIPT_URL = 'https://raw.githubusercontent.com/Mrbsko/Mrb-Gold-Script/main/mrb-gold.js';
 
     const KEY = Object.freeze({
@@ -45,8 +45,8 @@
         lastSuccess: 'mrb_loader_v31_last_success'
     });
 
-    const RUN_GUARD = '__MRB_GOLD_LOADER_V31_ACTIVE__';
-    const SCRIPT_GUARD = '__MRB_GOLD_SCRIPT_V31_STARTED__';
+    const RUN_GUARD = '__MRB_GOLD_LOADER_V32_ACTIVE__';
+    const SCRIPT_GUARD = '__MRB_GOLD_SCRIPT_V32_STARTED__';
     const RECOVERY_KEY = 'mrb_loader_v31_recovery_mode';
     const RECOVERY_COUNT_KEY = 'mrb_loader_v31_recovery_count';
     const MIN_SCRIPT_LENGTH = 50000;
@@ -57,7 +57,7 @@
     const pageWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
 
     if (pageWindow[RUN_GUARD]) {
-        console.info('[MRB Loader v3.1] Loader is op deze pagina al actief.');
+        console.info('[MRB Loader v3.2] Loader is op deze pagina al actief.');
         return;
     }
     pageWindow[RUN_GUARD] = true;
@@ -69,7 +69,9 @@
         scriptVersion: 'onbekend',
         hash: 'onbekend',
         loadedAt: 0,
-        error: ''
+        error: '',
+        detail: 'Loader wordt gestart',
+        githubReachable: null
     };
 
     function extractVersion(code) {
@@ -102,28 +104,71 @@
         renderStatus();
     }
 
-    function renderStatus() {
+    function statusText() {
+        if (state.status === 'geladen') {
+            if (state.source === 'github') return `✓ GitHub bereikbaar\n✓ MRB Gold v${state.scriptVersion} geladen\n✓ Bron: GitHub`;
+            return `⚠ GitHub niet beschikbaar of versie afgekeurd\n✓ MRB Gold v${state.scriptVersion} geladen\n✓ Bron: ${state.source === 'cache-previous' ? 'vorige cache' : 'cache'}`;
+        }
+        if (state.status === 'fout') return `✕ MRB kon niet worden gestart\n${state.error || 'Onbekende fout'}`;
+        return `… MRB Loader v${LOADER_VERSION}\n${state.detail || state.status}`;
+    }
+
+    function ensureStatusElements() {
         let box = document.getElementById('mrb-loader-source-status');
         if (!box) {
             box = document.createElement('div');
             box.id = 'mrb-loader-source-status';
-            box.title = 'Klik om de loaderstatus in de console te tonen';
-            box.addEventListener('click', () => console.info('[MRB Loader status]', pageWindow.mrbLoaderStatus));
-            document.documentElement.appendChild(box);
+            box.title = 'Klik voor uitgebreide loaderstatus';
+            box.addEventListener('click', () => {
+                const panel = document.getElementById('mrb-loader-detail-status');
+                if (panel) panel.classList.toggle('mrb-loader-visible');
+                console.info('[MRB Loader status]', pageWindow.mrbLoaderStatus);
+            });
+            (document.body || document.documentElement).appendChild(box);
         }
+        let panel = document.getElementById('mrb-loader-detail-status');
+        if (!panel) {
+            panel = document.createElement('div');
+            panel.id = 'mrb-loader-detail-status';
+            panel.addEventListener('click', () => panel.classList.remove('mrb-loader-visible'));
+            (document.body || document.documentElement).appendChild(panel);
+        }
+        return { box, panel };
+    }
+
+    function renderStatus() {
+        const { box, panel } = ensureStatusElements();
         const ok = state.status === 'geladen';
         const source = state.source === 'github' ? 'GitHub' : state.source.startsWith('cache') ? 'Cache' : state.source;
         box.className = ok ? 'mrb-loader-ok' : state.error ? 'mrb-loader-error' : 'mrb-loader-loading';
         box.innerHTML = `<strong>MRB ${state.scriptVersion}</strong><span>${source} | ${state.hash}</span>`;
+        panel.className = panel.className.replace(/\bmrb-loader-(ok|loading|error)\b/g, '').trim();
+        panel.classList.add(ok ? 'mrb-loader-ok' : state.error ? 'mrb-loader-error' : 'mrb-loader-loading');
+        panel.innerHTML = `<strong>MRB Loader v${LOADER_VERSION}</strong><pre>${statusText()}</pre><small>Hash: ${state.hash}\nKlik om te sluiten</small>`;
+    }
+
+    function showStartupPanel() {
+        const { panel } = ensureStatusElements();
+        panel.classList.add('mrb-loader-visible');
+        window.setTimeout(() => panel.classList.remove('mrb-loader-visible'), 8000);
     }
 
     GM_addStyle(`
       #mrb-loader-source-status{position:fixed;right:10px;bottom:10px;z-index:2147483646;min-width:145px;padding:7px 10px;border-radius:9px;font:12px/1.25 Arial,sans-serif;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.45);border:1px solid rgba(255,255,255,.25);color:#fff;background:rgba(20,20,20,.92)}
       #mrb-loader-source-status strong,#mrb-loader-source-status span{display:block}#mrb-loader-source-status span{font-size:10px;opacity:.86;margin-top:2px}
-      #mrb-loader-source-status.mrb-loader-ok{border-color:#66d17a;background:rgba(16,65,27,.94)}
-      #mrb-loader-source-status.mrb-loader-loading{border-color:#d4af37;background:rgba(75,58,12,.94)}
-      #mrb-loader-source-status.mrb-loader-error{border-color:#ef6b6b;background:rgba(90,20,20,.95)}
+      #mrb-loader-detail-status{display:none;position:fixed;right:10px;bottom:64px;z-index:2147483647;width:285px;padding:12px;border-radius:10px;font:12px/1.4 Arial,sans-serif;cursor:pointer;box-shadow:0 5px 20px rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.25);color:#fff;background:rgba(20,20,20,.97)}
+      #mrb-loader-detail-status.mrb-loader-visible{display:block}#mrb-loader-detail-status strong{display:block;font-size:13px;margin-bottom:5px}#mrb-loader-detail-status pre{white-space:pre-wrap;margin:0 0 6px;font:12px/1.45 Arial,sans-serif}#mrb-loader-detail-status small{display:block;opacity:.72;white-space:pre-wrap}
+      #mrb-loader-source-status.mrb-loader-ok,#mrb-loader-detail-status.mrb-loader-ok{border-color:#66d17a;background:rgba(16,65,27,.96)}
+      #mrb-loader-source-status.mrb-loader-loading,#mrb-loader-detail-status.mrb-loader-loading{border-color:#d4af37;background:rgba(75,58,12,.96)}
+      #mrb-loader-source-status.mrb-loader-error,#mrb-loader-detail-status.mrb-loader-error{border-color:#ef6b6b;background:rgba(90,20,20,.97)}
     `);
+
+    // Houdt de status zichtbaar als de website delen van de pagina opnieuw opbouwt.
+    const statusKeeper = new MutationObserver(() => {
+        if (!document.getElementById('mrb-loader-source-status') || !document.getElementById('mrb-loader-detail-status')) renderStatus();
+    });
+    statusKeeper.observe(document.documentElement, { childList: true, subtree: true });
+    window.setInterval(() => renderStatus(), 15000);
 
     function log(message, ...extra) { console.info(`[MRB Loader v${LOADER_VERSION}] ${message}`, ...extra); }
     function warn(message, ...extra) { console.warn(`[MRB Loader v${LOADER_VERSION}] ${message}`, ...extra); }
@@ -213,7 +258,9 @@
             return slot === 'current' && allowPrevious ? runSlot('previous', reason, false) : false;
         }
         warn(`${reason || 'GitHub niet beschikbaar.'} Cache ${data.version || extractVersion(data.code)} wordt gestart.`);
-        return executeScript(data.code, slot === 'previous' ? 'cache-previous' : 'cache-current');
+        const ok = executeScript(data.code, slot === 'previous' ? 'cache-previous' : 'cache-current');
+        if (ok) showStartupPanel();
+        return ok;
     }
 
     function requestRecoveryReload(mode, reason) {
@@ -244,8 +291,8 @@
     }
 
     function downloadLatest(attempt) {
-        publishStatus({ status:'downloaden', source:'github', error:'' });
-        const freshUrl = `${SCRIPT_URL}?mrb_v31=${Date.now()}_${attempt}`;
+        publishStatus({ status:'downloaden', source:'github', error:'', detail:`GitHub controleren, poging ${attempt}/${MAX_ATTEMPTS}`, githubReachable:null });
+        const freshUrl = `${SCRIPT_URL}?mrb_v32=${Date.now()}_${attempt}`;
         log(`GitHub-versie ophalen, poging ${attempt}/${MAX_ATTEMPTS}.`);
         GM_xmlhttpRequest({
             method:'GET', url:freshUrl,
@@ -254,20 +301,22 @@
             onload(response) {
                 const status = Number(response.status || 0);
                 const code = String(response.responseText || '').trim();
-                if (status < 200 || status >= 300) { retryOrUseCache(attempt, `GitHub gaf HTTP ${status || 'onbekend'}.`); return; }
-                if (!isValidScript(code)) { retryOrUseCache(attempt, 'GitHub-download is geen geldig MRB-script.'); return; }
+                if (status < 200 || status >= 300) { publishStatus({githubReachable:false}); retryOrUseCache(attempt, `GitHub gaf HTTP ${status || 'onbekend'}.`); return; }
+                if (!isValidScript(code)) { publishStatus({githubReachable:true}); retryOrUseCache(attempt, 'GitHub-download is geen geldig MRB-script.'); return; }
                 try { compileScript(code, 'github-validation'); }
                 catch (error) { retryOrUseCache(attempt, `GitHub-versie bevat syntaxfout: ${error.message || error}`); return; }
-                if (executeScript(code, 'github')) { storeSuccessfulDownload(code); return; }
+                publishStatus({githubReachable:true});
+                if (executeScript(code, 'github')) { storeSuccessfulDownload(code); showStartupPanel(); return; }
                 requestRecoveryReload('current', 'Nieuwe GitHub-versie gaf een runtimefout.');
             },
-            onerror(error) { retryOrUseCache(attempt, 'Netwerkfout tijdens ophalen van GitHub.'); console.debug('[MRB Loader v3.1]', error); },
-            ontimeout() { retryOrUseCache(attempt, `GitHub reageerde niet binnen ${REQUEST_TIMEOUT / 1000} seconden.`); },
-            onabort() { retryOrUseCache(attempt, 'GitHub-aanvraag werd afgebroken.'); }
+            onerror(error) { publishStatus({githubReachable:false}); retryOrUseCache(attempt, 'Netwerkfout tijdens ophalen van GitHub.'); console.debug('[MRB Loader v3.2]', error); },
+            ontimeout() { publishStatus({githubReachable:false}); retryOrUseCache(attempt, `GitHub reageerde niet binnen ${REQUEST_TIMEOUT / 1000} seconden.`); },
+            onabort() { publishStatus({githubReachable:false}); retryOrUseCache(attempt, 'GitHub-aanvraag werd afgebroken.'); }
         });
     }
 
-    publishStatus({ status:'starten', source:'loader', scriptVersion:'...', hash:'........' });
+    publishStatus({ status:'starten', source:'loader', scriptVersion:'...', hash:'........', detail:'Loader wordt gestart' });
+    showStartupPanel();
     log(`Loader gestart op ${location.hostname}.`);
     if (!handleRecoveryMode()) downloadLatest(1);
 })();
