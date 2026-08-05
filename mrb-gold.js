@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MRB Gold Recovery 1.0
-// @version      5.8.20
-// @description  Heist Sessie Manager opent het loginvenster en logt betrouwbaar in wanneer de geplande timer verstrijkt.
+// @version      5.8.21
+// @description  Spot Driver herkent snel een geannuleerde en opnieuw verstuurde uitnodiging zonder vast te blijven staan.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
 // @include      https://*.barafranca.nl/*
@@ -19,6 +19,7 @@
 // ==/UserScript==
 
 // ==========================================================
+// Release 5.8.21: Spot Driver controleert begrensd op opnieuw verstuurde uitnodigingen en herstelt zijn oude acceptatiestatus.
 // Release 5.8.20: Heist Sessie Manager opent en verwerkt het echte loginformulier zelfstandig.
 // Release 5.8.19: stabiele GitHub-build.
 // Sprint 5.7.0: Spot Overval clean rebuild volgens de stabiele COM-opbouw.
@@ -1322,7 +1323,8 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
     leaderGo: P + 'leader_go', driverAccepted: P + 'driver_accepted',
     startCount: P + 'start_count', lastAction: P + 'last_action', driverName: P + 'driver_name',
     lastReadyCheck: P + 'last_ready_check', driverAcceptedAt: P + 'driver_accepted_at',
-    startClickedAt: P + 'start_clicked_at', secondPass: P + 'second_pass'
+    startClickedAt: P + 'start_clicked_at', secondPass: P + 'second_pass',
+    driverLastVerify: P + 'driver_last_verify'
   };
 
   const DRIVER_SETTING_KEYS = ['race_partner_name', 'driver_name', 'mrb_driver_name', 'partner_name'];
@@ -1337,6 +1339,7 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
   const START_BACKGROUND_RECHECK = 35000;
   const START_MAX_CLICKS = 2;
   const START_FINALIZE_WAIT = 9000;
+  const DRIVER_REINVITE_RECHECK = 8000;
 
   let panel, statusEl, detailEl, familyLabel, toggleBtn, roleLeader, roleDriver;
   let busy = false;
@@ -1356,6 +1359,7 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
     if (/COOLDOWN/i.test(st)) return COOLDOWN_RECHECK;
     if (/WAIT_DRIVER_READY|RECHECK_DRIVER_READY|INVITE_SENT|WAIT_ACTIVE_DETAILS/i.test(st)) return DRIVER_READY_RECHECK;
     if (/WAIT_SERVER_AFTER_START|WAIT_START_SETTLE|START_RECHECK_PENDING|SECOND_PASS/i.test(st)) return 1200;
+    if (role() === 'driver' && /DRIVER_(?:WAIT_INVITE|WAIT_LEADER|WAIT_SERVER|TIMER_READY|GO_GROUP|OPEN_SPOT|READY)/i.test(st)) return 4000;
     if (/COMPLETE|LEADER_START_CLICKED|DRIVER_READY/i.test(st)) return 5000;
     if (isInfoPage()) return IDLE_RECHECK;
     return PAGE_RECHECK;
@@ -1397,7 +1401,7 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
 
   function resetFlow(keepTimer = true) {
     set(K.state, 'IDLE'); set(K.leaderGo, false); set(K.driverAccepted, false);
-    set(K.startCount, 0); set(K.lastAction, 0); set(K.lastNav, 0); set(K.lastReadyCheck, 0); set(K.driverAcceptedAt, 0); set(K.startClickedAt, 0); set(K.secondPass, '');
+    set(K.startCount, 0); set(K.lastAction, 0); set(K.lastNav, 0); set(K.lastReadyCheck, 0); set(K.driverAcceptedAt, 0); set(K.driverLastVerify, 0); set(K.startClickedAt, 0); set(K.secondPass, '');
     if (!keepTimer) set(K.timerReady, false);
   }
 
@@ -1412,6 +1416,7 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
       set(K.lastNav, 0);
       set(K.lastReadyCheck, 0);
       set(K.driverAcceptedAt, 0);
+      set(K.driverLastVerify, 0);
       set(K.startClickedAt, 0);
       set(K.secondPass, '');
     }
@@ -1873,7 +1878,8 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
     if (isDriverReadyPage()) {
       set(K.driverAccepted, true);
       if (!Number(get(K.driverAcceptedAt, 0) || 0)) set(K.driverAcceptedAt, Date.now());
-      setStatus('DRIVER_READY', 'Driver heeft auto ingezet en wacht passief op de Leider. Annuleren en opnieuw openen zijn geblokkeerd.');
+      set(K.driverLastVerify, Date.now());
+      setStatus('DRIVER_READY', 'Driver heeft auto ingezet en wacht op de Leider. Een geannuleerde en opnieuw verstuurde uitnodiging wordt automatisch herkend.');
       return;
     }
     if (isDriverInvitePage()) {
@@ -1884,7 +1890,7 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
       // Na annuleren verschijnt opnieuw een echte Accepteer-knop. Pas na 12 seconden mag dit
       // als nieuwe uitnodiging gelden, zodat een trage serverreactie nooit een dubbele klik geeft.
       if (accepted && accept && acceptedAt && Date.now() - acceptedAt > 12000) {
-        set(K.driverAccepted, false); set(K.driverAcceptedAt, 0); set(K.lastAction, 0);
+        set(K.driverAccepted, false); set(K.driverAcceptedAt, 0); set(K.driverLastVerify, 0); set(K.lastAction, 0);
       }
 
       if (get(K.driverAccepted, false)) {
@@ -1895,7 +1901,7 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
       const car = chooseCar(); if (!car.ok) { setStatus('WAIT_CAR', car.reason); return; }
       if (!accept) { setStatus('WAIT_ACCEPT', 'Auto gekozen, maar Accepteer Uitnodiging niet gevonden.'); return; }
       if (clickOnce(accept)) {
-        set(K.driverAccepted, true); set(K.driverAcceptedAt, Date.now());
+        set(K.driverAccepted, true); set(K.driverAcceptedAt, Date.now()); set(K.driverLastVerify, Date.now());
         setStatus('DRIVER_ACCEPT_CLICKED', `Auto gekozen: ${car.label}. Uitnodiging exact één keer geaccepteerd.`);
       }
       return;
@@ -1907,10 +1913,19 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
       set(K.timerReady, timer.ready);
       if (get(K.driverAccepted, false)) {
         if (!timer.ready) {
-          set(K.driverAccepted, false); set(K.driverAcceptedAt, 0); set(K.lastAction, 0);
+          set(K.driverAccepted, false); set(K.driverAcceptedAt, 0); set(K.driverLastVerify, 0); set(K.lastAction, 0);
           setStatus('DRIVER_COOLDOWN', `Spot Overval is voorbij. Cooldown: ${timer.raw || '-'}. Driver-opdracht gewist.`);
         } else {
-          setStatus('DRIVER_WAIT_LEADER', 'Auto is ingezet. Driver blijft passief wachten op de Leider en opent Groepsmisdaden niet opnieuw.');
+          const lastVerify = Number(get(K.driverLastVerify, 0) || 0);
+          const elapsed = Date.now() - lastVerify;
+          if (elapsed >= DRIVER_REINVITE_RECHECK && canNavigate()) {
+            set(K.driverLastVerify, Date.now());
+            if (navigateToGroup()) setStatus('DRIVER_RECHECK_INVITE', 'Auto was ingezet; Driver controleert kort of de Leider inmiddels heeft geannuleerd en opnieuw uitgenodigd.');
+            else setStatus('DRIVER_RECHECK_WAIT_NAV', 'Nieuwe uitnodigingscontrole wacht op de navigatiebeveiliging.');
+          } else {
+            const remaining = Math.max(0, DRIVER_REINVITE_RECHECK - elapsed);
+            setStatus('DRIVER_WAIT_LEADER', `Auto is ingezet. Nieuwe uitnodiging wordt over ongeveer ${Math.ceil(remaining / 1000)} sec gecontroleerd.`);
+          }
         }
         return;
       }
