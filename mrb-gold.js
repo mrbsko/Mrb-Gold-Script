@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MRB Gold Recovery 1.0
-// @version      5.8.21
-// @description  Spot Driver herkent snel een geannuleerde en opnieuw verstuurde uitnodiging zonder vast te blijven staan.
+// @version      5.8.22
+// @description  Spot Overval onthoudt zijn absolute timer en start bij Nu zonder onnodige paginanavigatie.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
 // @include      https://*.barafranca.nl/*
@@ -19,6 +19,7 @@
 // ==/UserScript==
 
 // ==========================================================
+// Release 5.8.22: Spot bewaart een absolute deadline, telt lokaal af en laat Mijn Account de deadline corrigeren.
 // Release 5.8.21: Spot Driver controleert begrensd op opnieuw verstuurde uitnodigingen en herstelt zijn oude acceptatiestatus.
 // Release 5.8.20: Heist Sessie Manager opent en verwerkt het echte loginformulier zelfstandig.
 // Release 5.8.19: stabiele GitHub-build.
@@ -1319,7 +1320,7 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
   const P = 'mrb_spot_complete_v1_';
   const K = {
     enabled: P + 'enabled', role: P + 'role', state: P + 'state',
-    timerReady: P + 'timer_ready', family: P + 'family', lastNav: P + 'last_nav',
+    timerReady: P + 'timer_ready', timerAt: P + 'timer_at', family: P + 'family', lastNav: P + 'last_nav',
     leaderGo: P + 'leader_go', driverAccepted: P + 'driver_accepted',
     startCount: P + 'start_count', lastAction: P + 'last_action', driverName: P + 'driver_name',
     lastReadyCheck: P + 'last_ready_check', driverAcceptedAt: P + 'driver_accepted_at',
@@ -1356,6 +1357,11 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
     // Start/Update-knop mag nooit 30-35 seconden wachten op een oude state.
     if (role() === 'leader' && isGroupPage() && isActiveSpotDetailsPage() && activeDriverReady() && findStartUpdate()) return 1200;
     const st = state();
+    const at = timerAt();
+    if (at > Date.now()) {
+      const untilReady = Math.max(500, at - Date.now() + 100);
+      if (untilReady < COOLDOWN_RECHECK) return untilReady;
+    }
     if (/COOLDOWN/i.test(st)) return COOLDOWN_RECHECK;
     if (/WAIT_DRIVER_READY|RECHECK_DRIVER_READY|INVITE_SENT|WAIT_ACTIVE_DETAILS/i.test(st)) return DRIVER_READY_RECHECK;
     if (/WAIT_SERVER_AFTER_START|WAIT_START_SETTLE|START_RECHECK_PENDING|SECOND_PASS/i.test(st)) return 1200;
@@ -1383,7 +1389,8 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
     if (familyLabel) familyLabel.textContent = `Eigen familie: ${family() || 'niet herkend'} (automatisch)`;
     return family();
   }
-  function timerReady() { return get(K.timerReady, false) === true; }
+  function timerAt() { return Math.max(0, Number(get(K.timerAt, 0) || 0)); }
+  function timerReady() { const at = timerAt(); return get(K.timerReady, false) === true || (at > 0 && Date.now() >= at); }
   function actionAllowed() { return Date.now() - Number(get(K.lastAction, 0) || 0) >= ACTION_GUARD; }
   function markAction() { set(K.lastAction, Date.now()); }
   function canNavigate() { return Date.now() - Number(get(K.lastNav, 0) || 0) >= NAV_GUARD; }
@@ -1402,7 +1409,7 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
   function resetFlow(keepTimer = true) {
     set(K.state, 'IDLE'); set(K.leaderGo, false); set(K.driverAccepted, false);
     set(K.startCount, 0); set(K.lastAction, 0); set(K.lastNav, 0); set(K.lastReadyCheck, 0); set(K.driverAcceptedAt, 0); set(K.driverLastVerify, 0); set(K.startClickedAt, 0); set(K.secondPass, '');
-    if (!keepTimer) set(K.timerReady, false);
+    if (!keepTimer) { set(K.timerReady, false); set(K.timerAt, 0); }
   }
 
   function clearStaleCooldown() {
@@ -1496,6 +1503,45 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
     }
 
     return { found: false, ready: false, raw: '' };
+  }
+
+  function parseSpotDuration(raw) {
+    const text = norm(raw);
+    if (/^(?:nu|now)$/i.test(text)) return 0;
+    let total = 0, match;
+    const units = /(\d+)\s*(d|h|m|s|dag(?:en)?|uur|uren|min(?:uten)?|sec(?:onden)?)/gi;
+    while ((match = units.exec(text))) {
+      const amount = Number(match[1] || 0);
+      const unit = String(match[2] || '').toLowerCase();
+      if (unit.startsWith('d')) total += amount * 86400000;
+      else if (unit.startsWith('h') || unit.startsWith('u')) total += amount * 3600000;
+      else if (unit.startsWith('m')) total += amount * 60000;
+      else total += amount * 1000;
+    }
+    return total;
+  }
+
+  function syncSpotTimer(timer) {
+    if (!timer?.found) return;
+    if (timer.ready) {
+      set(K.timerReady, true);
+      set(K.timerAt, Date.now());
+      return;
+    }
+    const wait = parseSpotDuration(timer.raw);
+    set(K.timerReady, false);
+    set(K.timerAt, wait > 0 ? Date.now() + wait : 0);
+  }
+
+  function localTimerText() {
+    const remaining = Math.max(0, timerAt() - Date.now());
+    if (!remaining) return 'Nu';
+    const seconds = Math.ceil(remaining / 1000);
+    const days = Math.floor(seconds / 86400);
+    const hours = Math.floor((seconds % 86400) / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = seconds % 60;
+    return [days && `${days}D`, hours && `${hours}H`, minutes && `${minutes}M`, `${secs}S`].filter(Boolean).join(' ');
   }
 
   function parseMoney(text) { const n = norm(text).replace(/[^0-9]/g, ''); return n ? Number(n) : 0; }
@@ -1744,6 +1790,7 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
     if (isFinalResultPage()) {
       setStatus('COMPLETE', 'Definitieve Spot Overval-uitkomst zichtbaar. Terug naar Mijn Account; daarna volledig passief tijdens cooldown.');
       set(K.timerReady, false);
+      set(K.timerAt, 0);
       set(K.leaderGo, false);
       set(K.driverAccepted, false);
       set(K.secondPass, '');
@@ -1793,6 +1840,7 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
       syncFamilyFromInfo();
       const timer = readSpotTimer();
       if (!timer.found) { setStatus('WAIT_TIMER_READ', 'Spot Overval-timer nog niet gevonden op Mijn Account.'); return; }
+      syncSpotTimer(timer);
 
       // Spot heeft zijn eigen timer nu veilig gelezen. Synchroniseer vervolgens
       // Crimes, Cars en Race vanaf dezelfde Mijn Account-pagina. Als Crimes of
@@ -1804,7 +1852,6 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
       }
 
       // FIX: de actuele timer is altijd de bron van waarheid. COOLDOWN wordt nooit blind hergebruikt.
-      set(K.timerReady, timer.ready);
       if (timer.ready) {
         clearStaleCooldown();
         set(K.timerReady, true);
@@ -1860,7 +1907,10 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
       // Spot claimt de navigatie pas weer via de rustige hercontrole op Mijn Account.
       setStatus('WAIT_START_BACKGROUND', 'Start/Update is verzonden. Spot blijft op de achtergrond en blokkeert andere modules niet.');
     } else if (timerReady() || get(K.leaderGo, false)) {
+      if (timerReady()) set(K.timerReady, true);
       if (navigateToGroup()) setStatus('RECOVER_GROUP', 'Actieve Leider-flow hersteld via Groepsmisdaden.');
+    } else if (timerAt() > Date.now()) {
+      setStatus('LOCAL_COOLDOWN', `Spot telt lokaal af: ${localTimerText()}. Andere modules houden de pagina volledig vrij.`);
     } else if (/^(COOLDOWN|COMPLETE_COOLDOWN)$/i.test(state())) {
       // Een reeds gelezen servercooldown blijft passief. Zo trekt Spot tijdens
       // een bekende cooldown niet elke 30 seconden een andere module weg.
@@ -1910,7 +1960,7 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
       syncFamilyFromInfo();
       const timer = readSpotTimer();
       if (!timer.found) { setStatus('DRIVER_WAIT_TIMER_READ', 'Spot Overval-timer nog niet gevonden.'); return; }
-      set(K.timerReady, timer.ready);
+      syncSpotTimer(timer);
       if (get(K.driverAccepted, false)) {
         if (!timer.ready) {
           set(K.driverAccepted, false); set(K.driverAcceptedAt, 0); set(K.driverLastVerify, 0); set(K.lastAction, 0);
@@ -1939,7 +1989,8 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
     }
     if (isGroupPage()) { if (openSpot()) setStatus('DRIVER_OPEN_SPOT', 'Spot-link geopend om echte uitnodiging te controleren.'); else setStatus('DRIVER_WAIT_INVITE', 'Geen aantoonbare Spot-uitnodiging zichtbaar. Driver doet niets.'); return; }
     if (get(K.driverAccepted, false)) { setStatus('DRIVER_WAIT_LEADER', 'Auto is ingezet. Driver blijft passief wachten en navigeert niet opnieuw.'); return; }
-    if (timerReady()) { if (navigateToGroup()) setStatus('DRIVER_GO_GROUP', 'Driver controleert een mogelijke uitnodiging via Groepsmisdaden.'); }
+    if (timerReady()) { set(K.timerReady, true); if (navigateToGroup()) setStatus('DRIVER_GO_GROUP', 'Lokale Spot-timer staat op Nu; Driver controleert een mogelijke uitnodiging via Groepsmisdaden.'); }
+    else if (timerAt() > Date.now()) setStatus('DRIVER_LOCAL_COOLDOWN', `Driver wacht passief; lokaal onthouden Spot-timer: ${localTimerText()}.`);
     else setStatus('DRIVER_PASSIVE', 'Driver wacht passief; eerst Mijn Account openen om timer te bevestigen.');
   }
 
@@ -2029,10 +2080,10 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
 
   makePanel();
   unsafeWindow.mrbSpotRaidCoreV3 = {
-    version: '5.7.0-com-style-single-timer',
+    version: '5.8.22-com-style-persistent-timer',
     step: () => false,
     wake: () => { if (enabled()) { set(K.lastAction, 0); set(K.lastNav, 0); clearLoop(); schedule(150); } },
-    getState: () => ({ enabled: enabled(), role: role(), state: state(), nextAt: 0 })
+    getState: () => ({ enabled: enabled(), role: role(), state: state(), nextAt: timerAt() })
   };
   unsafeWindow.mrbV9SpotRaid = unsafeWindow.mrbSpotRaidCoreV3;
   if (enabled()) schedule(150);
