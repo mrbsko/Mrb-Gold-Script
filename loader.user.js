@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MRB Gold Edition Loader
 // @namespace    https://barafranca.nl
-// @version      11.12.40
+// @version      11.12.41
 // @description  Laadt automatisch de nieuwste MRB Gold-versie vanaf GitHub met stille cache en rollback.
 // @author       Mrb
 // @match        http://barafranca.nl/*
@@ -29,7 +29,7 @@
 (function () {
     'use strict';
 
-    const LOADER_VERSION = '11.12.40';
+    const LOADER_VERSION = '11.12.41';
     const SCRIPT_URL = 'https://raw.githubusercontent.com/mrbsko/Mrb-Gold-Script/main/mrb-gold.js';
     const REQUEST_TIMEOUT = 30000;
     const MIN_SCRIPT_LENGTH = 50000;
@@ -85,7 +85,7 @@
         const text = code.trim();
         return text.length >= MIN_SCRIPT_LENGTH &&
             text.includes('// ==UserScript==') &&
-            /MRB Gold Edition|Mrb script NL/i.test(text.slice(0, 12000)) &&
+            /MRB Gold (?:Edition|Recovery)|Mrb script NL/i.test(text.slice(0, 12000)) &&
             !/^\s*(?:<!doctype html|<html)/i.test(text) &&
             !/404:\s*Not Found|429:\s*Too Many Requests|503\s*Service Unavailable/i.test(text);
     }
