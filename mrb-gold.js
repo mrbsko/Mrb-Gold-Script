@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MRB Gold Recovery 1.0
-// @version      5.8.19
-// @description  Stabiele MRB Gold Recovery-userscript voor Barafranca NL.
+// @version      5.8.20
+// @description  Heist Sessie Manager opent het loginvenster en logt betrouwbaar in wanneer de geplande timer verstrijkt.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
 // @include      https://*.barafranca.nl/*
@@ -19,6 +19,7 @@
 // ==/UserScript==
 
 // ==========================================================
+// Release 5.8.20: Heist Sessie Manager opent en verwerkt het echte loginformulier zelfstandig.
 // Release 5.8.19: stabiele GitHub-build.
 // Sprint 5.7.0: Spot Overval clean rebuild volgens de stabiele COM-opbouw.
 // Sprint 5.8.10: Heist Sessie Manager negeert zijn eigen actieve kaart bij de exclusiviteitscontrole; Heist mag actief blijven terwijl alle overige modules uit moeten staan.
@@ -13342,7 +13343,15 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
   const set=(k,v)=>{try{GM_setValue(k,v);}catch(_){}};
   const norm=v=>String(v||'').replace(/\s+/g,' ').trim();
   const on=()=>get(K_ON,false)===true;
-  const state=(v)=>{if(v!==undefined)set(K_STATE,String(v));return String(get(K_STATE,'Uit')||'Uit');};
+  const state=(v)=>{
+    if(v!==undefined){
+      const next=String(v),previous=String(get(K_STATE,'Uit')||'Uit');
+      set(K_STATE,next);
+      try{unsafeWindow.mrbHeistSessionStatus=next;}catch(_){}
+      if(next!==previous)try{console.info(`[MRB Heist Sessie Manager] ${next}`);}catch(_){}
+    }
+    return String(get(K_STATE,'Uit')||'Uit');
+  };
   const loggedOut=()=>{
     const visible=el=>!!el && !el.closest('#geneoSuperMenu,#mrbGoldMenu') &&
       (el.offsetWidth||el.offsetHeight||el.getClientRects().length) &&
@@ -13413,14 +13422,24 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
     const user=norm(get(K_USER,'')),pass=String(get(K_PASS,'')||'');
     if(!user||!pass){state('Login ontbreekt: vul gebruikersnaam en wachtwoord in');return;}
     const last=Number(get(K_LAST_LOGIN,0)||0);if(Date.now()-last<60000){state('Wachten na loginpoging');return;}
-    const u=document.querySelector('input[name="username" i],input[name="user" i],input[name="login" i],input[type="email"],input[type="text"]');
-    const p=document.querySelector('input[type="password"]');
-    if(!u||!p){state('Loginformulier nog niet zichtbaar');return;}
+    const visible=el=>!!el&&!el.closest('#geneoSuperMenu,#mrbGoldMenu')&&
+      (el.offsetWidth||el.offsetHeight||el.getClientRects().length)&&
+      getComputedStyle(el).visibility!=='hidden'&&getComputedStyle(el).display!=='none';
+    const p=[...document.querySelectorAll('input[type="password"]')].find(visible);
+    const form=p?.closest('form')||null;
+    const u=[...(form||document).querySelectorAll('input[name="username" i],input[name="user" i],input[name="login" i],input[type="email"],input[type="text"]')].find(visible);
+    if(!u||!p){
+      const open=[...document.querySelectorAll('a[data-bs-target="#loginModal"],button[data-bs-target="#loginModal"],a,button')]
+        .find(el=>visible(el)&&(/#loginModal/i.test(el.getAttribute('data-bs-target')||'')||/^(?:login|inloggen|sign in)$/i.test(norm(el.textContent||el.value||''))));
+      if(open){state('Loginvenster openen');open.click();return;}
+      state('Loginformulier nog niet zichtbaar');return;
+    }
     inputSet(u,user);inputSet(p,pass);
-    const form=p.closest('form')||u.closest('form');
-    const btn=form?.querySelector('button[type="submit"],input[type="submit"]')||[...document.querySelectorAll('button,input[type="submit"]')].find(x=>/login|inloggen|sign in/i.test(norm(x.textContent||x.value||'')));
+    const loginForm=form||u.closest('form');
+    const btn=[...(loginForm||document).querySelectorAll('button[type="submit"],input[type="submit"]')].find(visible)
+      ||[...document.querySelectorAll('button,input[type="submit"]')].find(x=>visible(x)&&/login|inloggen|sign in/i.test(norm(x.textContent||x.value||'')));
     set(K_LAST_LOGIN,Date.now());state('Automatisch inloggen');
-    if(btn)btn.click();else form?.submit?.();
+    if(btn)btn.click();else if(loginForm?.requestSubmit)loginForm.requestSubmit();else loginForm?.submit?.();
   }
 
   function tickLoggedIn(){
