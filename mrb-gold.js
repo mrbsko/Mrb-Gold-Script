@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MRB Gold Recovery 1.0
-// @version      5.8.22
-// @description  Spot Overval onthoudt zijn absolute timer en start bij Nu zonder onnodige paginanavigatie.
+// @version      5.8.26
+// @description  Spot leest de exacte eigen familie en sluit die correct uit wanneer de familienaam tussen haakjes staat.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
 // @include      https://*.barafranca.nl/*
@@ -19,6 +19,10 @@
 // ==/UserScript==
 
 // ==========================================================
+// Release 5.8.26: de exacte Familie-rij en zowel basisnaam als haakjesnaam van een Spot-eigenaar worden veilig vergeleken.
+// Release 5.8.25: Spot krijgt navigatierust, verzendt de uitnodiging atomair en sluit bij doelkeuze uitsluitend de eigen familie uit.
+// Release 5.8.24: Heist Sessie Manager-kopbadge is rechtstreeks gekoppeld aan zijn werkelijke aan/uit-sleutel.
+// Release 5.8.23: vertrouwde handmatige bediening activeert centraal 60 seconden navigatierust met automatische hervatting.
 // Release 5.8.22: Spot bewaart een absolute deadline, telt lokaal af en laat Mijn Account de deadline corrigeren.
 // Release 5.8.21: Spot Driver controleert begrensd op opnieuw verstuurde uitnodigingen en herstelt zijn oude acceptatiestatus.
 // Release 5.8.20: Heist Sessie Manager opent en verwerkt het echte loginformulier zelfstandig.
@@ -183,6 +187,89 @@
   const mrbClearInterval = id => mrbCentralPulse.remove(id);
   unsafeWindow.mrbCentralPulse = { state: () => mrbCentralPulse.state() };
 
+  // ---------- SPRINT 5.8.23: CENTRALE HANDMATIGE BEDIENINGSPAUZE ----------
+  // Een echte gebruikersactie buiten het MRB-menu geeft de speler 60 seconden
+  // volledige navigatierust. Nieuwe acties verlengen de pauze. Timers blijven
+  // doorlopen en na afloop hervatten de modules vanzelf volgens hun prioriteit.
+  (function installManualControlPause(){
+    const KEY = 'mrb_manual_control_pause_until_v1';
+    const PAUSE_MS = 60000;
+    let until = Math.max(0, Number(GM_Get(KEY, 0) || 0));
+    let panel = null;
+    let statusEl = null;
+    let pauseBtn = null;
+    let resumeBtn = null;
+    let lastSignalAt = 0;
+
+    function remaining(){ return Math.max(0, until - Date.now()); }
+    function isPaused(){
+      const active = remaining() > 0;
+      if (!active && until) { until = 0; GM_Set(KEY, 0); }
+      return active;
+    }
+    function notify(){
+      try { window.dispatchEvent(new CustomEvent('mrb:manual-pause-change', { detail: state() })); } catch(_) {}
+      render();
+    }
+    function pause(reason='Handmatige bediening', duration=PAUSE_MS){
+      const nextUntil = Date.now() + Math.max(1000, Number(duration) || PAUSE_MS);
+      if (nextUntil > until) until = nextUntil;
+      GM_Set(KEY, until);
+      try { unsafeWindow.mrbManualPauseReason = String(reason || 'Handmatige bediening'); } catch(_) {}
+      notify();
+      return until;
+    }
+    function resume(){ until = 0; GM_Set(KEY, 0); notify(); }
+    function state(){ return { paused:isPaused(), until, remainingMs:remaining(), reason:String(unsafeWindow.mrbManualPauseReason || '') }; }
+    function ignoredTarget(target){ return !!target?.closest?.('#mrbGoldMenu,#geneoSuperMenu,#mrbManualPauseControl'); }
+    function trustedActivity(event){
+      if (!event.isTrusted || ignoredTarget(event.target)) return;
+      const now = Date.now();
+      if (now - lastSignalAt < 250) return;
+      lastSignalAt = now;
+      pause(event.type === 'keydown' ? 'Handmatig typen' : 'Handmatige spelbediening');
+    }
+
+    function mount(){
+      if (panel?.isConnected) return;
+      try {
+        panel = addBlock(`
+          <h4>Handmatige pauze</h4>
+          <div id="mrbManualPauseStatus" style="font-size:11px;line-height:1.35;margin-bottom:7px">Automatisering actief</div>
+          <div class="gm-row" style="gap:6px">
+            <button id="mrbManualPauseStart" class="gm-btn">Pauzeer 60s</button>
+            <button id="mrbManualPauseResume" class="gm-btn">Hervat nu</button>
+          </div>
+        `, '00e-manual-pause');
+        panel.id = 'mrbManualPauseControl';
+        statusEl = panel.querySelector('#mrbManualPauseStatus');
+        pauseBtn = panel.querySelector('#mrbManualPauseStart');
+        resumeBtn = panel.querySelector('#mrbManualPauseResume');
+        pauseBtn.addEventListener('click', ()=>pause('Handmatig gepauzeerd via MRB-menu'));
+        resumeBtn.addEventListener('click', resume);
+        render();
+      } catch(_) { panel = null; setTimeout(mount, 1000); }
+    }
+    function render(){
+      if (!panel?.isConnected) return;
+      const seconds = Math.ceil(remaining() / 1000);
+      const active = seconds > 0;
+      statusEl.textContent = active ? `Handmatige bediening · automatisch hervatten over ${seconds}s` : 'Automatisering actief';
+      resumeBtn.disabled = !active;
+      panel.classList.toggle('gm-block-active', active);
+    }
+
+    document.addEventListener('pointerdown', trustedActivity, true);
+    document.addEventListener('keydown', trustedActivity, true);
+    document.addEventListener('input', trustedActivity, true);
+    mrbSetInterval(()=>{ render(); isPaused(); }, 500);
+    setTimeout(mount, 250);
+
+    unsafeWindow.mrbManualControl = Object.freeze({
+      version:'5.8.23', pause, resume, isPaused, remaining, state
+    });
+  })();
+
   // ---------- SPRINT 4.9: CENTRALE NAVIGATIEPOORT ----------
   // Alle modules die mrbNavigate gebruiken komen eerst langs deze poort.
   // De poort verandert geen moduleflow; hij voorkomt alleen navigatie wanneer
@@ -307,6 +394,10 @@
       const crimesCarsPriority = source.toLowerCase().includes('crimes-cars');
       const wanted = canonical(target);
       const current = currentCanonical();
+
+      // Tijdens handmatige bediening blijven timers actief, maar geen enkele
+      // gewone module mag de door de speler gekozen pagina vervangen.
+      if (!meta?.manualPauseBypass && unsafeWindow.mrbManualControl?.isPaused?.()) return true;
 
       // URL en zichtbare module worden beide gecontroleerd. Bij een SPA-wissel
       // loopt de URL soms voor op de DOM; opnieuw laden veroorzaakt dan de witte/raw pagina.
@@ -830,8 +921,8 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
     {
       id:'settings',
       title:'Instellingen',
-      ids:['00-partner-oc-setting','08-refresh','00b-mrb-timer'],
-      titles:['Settings','Refresh','Timer']
+      ids:['00-partner-oc-setting','08-refresh','00b-mrb-timer','00e-manual-pause'],
+      titles:['Settings','Refresh','Timer','Handmatige pauze']
     },
     {
       id:'alerts',
@@ -1119,6 +1210,14 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
   function gmStatusStateForBlock(block){
     if (!block) return { state:'unknown', label:'' };
 
+    // De Sessie Manager heeft eigen invoervelden en meerdere knoppen. Leid zijn
+    // kopbadge daarom nooit af uit zichtbare woorden, maar gebruik exact dezelfde
+    // persistente aan/uit-sleutel als de module zelf.
+    if (String(block.dataset?.id || '').toLowerCase() === '02b-heist-session-manager') {
+      const enabled = GM_Get('mrb_session_heist_cycle_on_v1', false) === true;
+      return enabled ? { state:'active', label:'ACTIEF' } : { state:'inactive', label:'UIT' };
+    }
+
     // Captcha Alert heeft knoppen als 'Test geluid' en 'Stop toon'.
     // Die mogen niet als actieve modulestatus worden gelezen.
     if (String(block.dataset?.id || '').toLowerCase() === '00c-captcha-alert') {
@@ -1324,7 +1423,7 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
     leaderGo: P + 'leader_go', driverAccepted: P + 'driver_accepted',
     startCount: P + 'start_count', lastAction: P + 'last_action', driverName: P + 'driver_name',
     lastReadyCheck: P + 'last_ready_check', driverAcceptedAt: P + 'driver_accepted_at',
-    startClickedAt: P + 'start_clicked_at', secondPass: P + 'second_pass',
+    startClickedAt: P + 'start_clicked_at', secondPass: P + 'second_pass', spotOpenedAt: P + 'spot_opened_at',
     driverLastVerify: P + 'driver_last_verify'
   };
 
@@ -1341,6 +1440,7 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
   const START_MAX_CLICKS = 2;
   const START_FINALIZE_WAIT = 9000;
   const DRIVER_REINVITE_RECHECK = 8000;
+  const SPOT_PAGE_SETTLE = 8000;
 
   let panel, statusEl, detailEl, familyLabel, toggleBtn, roleLeader, roleDriver;
   let busy = false;
@@ -1393,7 +1493,7 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
   function timerReady() { const at = timerAt(); return get(K.timerReady, false) === true || (at > 0 && Date.now() >= at); }
   function actionAllowed() { return Date.now() - Number(get(K.lastAction, 0) || 0) >= ACTION_GUARD; }
   function markAction() { set(K.lastAction, Date.now()); }
-  function canNavigate() { return Date.now() - Number(get(K.lastNav, 0) || 0) >= NAV_GUARD; }
+  function canNavigate() { return !unsafeWindow.mrbManualControl?.isPaused?.() && Date.now() - Number(get(K.lastNav, 0) || 0) >= NAV_GUARD; }
   function markNav() { set(K.lastNav, Date.now()); }
   function crimesCarsOwnPriority(){
     try {
@@ -1408,7 +1508,7 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
 
   function resetFlow(keepTimer = true) {
     set(K.state, 'IDLE'); set(K.leaderGo, false); set(K.driverAccepted, false);
-    set(K.startCount, 0); set(K.lastAction, 0); set(K.lastNav, 0); set(K.lastReadyCheck, 0); set(K.driverAcceptedAt, 0); set(K.driverLastVerify, 0); set(K.startClickedAt, 0); set(K.secondPass, '');
+    set(K.startCount, 0); set(K.lastAction, 0); set(K.lastNav, 0); set(K.lastReadyCheck, 0); set(K.driverAcceptedAt, 0); set(K.driverLastVerify, 0); set(K.startClickedAt, 0); set(K.secondPass, ''); set(K.spotOpenedAt, 0);
     if (!keepTimer) { set(K.timerReady, false); set(K.timerAt, 0); }
   }
 
@@ -1426,6 +1526,7 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
       set(K.driverLastVerify, 0);
       set(K.startClickedAt, 0);
       set(K.secondPass, '');
+      set(K.spotOpenedAt, 0);
     }
   }
 
@@ -1445,7 +1546,15 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
   }
 
   function isInfoPage() { return /information\.php/i.test(location.href) || !!document.querySelector('.moduleInformation, #module_Information, #game_container.moduleInformation'); }
-  function isGroupPage() { return /module=GroupCrimes/i.test(location.href) || !!document.querySelector('.moduleGroupCrimes, #module_GroupCrimes, #game_container.moduleGroupCrimes'); }
+  function isGroupPage() {
+    const container = document.querySelector('#game_container');
+    const cls = low(container?.className || '');
+    // Tijdens een SPA-wissel kan de URL nog GroupCrimes bevatten terwijl de
+    // zichtbare container al Spot is. De zichtbare module is dan leidend.
+    if (/modulespots|modulespot\b/.test(cls) || document.querySelector('#module_Spots,.moduleSpots')) return false;
+    if (/modulegroupcrimes/.test(cls) || document.querySelector('#module_GroupCrimes,.moduleGroupCrimes')) return true;
+    return /module=GroupCrimes/i.test(location.href);
+  }
   function isSpotTargetPage() { return /start\s+raiding\s+in/i.test(pageText()) && !!findTargetTable(); }
   function isDriverInvitePage() { const text = low(pageText()); return !!findCarSelect() && /accepteer\s+uitnodiging|accept\s+invitation/.test(text); }
   function isDriverReadyPage() {
@@ -1469,12 +1578,18 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
   }
   function clickOnce(el) { if (!visible(el) || !actionAllowed()) return false; markAction(); el.click(); return true; }
   function navigateToGroup() { if (!canNavigate()) return false; const link = findGroupLink(); if (!link) return false; markNav(); link.click(); return true; }
-  function openSpot() { if (!canNavigate()) return false; const link = findSpotEntry(); if (!link) return false; markNav(); link.click(); return true; }
+  function openSpot() { if (!canNavigate()) return false; const link = findSpotEntry(); if (!link) return false; markNav(); set(K.spotOpenedAt, Date.now()); link.click(); return true; }
+  function spotPageSettling() {
+    const openedAt = Number(get(K.spotOpenedAt, 0) || 0);
+    if (!openedAt || Date.now() - openedAt >= SPOT_PAGE_SETTLE) return false;
+    return !isSpotTargetPage() && !isActiveSpotDetailsPage() && !isDriverInvitePage() && !isDriverReadyPage();
+  }
 
   function readFamilyFromInfo() {
     for (const row of document.querySelectorAll('tr')) {
       const cells = [...row.querySelectorAll('th,td')];
-      if (cells.length >= 2 && /familie|family/i.test(norm(cells[0].textContent))) {
+      const label = norm(cells[0]?.textContent || '').replace(/[:?]+$/, '');
+      if (cells.length >= 2 && /^(?:familie|family)$/i.test(label)) {
         const value = norm(cells[1].textContent).split('(')[0].trim();
         if (value && !/geen|none/i.test(value)) return value;
       }
@@ -1564,11 +1679,16 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
       if (row === found.header) continue;
       const cells = [...row.querySelectorAll(':scope > th, :scope > td')]; if (!cells.length) continue;
       const owner = norm(cells[idx('owner')]?.textContent); const profit = parseMoney(cells[idx('profit')]?.textContent);
+      const ownerParts = owner.match(/^(.*?)\s*\(([^()]*)\)\s*$/);
+      const ownerName = norm(ownerParts?.[1] || owner);
+      const ownerFamily = norm(ownerParts?.[2] || '');
       const next = norm(cells[idx('next raid')]?.textContent); const actionCell = cells[idx('invite')];
       const action = actionCell?.querySelector('a,button,input[type="button"],input[type="submit"]');
       const actionText = norm(action?.textContent || action?.value);
-      if (!/\(\s*local mob\s*\)/i.test(owner)) continue;
-      if (own && low(owner).includes(own)) continue;
+      // Elk doel is toegestaan, ongeacht Local Mob/Lonewolf/Sanctum-status.
+      // Layouts kunnen de familie vóór of tussen haakjes tonen; alleen een
+      // exacte overeenkomst met de eigen familie wordt uitgesloten.
+      if (own && (low(ownerName) === own || low(ownerFamily) === own)) continue;
       if (profit <= 0 || !/^(nu|now)$/i.test(next)) continue;
       if (!visible(action) || !/^(go|ga)$/i.test(actionText)) continue;
       candidates.push({ row, action, profit, type: norm(cells[idx('type')]?.textContent), owner });
@@ -1776,16 +1896,24 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
   }
 
   async function leaderTick() {
-    if (crimesCarsOwnPriority()) {
-      setStatus('YIELD_PRIORITY_TIMERS', 'Crimes/Cars is gereed of bezig; Spot laat pagina en navigatie volledig vrij.');
-      return;
-    }
-
     if (handleExplicitSecondPass()) return;
 
     // Altijd een half afgeronde Spot Overval opruimen. Dit geldt ook wanneer
     // Groepsmisdaden door Heist of een andere module werd geopend.
     if (handleMandatorySpotFinalize()) return;
+
+    if (spotPageSettling()) {
+      const remaining = Math.max(0, SPOT_PAGE_SETTLE - (Date.now() - Number(get(K.spotOpenedAt, 0) || 0)));
+      setStatus('SPOT_PAGE_SETTLE', `Spot-pagina wordt opgebouwd; geen nieuwe navigatie gedurende ongeveer ${Math.ceil(remaining / 1000)} sec.`);
+      return;
+    }
+
+    // Zodra het echte Leiderformulier zichtbaar is, vormt invullen + Go één
+    // korte atomaire stap. Crimes/Cars mag de pagina pas daarna overnemen.
+    if (!isSpotTargetPage() && crimesCarsOwnPriority()) {
+      setStatus('YIELD_PRIORITY_TIMERS', 'Crimes/Cars is gereed of bezig; Spot laat pagina en navigatie volledig vrij.');
+      return;
+    }
 
     if (isFinalResultPage()) {
       setStatus('COMPLETE', 'Definitieve Spot Overval-uitkomst zichtbaar. Terug naar Mijn Account; daarna volledig passief tijdens cooldown.');
@@ -1824,12 +1952,13 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
     }
 
     if (isSpotTargetPage()) {
+      set(K.spotOpenedAt, 0);
       // Een opnieuw zichtbaar doel-/formulieroverzicht betekent dat een vorige cyclus is geannuleerd
       // of niet meer actief is. Wis daarom uitsluitend de tijdelijke Spot-cyclusgegevens.
       if (get(K.leaderGo, false) || Number(get(K.startCount, 0) || 0) > 0) {
         set(K.leaderGo, false); set(K.startCount, 0); set(K.lastReadyCheck, 0); set(K.lastAction, 0); set(K.startClickedAt, 0); set(K.secondPass, '');
       }
-      const target = bestTarget(); if (!target) { setStatus('NO_TARGET', 'Geen bruikbaar Local Mob-doel gevonden.'); return; }
+      const target = bestTarget(); if (!target) { setStatus('NO_TARGET', 'Geen winstgevend doel op Nu buiten de eigen familie gevonden.'); return; }
       const filled = fillLeaderForm(); if (!filled.ok) { setStatus('WAIT_FORM', filled.reason); return; }
       if (clickOnce(target.action)) { set(K.leaderGo, true); setStatus('INVITE_SENT', `Driver ${filled.name}, 0 kogels en beste doel ${target.type} gekozen; Go exact één keer geklikt.`); }
       else setStatus('WAIT_GO', 'Formulier is gereed. Wachten tot de eenmalige klikbeveiliging vrij is.');
@@ -1925,6 +2054,11 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
   }
 
   async function driverTick() {
+    if (spotPageSettling()) {
+      const remaining = Math.max(0, SPOT_PAGE_SETTLE - (Date.now() - Number(get(K.spotOpenedAt, 0) || 0)));
+      setStatus('DRIVER_SPOT_PAGE_SETTLE', `Spot-uitnodigingspagina wordt opgebouwd; Driver wacht ongeveer ${Math.ceil(remaining / 1000)} sec zonder opnieuw te navigeren.`);
+      return;
+    }
     if (isDriverReadyPage()) {
       set(K.driverAccepted, true);
       if (!Number(get(K.driverAcceptedAt, 0) || 0)) set(K.driverAcceptedAt, Date.now());
@@ -1996,6 +2130,12 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
 
   async function tick() {
     if (!enabled() || busy) return;
+    if (unsafeWindow.mrbManualControl?.isPaused?.()) {
+      const seconds = Math.max(1, Math.ceil((unsafeWindow.mrbManualControl.remaining?.() || 0) / 1000));
+      setStatus('MANUAL_PAUSE', `Handmatige bediening actief. Spot hervat automatisch over ongeveer ${seconds} sec.`);
+      schedule(Math.min(1000, Math.max(250, unsafeWindow.mrbManualControl.remaining?.() || 1000)));
+      return;
+    }
     busy = true;
     try {
       if (role() === 'leader') await leaderTick();
@@ -2080,7 +2220,7 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
 
   makePanel();
   unsafeWindow.mrbSpotRaidCoreV3 = {
-    version: '5.8.22-com-style-persistent-timer',
+    version: '5.8.26-com-style-exact-family-exclusion',
     step: () => false,
     wake: () => { if (enabled()) { set(K.lastAction, 0); set(K.lastNav, 0); clearLoop(); schedule(150); } },
     getState: () => ({ enabled: enabled(), role: role(), state: state(), nextAt: timerAt() })
@@ -13534,6 +13674,10 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
   function tick(){
     render();
     if(!on())return;
+    if(unsafeWindow.mrbManualControl?.isPaused?.()){
+      const seconds=Math.max(1,Math.ceil((unsafeWindow.mrbManualControl.remaining?.()||0)/1000));
+      state(`Handmatige pauze · hervat over ${seconds}s`);render();return;
+    }
     if(loggedOut())tickLoggedOut();else tickLoggedIn();
     render();
   }
@@ -13546,6 +13690,7 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
     block.querySelector('[data-session-state]').textContent=enabled?'Actief':'Uit';
     block.querySelector('[data-session-status]').textContent=enabled?state():'Gestopt';
     block.classList.toggle('gm-block-active',enabled);
+    try{gmUpdateStatusBadge(block);}catch(_){}
   }
   function mount(){
     const root=document.querySelector('#mrbGoldMenu .gm-blocks,#geneoSuperMenu .gm-blocks');
@@ -13626,6 +13771,11 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
     clearLoop();
     loopTimer=setTimeout(()=>{
       if(!enabled()) return;
+      if(unsafeWindow.mrbManualControl?.isPaused?.()){
+        const wait=Math.min(1000,Math.max(250,unsafeWindow.mrbManualControl.remaining?.()||1000));
+        status(`Handmatige pauze · hervat over ${Math.max(1,Math.ceil((unsafeWindow.mrbManualControl.remaining?.()||0)/1000))}s`);
+        next(fn,wait);return;
+      }
       try{fn();}catch(e){console.warn('[MRB Heist 5.6.0]',e);status(`Fout: ${e?.message||e}`);next(goInfo,15000);}
     },Math.max(0,ms||0));
   }
