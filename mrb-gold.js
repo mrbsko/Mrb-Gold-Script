@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MRB Gold Recovery 1.0
-// @version      5.8.26
-// @description  Spot leest de exacte eigen familie en sluit die correct uit wanneer de familienaam tussen haakjes staat.
+// @version      5.8.27
+// @description  Heist Sessie Manager synchroniseert zichtbare browser-autofillgegevens met zijn eigen accountopslag.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
 // @include      https://*.barafranca.nl/*
@@ -19,6 +19,7 @@
 // ==/UserScript==
 
 // ==========================================================
+// Release 5.8.27: zichtbare Sessie Manager-inlogvelden worden per account betrouwbaar opgeslagen en bij de loginpoging herlezen.
 // Release 5.8.26: de exacte Familie-rij en zowel basisnaam als haakjesnaam van een Spot-eigenaar worden veilig vergeleken.
 // Release 5.8.25: Spot krijgt navigatierust, verzendt de uitnodiging atomair en sluit bij doelkeuze uitsluitend de eigen familie uit.
 // Release 5.8.24: Heist Sessie Manager-kopbadge is rechtstreeks gekoppeld aan zijn werkelijke aan/uit-sleutel.
@@ -13623,9 +13624,24 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
     if(!el)return false;
     try{const d=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value');if(d?.set)d.set.call(el,value);else el.value=value;el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));return true;}catch(_){return false;}
   }
+  function syncVisibleCredentials(){
+    const root=block?.isConnected?block:document.getElementById('mrb-heist-session-manager-block');
+    const userField=root?.querySelector('[data-session-user]');
+    const passField=root?.querySelector('[data-session-pass]');
+    const user=norm(userField?.value||'');
+    const pass=String(passField?.value||'');
+    let changed=false;
+    if(user&&user!==norm(get(K_USER,''))){set(K_USER,user);changed=true;}
+    if(pass&&pass!==String(get(K_PASS,'')||'')){set(K_PASS,pass);changed=true;}
+    return {user: user||norm(get(K_USER,'')),pass: pass||String(get(K_PASS,'')||''),changed};
+  }
   function doLogin(){
     if(gateVisible()){state('Gepauzeerd: captcha/Cloudflare');return;}
-    const user=norm(get(K_USER,'')),pass=String(get(K_PASS,'')||'');
+    // Browser-autofill vult de zichtbare MRB-velden soms pas na het opbouwen
+    // van het menu en zonder input/change-event. Neem die waarden vlak voor
+    // de loginpoging alsnog over in de eigen opslag van dit account/browser.
+    const credentials=syncVisibleCredentials();
+    const user=credentials.user,pass=credentials.pass;
     if(!user||!pass){state('Login ontbreekt: vul gebruikersnaam en wachtwoord in');return;}
     const last=Number(get(K_LAST_LOGIN,0)||0);if(Date.now()-last<60000){state('Wachten na loginpoging');return;}
     const visible=el=>!!el&&!el.closest('#geneoSuperMenu,#mrbGoldMenu')&&
@@ -13674,6 +13690,7 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
   function tick(){
     render();
     if(!on())return;
+    syncVisibleCredentials();
     if(unsafeWindow.mrbManualControl?.isPaused?.()){
       const seconds=Math.max(1,Math.ceil((unsafeWindow.mrbManualControl.remaining?.()||0)/1000));
       state(`Handmatige pauze · hervat over ${seconds}s`);render();return;
@@ -13703,8 +13720,13 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
     block.querySelector('[data-session-pass]').value=String(get(K_PASS,'')||'');
     block.querySelector('[data-session-lead]').value=String(get(K_LEAD_MIN,4)||4);
     block.querySelector('.gm-min').onclick=()=>block.classList.toggle('gm-collapsed');
-    block.querySelector('[data-session-save]').onclick=()=>{set(K_USER,norm(block.querySelector('[data-session-user]').value));set(K_PASS,String(block.querySelector('[data-session-pass]').value||''));set(K_LEAD_MIN,Number(block.querySelector('[data-session-lead]').value||4));state('Instellingen opgeslagen');render();};
-    block.querySelector('[data-session-toggle]').onclick=()=>{const n=!on();set(K_ON,n);if(!n){set(K_LOGIN_AT,0);state('Handmatig gestopt');}else state('Gestart · veiligheid controleren');render();setTimeout(tick,100);};
+    const saveCredentials=()=>syncVisibleCredentials();
+    block.querySelector('[data-session-user]').addEventListener('input',saveCredentials);
+    block.querySelector('[data-session-user]').addEventListener('change',saveCredentials);
+    block.querySelector('[data-session-pass]').addEventListener('input',saveCredentials);
+    block.querySelector('[data-session-pass]').addEventListener('change',saveCredentials);
+    block.querySelector('[data-session-save]').onclick=()=>{const credentials=syncVisibleCredentials();set(K_LEAD_MIN,Number(block.querySelector('[data-session-lead]').value||4));state(credentials.user&&credentials.pass?'Instellingen opgeslagen':'Login ontbreekt: vul gebruikersnaam en wachtwoord in');render();};
+    block.querySelector('[data-session-toggle]').onclick=()=>{const n=!on();if(n)syncVisibleCredentials();set(K_ON,n);if(!n){set(K_LOGIN_AT,0);state('Handmatig gestopt');}else state('Gestart · veiligheid controleren');render();setTimeout(tick,100);};
     render();
     try{window.__mrbAddManualOrderButtons?.(block);window.__mrbRefreshCategories?.();}catch(_){}
   }
