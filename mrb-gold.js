@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MRB Gold Recovery 1.0
-// @version      5.8.27
-// @description  Heist Sessie Manager synchroniseert zichtbare browser-autofillgegevens met zijn eigen accountopslag.
+// @version      5.8.29
+// @description  Crimes/Cars-deadlines kunnen niet meer zonder uitgevoerde poging worden overgeslagen.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
 // @include      https://*.barafranca.nl/*
@@ -19,6 +19,8 @@
 // ==/UserScript==
 
 // ==========================================================
+// Release 5.8.29: een reeds verlopen Crimes/Cars-deadline mag pas vooruit na een aantoonbare poging; navigatieprioriteit blijft tot en met de timerbevestiging actief.
+// Release 5.8.28: Driver herkent de autostap robuuster, behandelt "ready" als geslaagde acceptatie en controleert uitnodigingen sneller. Een actieve Race-transactie blokkeert Heist-reizen totdat de racecooldown is bevestigd.
 // Release 5.8.27: zichtbare Sessie Manager-inlogvelden worden per account betrouwbaar opgeslagen en bij de loginpoging herlezen.
 // Release 5.8.26: de exacte Familie-rij en zowel basisnaam als haakjesnaam van een Spot-eigenaar worden veilig vergeleken.
 // Release 5.8.25: Spot krijgt navigatierust, verzendt de uitnodiging atomair en sluit bij doelkeuze uitsluitend de eigen familie uit.
@@ -399,6 +401,18 @@
       // Tijdens handmatige bediening blijven timers actief, maar geen enkele
       // gewone module mag de door de speler gekozen pagina vervangen.
       if (!meta?.manualPauseBypass && unsafeWindow.mrbManualControl?.isPaused?.()) return true;
+
+      // Een Crimes/Cars-cyclus blijft atomair vanaf het opeisen van de
+      // gereedstaande timer tot en met de bevestiging op Mijn Account. De
+      // vaste SPA-lease van 6,5 seconden was korter dan paginalaad + 3-5s
+      // actievertraging en liet andere modules soms vlak vóór de klik binnen.
+      if (!crimesCarsPriority) {
+        try {
+          const st = unsafeWindow.mrbV9CrimesCars?.state?.();
+          const ccOwnsPage = !!st?.running && (!!st.busy || !!st.confirmPendingKind || !!st.forcedRetryKind);
+          if (ccOwnsPage) return true;
+        } catch(_) {}
+      }
 
       // URL en zichtbare module worden beide gecontroleerd. Bij een SPA-wissel
       // loopt de URL soms voor op de DOM; opnieuw laden veroorzaakt dan de witte/raw pagina.
@@ -5569,6 +5583,24 @@ try {
 
   // persistente idle-planning
   const K_RACE_PLAN = 'race_idlePlan_v1'; // { type:'start'|'info', at:number, createdAt:number }
+  const K_RACE_TRANSACTION_UNTIL = 'race_transaction_until_v1';
+  const RACE_TRANSACTION_TTL = 4 * 60 * 1000;
+
+  function raceTransactionUntil(){
+    return Math.max(0, Number(GM_Get(K_RACE_TRANSACTION_UNTIL, 0) || 0));
+  }
+  function raceTransactionActive(){
+    return raceTransactionUntil() > Date.now();
+  }
+  function raceHoldTransaction(reason='actieve race'){
+    GM_Set(K_RACE_TRANSACTION_UNTIL, Date.now() + RACE_TRANSACTION_TTL);
+    try { console.log('[Race] Transactievergrendeling:', reason); } catch (_) {}
+  }
+  function raceClearTransaction(reason='racecooldown bevestigd'){
+    if (!raceTransactionUntil()) return;
+    GM_Set(K_RACE_TRANSACTION_UNTIL, 0);
+    try { console.log('[Race] Transactievergrendeling vrij:', reason); } catch (_) {}
+  }
 
   // timers en helpers om dubbel-loop te voorkomen
   let failsafeTimer = null;
@@ -5753,8 +5785,8 @@ try {
     // De oude vensters overlapten (Leider 4-10s, Driver 10-15s), waardoor de
     // Driver soms tegelijk of zelfs eerder op de racepagina aankwam.
     const delay = (raceRole === 'leader')
-      ? randomDelay(3000,7000)
-      : randomDelay(25000,30000);
+      ? randomDelay(2500,5000)
+      : randomDelay(9000,13000);
 
     saveRacePlan({
       type: 'start',
@@ -5782,6 +5814,13 @@ try {
   function bootstrapRaceIdle(){
     if(!scriptAan) return;
     if (isLoggedOut()) return pauseForGate('bootstrapRaceIdle: uitgelogd');
+
+    if (raceTransactionActive()){
+      raceRegistryState('RECOVER_TRANSACTION', 'actieve Race-flow na refresh hervatten');
+      guiLoad('/races.php');
+      next(raceRole === 'leader' ? ()=>leader_checkPartner(0) : slave_acceptLoop, randomDelay(1200,2200));
+      return;
+    }
 
     const existingPlan = loadRacePlan();
     if (existingPlan && existingPlan.type && existingPlan.at){
@@ -5831,6 +5870,7 @@ try {
     GM_Set("race_scriptAan", false);
     clearAll();
     clearRacePlan();
+    raceClearTransaction('Race-module gestopt');
     paint();
     try { console.warn('[Race] Gestopt:', reason); } catch {}
   }
@@ -6197,11 +6237,15 @@ try {
     // Fallback voor layouts met radio's/checkboxes voor auto's.
     const carInputs = Array.from(document.querySelectorAll('input[type="radio"], input[type="checkbox"]'))
       .filter(i => !i.disabled && /car|auto|race/i.test((i.name || '') + ' ' + (i.id || '') + ' ' + (i.value || '')));
-    if (carInputs.length && !carInputs.some(i => i.checked)){
-      const first = carInputs[0];
-      first.checked = true;
-      fire(first);
-      did = true;
+    if (carInputs.length){
+      if (carInputs.some(i => i.checked)){
+        did = true;
+      } else {
+        const first = carInputs[0];
+        first.checked = true;
+        fire(first);
+        did = true;
+      }
     }
 
     return did;
@@ -6213,6 +6257,7 @@ try {
     if (isLoggedOut()) return pauseForGate('leader_startRace: uitgelogd');
 
     clearRacePlan();
+    raceHoldTransaction('Leider opent een nieuwe race');
     guiLoad('/races.php');
 
     if(failsafeTimer) clearTimeout(failsafeTimer);
@@ -6287,7 +6332,7 @@ try {
     raceRegistryState('WAITING_DRIVER', 'wacht op Driver');
     if(!scriptAan) return;
     if (isLoggedOut()) return pauseForGate('leader_checkPartner: uitgelogd');
-    if(retries>=3){ goInfo(); return; }
+    if(retries>=12){ raceClearTransaction('Driver niet gereed na maximale controles'); goInfo(); return; }
 
     // Een openstaande Race-uitnodiging is alleen een wachtstatus. Crimes en
     // Cars houden absoluut voorrang en krijgen eerst alle tijd om hun actie
@@ -6312,7 +6357,7 @@ try {
         raceReleaseAction();
         raceRegistryState('WAITING_DRIVER', 'wacht passief op Driver; overige timers vrij');
         guiLoad('/information.php');
-        next(()=> leader_checkPartner(retries+1), 15000);
+        next(()=> leader_checkPartner(retries+1), 10000);
         return;
       }
 
@@ -6330,6 +6375,7 @@ try {
       || document.querySelector('input[type="submit"][name="race"]');
 
     if (btn){
+      raceHoldTransaction('Leider start de race');
       raceSafeClick(btn);
       if(failsafeTimer) clearTimeout(failsafeTimer);
       next(leader_checkDone, randomDelay(5000,8000));
@@ -6351,8 +6397,10 @@ try {
 
     if (done || body.includes("The race has ended") || body.includes("check your inbox for results")){
       GM_Set("lastRaceTime", Math.floor(Date.now()/1000));
+      raceClearTransaction('Raceresultaat ontvangen');
       next(goInfo, randomDelay(5000,10000));
     } else if (isTired(body)){
+      raceClearTransaction('Racecooldown zichtbaar');
       next(goInfo, randomDelay(5000,10000));
     } else {
       next(leader_checkDone, randomDelay(5000,8000));
@@ -6370,7 +6418,17 @@ try {
 
   function raceDriverHasRealCarStep(){
     const body = String(document.body?.innerText || '').replace(/\s+/g,' ').trim();
-    return /select\s*our\s*car\s*for\s*the\s*race|selecteer\s*je\s*auto\s*voor\s*de\s*race|kies\s*je\s*auto\s*voor\s*de\s*race/i.test(body);
+    if (/select\s*(?:our|your|a)\s*car\s*for\s*the\s*race|choose\s*(?:our|your|a)\s*car|selecteer\s*(?:jouw|je|een)\s*auto\s*voor\s*de\s*race|kies\s*(?:jouw|je|een)\s*auto/i.test(body)) return true;
+
+    // De website toont niet op iedere taal/layout dezelfde instructiezin.
+    // Een zichtbaar autoveld plus een Driver-bevestigingsknop is eveneens een
+    // geldige autostap. raceIsLeaderPage() blijft vóór deze functie de harde guard.
+    const root = document.querySelector('#game_container') || document;
+    const carControl = [...root.querySelectorAll('select, input[type="radio"], input[type="checkbox"]')]
+      .find(el => !el.disabled && /car|auto|vehicle|wagen/i.test(`${el.name||''} ${el.id||''} ${el.closest('tr,div,p,td')?.textContent||''}`));
+    const confirm = [...root.querySelectorAll('input[type="submit"],input[type="button"],button')]
+      .find(el => !el.disabled && /^(?:ga|go|ready|klaar|gereed|kies|choose|select|bevestig|confirm)$/i.test(String(el.value || el.textContent || '').replace(/\s+/g,' ').trim()));
+    return !!(carControl && confirm);
   }
 
   function raceDriverLeaveLeaderPage(reason='Leider-pagina gedetecteerd'){
@@ -6392,7 +6450,7 @@ try {
 
     clearRacePlan();
     guiLoad('/races.php');
-    next(slave_acceptLoop, randomDelay(1500,3000));
+    next(slave_acceptLoop, randomDelay(900,1600));
   }
 
   function slave_acceptLoop(){
@@ -6420,11 +6478,13 @@ try {
     }
 
     if (alreadyAcceptedMsg(body)){
-      console.log("⏳ Race al geaccepteerd — accept-flow opnieuw starten.");
+      raceHoldTransaction('Driver staat al klaar voor de race');
+      raceRegistryState('DRIVER_READY', 'auto is ingezet; wachten op Leider');
+      console.log("⏳ Race al geaccepteerd — Driver wacht op de Leider.");
       next(()=>{
-        guiLoad('/races.php');
-        next(slave_acceptLoop, randomDelay(1500,4000));
-      }, randomDelay(3000,6000));
+        guiLoad('/information.php');
+        next(()=>checkAvailability(true), randomDelay(5000,8000));
+      }, randomDelay(5000,8000));
       return;
     }
 
@@ -6433,12 +6493,14 @@ try {
     // Alleen expliciete Driver-tekst geldt als autostap. Een willekeurige
     // <select> staat ook op de Leider-pagina en mag dus nooit voldoende zijn.
     if (raceDriverHasRealCarStep()){
+      raceHoldTransaction('Driver-autostap zichtbaar');
       slave_selectCar();
       return;
     }
 
     const accept = $('a').filter(function(){ return /(Accepteer|Accept)/i.test($(this).text()); });
     if (accept.length){
+      raceHoldTransaction('Driver accepteert race-uitnodiging');
       accept[0].click();
       next(slave_selectCar, actionDelay());
       return;
@@ -6476,7 +6538,13 @@ try {
     const onSelectCar = raceDriverHasRealCarStep();
 
     if (onSelectCar){
-      raceSelectFirstAvailableCar();
+      raceHoldTransaction('Driver kiest race-auto');
+      const selected = raceSelectFirstAvailableCar();
+      if (!selected){
+        raceRegistryState('DRIVER_CAR_WAIT', 'autolijst wordt nog opgebouwd');
+        next(slave_selectCar, 900);
+        return;
+      }
 
       const submit = Array.from(document.querySelectorAll('input[type="submit"], input[type="button"], button[type="submit"], button'))
         .find(b => /^(ga|go)$/i.test(String(b.value || b.textContent || '').trim()) || /select|ready|race|kies|bevestig|submit/i.test((b.value || b.textContent || '')))
@@ -6502,11 +6570,16 @@ try {
             try{ form.submit(); submitted = true; }catch{}
           }
 
+          if (submitted){
+            raceHoldTransaction('Driver-auto is verzonden');
+            raceRegistryState('DRIVER_READY', 'auto ingezet; wachten op Leider');
+          }
+
           next(()=>{
             clearRacePlan();
             guiLoad('/information.php');
-            next(()=>checkAvailability(true), randomDelay(10000,20000));
-          }, randomDelay(18000,40000));
+            next(()=>checkAvailability(true), randomDelay(5000,8000));
+          }, randomDelay(7000,12000));
         }, actionDelay());
         return;
       }
@@ -6567,6 +6640,20 @@ try {
     const status = readRaceStatusByLabel();
 
     if (/^(Nu|NOW|Now)$/i.test(status)){
+      // Tijdens een reeds gestarte Race-flow betekent Nu niet dat er nóg een
+      // nieuwe race moet worden gepland. De bestaande Leider-/Driver-callback
+      // houdt de transactie vast en controleert het resultaat opnieuw.
+      if (raceTransactionActive()){
+        raceRegistryState(raceRole === 'leader' ? 'WAITING_DRIVER' : 'DRIVER_READY', 'actieve Race-flow blijft leidend');
+        if (raceRole === 'slave'){
+          next(()=>{
+            if(!scriptAan || !raceTransactionActive()) return;
+            guiLoad('/information.php');
+            next(()=>checkAvailability(true), 1500);
+          }, 8000);
+        }
+        return;
+      }
       const existingPlan = loadRacePlan();
       if (existingPlan && existingPlan.type === 'start' && existingPlan.at > Date.now() + 250){
         armStoredRacePlan();
@@ -6579,6 +6666,7 @@ try {
 
     const wait = parseTimer(status);
     if (wait > 0){
+      raceClearTransaction('servercooldown bevestigd op Mijn Account');
       planInfoRecheck(wait + randomDelay(5000,15000));
       return;
     }
@@ -6593,6 +6681,7 @@ try {
     if (!scriptAan || raceLocalWatchBusy) return;
     if (isLoggedOut()) return;
     if (!/information\.php/i.test(location.href)) return;
+    if (raceTransactionActive()) return;
 
     const existing = loadRacePlan();
     if (existing && Number(existing.at) > Date.now() + 250) return;
@@ -6608,6 +6697,7 @@ try {
   // een Race-actie wanneer die daadwerkelijk op Nu staat.
   unsafeWindow.mrbRacePriorityWake = function(source='module-resume'){
     if (!scriptAan || isLoggedOut() || !/information\.php/i.test(location.href)) return false;
+    if (raceTransactionActive()) return false;
     try {
       raceRegistryState('CHECK_TIMER', `directe timer-sync na ${source}`);
       checkAvailability(true);
@@ -6617,6 +6707,14 @@ try {
       return false;
     }
   };
+
+  // Heist en andere modules gebruiken uitsluitend deze lokale, begrensde
+  // status. Leider en Driver draaien ieder in hun eigen browser/opslag.
+  unsafeWindow.mrbRaceTransaction = Object.freeze({
+    active: () => scriptAan && raceTransactionActive(),
+    phase: () => raceCorePhase,
+    until: () => raceTransactionUntil()
+  });
 
   // ------------------ UI handlers ------------------
   block.querySelectorAll('input[name="raceRole"]').forEach(r=>{
@@ -7505,6 +7603,8 @@ try {
 
   const K_CR_NEXT      = 'cc_crimes_next';
   const K_CA_NEXT      = 'cc_cars_next';
+  const K_CR_ATTEMPT   = 'cc_crimes_last_attempt';
+  const K_CA_ATTEMPT   = 'cc_cars_last_attempt';
   const K_DD_RETRY     = 'cc_dd_retry';
   const K_JAIL_UNTIL   = 'cc_jail_until';
 
@@ -7693,6 +7793,8 @@ try {
 
   let crimesNext = Number(GM_Get(K_CR_NEXT, Date.now())) || Date.now();
   let carsNext   = Number(GM_Get(K_CA_NEXT, Date.now())) || Date.now();
+  let crimesLastAttempt = Number(GM_Get(K_CR_ATTEMPT, 0)) || 0;
+  let carsLastAttempt   = Number(GM_Get(K_CA_ATTEMPT, 0)) || 0;
   let ddRetryAt  = Number(GM_Get(K_DD_RETRY, 0)) || 0;
   let jailUntil  = Number(GM_Get(K_JAIL_UNTIL, 0)) || 0;
 
@@ -7722,6 +7824,54 @@ try {
 
   let lastJailParkAt = 0;
   let lastPassiveInfoSyncAt = 0;
+
+  function lastAttemptAt(kind){
+    return kind === 'crimes' ? crimesLastAttempt : carsLastAttempt;
+  }
+
+  function markAttempt(kind, source='script'){
+    const now = Date.now();
+    if (kind === 'crimes'){
+      crimesLastAttempt = now;
+      GM_Set(K_CR_ATTEMPT, now);
+    } else if (kind === 'cars'){
+      carsLastAttempt = now;
+      GM_Set(K_CA_ATTEMPT, now);
+    }
+    try { console.log(`[Crimes/Cars] ${kind} poging geregistreerd (${source})`); } catch(_) {}
+  }
+
+  function acceptServerDeadline(kind, remaining, source='sync'){
+    if (remaining === null) return false;
+    const now = Date.now();
+    const currentNext = kind === 'crimes' ? crimesNext : carsNext;
+    const nextRemaining = Math.max(0, Number(remaining) || 0);
+
+    // Zodra de lokaal bekende timer gereed is, mag een losse/vertraagde sync
+    // hem niet terug de toekomst in duwen zonder dat er werkelijk is geklikt.
+    // Hiermee blijft Nu staan totdat dezelfde actiecyclus aantoonbaar begon.
+    const wasDue = Number(currentNext || 0) <= now + 1500;
+    const movesFuture = nextRemaining > 5000;
+    const ownAttemptRecent = now - lastAttemptAt(kind) <= 60_000;
+    if (wasDue && movesFuture && !ownAttemptRecent){
+      try { console.warn(`[Crimes/Cars] ${kind} toekomsttimer uit ${source} genegeerd: lokale deadline was al Nu en er is geen poging geregistreerd.`); } catch(_) {}
+      return false;
+    }
+    return true;
+  }
+
+  function applyServerDeadline(kind, remaining, source='sync'){
+    if (!acceptServerDeadline(kind, remaining, source)) return false;
+    const next = Date.now() + Math.max(0, Number(remaining) || 0);
+    if (kind === 'crimes'){
+      crimesNext = next;
+      GM_Set(K_CR_NEXT, crimesNext);
+    } else {
+      carsNext = next;
+      GM_Set(K_CA_NEXT, carsNext);
+    }
+    return true;
+  }
 
   // captcha resume state
   let resumeNeeded = false;
@@ -8077,15 +8227,9 @@ if (pausedCaptcha){
 
     const parsed = readTimersFromRoot(document);
 
-    if (parsed.crimesMs !== null){
-      crimesNext = Date.now() + Math.max(0, parsed.crimesMs);
-      GM_Set(K_CR_NEXT, crimesNext);
-    }
+    if (parsed.crimesMs !== null) applyServerDeadline('crimes', parsed.crimesMs, 'Mijn Account');
 
-    if (parsed.carsMs !== null){
-      carsNext = Date.now() + Math.max(0, parsed.carsMs);
-      GM_Set(K_CA_NEXT, carsNext);
-    }
+    if (parsed.carsMs !== null) applyServerDeadline('cars', parsed.carsMs, 'Mijn Account');
 
     if (parsed.flightMs !== null){
       const now = Date.now();
@@ -8116,15 +8260,13 @@ if (pausedCaptcha){
     const now = Date.now();
 
     if (parsed.crimesMs !== null){
-      const next = now + Math.max(0, parsed.crimesMs);
-      if (Math.abs(next - crimesNext) > 750){ crimesNext = next; changed = true; }
-      GM_Set(K_CR_NEXT, crimesNext);
+      const before = crimesNext;
+      if (applyServerDeadline('crimes', parsed.crimesMs, source) && Math.abs(crimesNext - before) > 750) changed = true;
     }
 
     if (parsed.carsMs !== null){
-      const next = now + Math.max(0, parsed.carsMs);
-      if (Math.abs(next - carsNext) > 750){ carsNext = next; changed = true; }
-      GM_Set(K_CA_NEXT, carsNext);
+      const before = carsNext;
+      if (applyServerDeadline('cars', parsed.carsMs, source) && Math.abs(carsNext - before) > 750) changed = true;
     }
 
     if (parsed.flightMs !== null){
@@ -8204,6 +8346,11 @@ if (pausedCaptcha){
   // Handmatige SPA-navigatie en browsernavigatie opnieuw synchroniseren.
   document.addEventListener('click', (event)=>{
     if (!event.isTrusted) return;
+    try {
+      const target = event.target?.closest?.('button,input[type="submit"],input[type="button"],a');
+      if (target && document.querySelector('#module_Crimes')?.contains(target)) markAttempt('crimes','handmatig');
+      else if (target && document.querySelector('#module_Cars')?.contains(target)) markAttempt('cars','handmatig');
+    } catch(_) {}
     scheduleBackgroundSync('handmatige klik', 1200);
   }, true);
   window.addEventListener('hashchange', ()=>scheduleBackgroundSync('hashchange', 700), true);
@@ -8976,6 +9123,7 @@ if (pausedCaptcha){
             return;
           }
 
+          markAttempt(kind, 'automatisch');
           safeClick(chosen);
 
           outcomeTimeoutId = setTimeout(()=>{
@@ -13940,12 +14088,31 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
         ||(!!st.doCars&&Number(st.carsNext||0)<=now+1500);
     }catch(_){return false;}
   }
+  function heistRaceOwnPriority(){
+    try{
+      return unsafeWindow.mrbRaceTransaction?.active?.()===true;
+    }catch(_){return false;}
+  }
+  function waitForRaceBefore(fn,context='Heist-actie'){
+    if(!heistRaceOwnPriority())return false;
+    let detail='actieve Race wordt eerst afgemaakt';
+    try{
+      const phase=unsafeWindow.mrbRaceTransaction?.phase?.();
+      if(phase)detail+=` (${phase})`;
+    }catch(_){}
+    status(`${context} wacht: ${detail}`);
+    next(fn,3000);
+    return true;
+  }
   function leaderStart(){
     if(heistCrimesCarsOwnPriority()){status('Heist wacht: Crimes/Cars heeft voorrang');next(leaderStart,5000);return;}
+    if(waitForRaceBefore(leaderStart,'Heist Leider'))return;
     phase='inviting';acceptChecks=0;load('/?module=GroupCrimes');next(()=>inspectLeaderGroup(true),rand(1500,3000));
   }
   function inspectLeaderGroup(initial=false){
     if(!enabled()||role()!=='leader')return;
+    if(heistCrimesCarsOwnPriority()){status('Heist Leider-controle wacht: Crimes/Cars rondt eerst af');next(()=>inspectLeaderGroup(initial),3000);return;}
+    if(waitForRaceBefore(()=>inspectLeaderGroup(initial),'Heist Leider-controle'))return;
     if(!onGroup()){load('/?module=GroupCrimes');next(()=>inspectLeaderGroup(initial),rand(1200,2200));return;}
     const transfer=transferLink();
     if(transfer){setInvitePending(false);status(`Heist winst versturen naar ${driverName()}`);transfer.click();next(goInfo,rand(5000,10000));return;}
@@ -13992,10 +14159,13 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
 
   function driverStart(){
     if(heistCrimesCarsOwnPriority()){status('Heist Driver wacht: Crimes/Cars heeft voorrang');next(driverStart,5000);return;}
+    if(waitForRaceBefore(driverStart,'Heist Driver'))return;
     phase='driver';load('/?module=GroupCrimes');next(driverAcceptLoop,rand(1500,3000));
   }
   function driverAcceptLoop(){
     if(!enabled()||role()!=='driver')return;
+    if(heistCrimesCarsOwnPriority()){status('Heist-uitnodiging wacht: Crimes/Cars rondt eerst af');next(driverAcceptLoop,3000);return;}
+    if(waitForRaceBefore(driverAcceptLoop,'Heist-uitnodiging'))return;
     if(onHeist()){driverFinalize();return;}
     if(!onGroup()){load('/?module=GroupCrimes');next(driverAcceptLoop,rand(1500,3000));return;}
     const inviteCity=driverInviteCity();
@@ -14013,6 +14183,8 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
   }
   function driverFinalize(){
     if(!enabled()||role()!=='driver')return;
+    if(heistCrimesCarsOwnPriority()){status('Heist Driver-auto/reis wacht: Crimes/Cars rondt eerst af');next(driverFinalize,3000);return;}
+    if(waitForRaceBefore(driverFinalize,'Heist Driver-auto/reis'))return;
     if(!onHeist()){load('/?module=Heist&action=');next(driverFinalize,rand(1200,2400));return;}
 
     // De 'je bent niet in de stad'-melding is zelf al een moduleHeist-pagina.
@@ -14041,6 +14213,8 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
 
   function travelFlow(){
     if(!enabled()||!travelTarget)return;
+    if(heistCrimesCarsOwnPriority()){status('Heist-reis wacht: Crimes/Cars rondt eerst af');next(travelFlow,3000);return;}
+    if(waitForRaceBefore(travelFlow,'Heist-reis'))return;
     if(!onTravel()){load('/?module=Travel');next(travelFlow,1000);return;}
     if(currentCity()===travelTarget){status(`Aangekomen in ${travelTarget}`);if(role()==='leader')leaderStart();else driverStart();return;}
     const confirm=document.querySelector('button[name="jqi_state0_buttonTravel"],.jqi button[name*="buttonTravel"]');
