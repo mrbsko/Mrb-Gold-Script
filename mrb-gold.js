@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MRB Gold Recovery 1.0
-// @version      5.8.31
-// @description  Heist respecteert uitgesloten Leider-steden vóór aanmaken en vóór reizen.
+// @version      5.8.33
+// @description  Heist Sessie Manager verwerkt Race, Spot Overval en Heist in één Heist-gestuurde sessie.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
 // @include      https://*.barafranca.nl/*
@@ -19,6 +19,8 @@
 // ==/UserScript==
 
 // ==========================================================
+// Release 5.8.33: de Heisttimer logt één keer in voor Race, Spot Overval en Heist; pas na alle drie volgt uitloggen.
+// Release 5.8.32: instelbare willekeurige seconden worden per Heist-cyclus één keer gekozen en persistent bij de geplande login opgeslagen.
 // Release 5.8.31: Leider kan geen Heist meer openen of reis bevestigen in een uitgevinkte stad; verouderde reisdoelen worden direct gewist.
 // Release 5.8.30: volledige Race-module teruggezet naar de bewezen 5.8.12-flow van vóór de WAITING_DRIVER-hoofdmenuregressie.
 // Release 5.8.29: een reeds verlopen Crimes/Cars-deadline mag pas vooruit na een aantoonbare poging; navigatieprioriteit blijft tot en met de timerbevestiging actief.
@@ -2147,6 +2149,12 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
 
   async function tick() {
     if (!enabled() || busy) return;
+    const sessionBatch = unsafeWindow.mrbHeistSessionBatch;
+    if (sessionBatch?.managed?.() === true && sessionBatch?.allows?.('spot') !== true) {
+      setStatus('SESSION_WAIT', 'Sessie Manager: Spot Overval wacht op Race of Heist.');
+      schedule(1000);
+      return;
+    }
     if (unsafeWindow.mrbManualControl?.isPaused?.()) {
       const seconds = Math.max(1, Math.ceil((unsafeWindow.mrbManualControl.remaining?.() || 0) / 1000));
       setStatus('MANUAL_PAUSE', `Handmatige bediening actief. Spot hervat automatisch over ongeveer ${seconds} sec.`);
@@ -2198,9 +2206,11 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
       setStatus('IDLE', `Rol gewijzigd naar ${r.value === 'leader' ? 'Leider' : 'Driver'}.`);
       if (enabled()) { clearLoop(); schedule(200); }
     }));
-    toggleBtn.addEventListener('click', () => {
-      set(K.enabled, !enabled());
-      if (enabled()) {
+    function setEnabled(on) {
+      const wanted=on===true;
+      if(enabled()===wanted){renderToggle();return;}
+      set(K.enabled, wanted);
+      if (wanted) {
         resetFlow(true);
         setStatus('IDLE', `${role() === 'leader' ? 'Leider' : 'Driver'} gestart.`);
         clearLoop(); schedule(150);
@@ -2209,7 +2219,9 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
         setStatus('STOPPED', 'Module gestopt.');
       }
       renderToggle();
-    });
+    }
+    toggleBtn.addEventListener('click', () => setEnabled(!enabled()));
+    unsafeWindow.mrbSpotSessionSetEnabled=setEnabled;
     renderToggle();
     setStatus(enabled() ? state() : 'STOPPED', enabled() ? 'Spot Overval actief.' : 'Module gestopt.');
   }
@@ -2240,6 +2252,7 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
     version: '5.8.26-com-style-exact-family-exclusion',
     step: () => false,
     wake: () => { if (enabled()) { set(K.lastAction, 0); set(K.lastNav, 0); clearLoop(); schedule(150); } },
+    setEnabled: on => unsafeWindow.mrbSpotSessionSetEnabled?.(on===true),
     getState: () => ({ enabled: enabled(), role: role(), state: state(), nextAt: timerAt() })
   };
   unsafeWindow.mrbV9SpotRaid = unsafeWindow.mrbSpotRaidCoreV3;
@@ -13553,6 +13566,13 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
   const K_LAST_LOGIN='mrb_session_heist_last_login_try_v1';
   const K_LAST_LOGOUT='mrb_session_heist_last_logout_try_v1';
   const K_LEAD_MIN='mrb_session_heist_lead_minutes_v1';
+  const K_JITTER_MIN='mrb_session_heist_jitter_min_sec_v1';
+  const K_JITTER_MAX='mrb_session_heist_jitter_max_sec_v1';
+  const K_JITTER_PICK='mrb_session_heist_jitter_pick_sec_v1';
+  const K_READY_AT='mrb_session_heist_ready_at_v1';
+  const K_BATCH_ACTIVE='mrb_session_batch_active_v1';
+  const K_BATCH_PHASE='mrb_session_batch_phase_v1';
+  const K_BATCH_STARTED='mrb_session_batch_started_v1';
   const HEIST_ON='mrb_heist_integrated_enabled';
   const MIN_LOGOUT_REMAINING=15*60*1000;
   const CHECK_MS=5000;
@@ -13561,6 +13581,37 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
   const set=(k,v)=>{try{GM_setValue(k,v);}catch(_){}};
   const norm=v=>String(v||'').replace(/\s+/g,' ').trim();
   const on=()=>get(K_ON,false)===true;
+  const batchActive=()=>on()&&get(K_BATCH_ACTIVE,false)===true;
+  const batchPhase=()=>String(get(K_BATCH_PHASE,'race')||'race');
+  function clearBatch(){set(K_BATCH_ACTIVE,false);set(K_BATCH_PHASE,'');set(K_BATCH_STARTED,0);}
+  function setBatchPhase(phase){set(K_BATCH_PHASE,phase);state(`Sessie actief · ${phase==='race'?'Race':phase==='spot'?'Spot Overval':'Heist'}`);}
+  function ensureSessionModules(){
+    set(HEIST_ON,true);
+    try{unsafeWindow.mrbHeistCoreControl?.setEnabled?.(true,'session-manager');}catch(_){}
+    if(loggedOut())set('race_scriptAan',true);
+    else try{if(unsafeWindow.cc_api?.raceSet)unsafeWindow.cc_api.raceSet(true,'session-manager');else set('race_scriptAan',true);}catch(_){set('race_scriptAan',true);}
+    try{unsafeWindow.mrbSpotRaidCoreV3?.setEnabled?.(true);}catch(_){}
+  }
+  function startBatch(){
+    ensureSessionModules();
+    set(K_BATCH_ACTIVE,true);set(K_BATCH_STARTED,Date.now());setBatchPhase('race');
+    try{unsafeWindow.cc_api?.raceWake?.();}catch(_){}
+  }
+  function jitterRange(){
+    let min=Math.max(0,Math.min(59,Math.round(Number(get(K_JITTER_MIN,5))||0)));
+    let max=Math.max(0,Math.min(59,Math.round(Number(get(K_JITTER_MAX,55))||0)));
+    if(max<min)[min,max]=[max,min];
+    return {min,max};
+  }
+  function chooseJitterSeconds(){
+    const {min,max}=jitterRange();
+    return min+Math.floor(Math.random()*(max-min+1));
+  }
+  function clearLoginSchedule(){
+    set(K_LOGIN_AT,0);
+    set(K_READY_AT,0);
+    set(K_JITTER_PICK,-1);
+  }
   const state=(v)=>{
     if(v!==undefined){
       const next=String(v),previous=String(get(K_STATE,'Uit')||'Uit');
@@ -13603,17 +13654,25 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
     const m=norm(document.body?.innerText||'').match(/(?:Volgende\s+heist|Next\s+heist)\s*[:?\-]?\s*(Nu|Now|Ready|(?:(?:\d+)\s*(?:D|H|M|S|dag(?:en)?|uur|uren|min(?:uten)?|sec(?:onden)?)\s*)+)/i);
     return norm(m?.[1]||'');
   }
+  function readActivityTimer(kind){
+    const label=kind==='race'?/^(?:Volgende\s+.*race.*|Next\s+.*race.*)$/i:/^(?:Volgende\s+spot\s+overval|Next\s+spot\s+(?:raid|robbery))$/i;
+    for(const row of document.querySelectorAll('tr')){
+      const cells=[...row.querySelectorAll(':scope > th,:scope > td')];
+      for(let i=0;i<cells.length;i++)if(label.test(norm(cells[i].textContent).replace(/[:?]+$/,'')))return norm((cells[i+1]||cells[cells.length-1])?.textContent||'');
+    }
+    return '';
+  }
 
   const OTHER_KEYS=[
-    'race_scriptAan','oc_scriptAan','mrb_dnd_trade_on','cdBoozenScriptAan','cc_running','bullets_running',
+    'oc_scriptAan','mrb_dnd_trade_on','cdBoozenScriptAan','cc_running','bullets_running',
     'mrb_travel_roundtrip_on_v1','slots_auto_on','fl_running','sniper_running','enteren_on','shop_running',
-    'mrb_lackey_timer_on','mrb_spot_raid_on_v2','mrb_spot_com_enabled_v570','mrb_bg_trainer_on_v1',
+    'mrb_lackey_timer_on','mrb_bg_trainer_on_v1',
     'mrb_captcha_alert_enabled'
   ];
   function otherModuleActive(){
     for(const k of OTHER_KEYS){if(get(k,false)===true)return k;}
     const blocks=[...document.querySelectorAll('#mrbGoldMenu .gm-block.gm-block-active,#geneoSuperMenu .gm-block.gm-block-active')];
-    for(const b of blocks){const title=norm(b.querySelector('.gm-block-title')?.textContent||'');if(title&&!/^(Heist|Heist Sessie Manager|Heist Session Manager|Sessie Manager|Session Manager)$/i.test(title))return title;}
+    for(const b of blocks){const title=norm(b.querySelector('.gm-block-title')?.textContent||'');if(title&&!/^(Heist|Race|Spot Overval|Heist Sessie Manager|Heist Session Manager|Sessie Manager|Session Manager)$/i.test(title))return title;}
     return '';
   }
   function load(path){
@@ -13675,20 +13734,70 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
     if(btn)btn.click();else if(loginForm?.requestSubmit)loginForm.requestSubmit();else loginForm?.submit?.();
   }
 
+  function scheduleFromHeist(raw,wait){
+    const lead=Math.max(2,Math.min(10,Number(get(K_LEAD_MIN,4)||4)))*60000;
+    const now=Date.now(),readyAt=now+wait;
+    let jitter=chooseJitterSeconds();
+    const loginAt=now+Math.max(60000,wait-lead-(jitter*1000));
+    set(K_READY_AT,readyAt);set(K_JITTER_PICK,jitter);set(K_LOGIN_AT,loginAt);
+    state(`Alle 3 afgehandeld · volgende login ${new Date(loginAt).toLocaleTimeString('nl-NL')} · ${jitter}s extra eerder`);
+    return loginAt;
+  }
+  function monitorBatch(){
+    if(!batchActive())return false;
+    ensureSessionModules();
+    if(!onInfo()){state(`Sessie actief · ${batchPhase()==='race'?'Race':batchPhase()==='spot'?'Spot Overval':'Heist'} wordt afgehandeld`);return true;}
+    const phase=batchPhase();
+    if(phase==='race'){
+      const raw=readActivityTimer('race');
+      if(!raw){state('Sessie Race · timer wordt gelezen');return true;}
+      if(parseTimer(raw)<=0){state('Sessie Race · beschikbaar, Race-module handelt af');return true;}
+      setBatchPhase('spot');try{unsafeWindow.mrbSpotRaidCoreV3?.wake?.();}catch(_){}return true;
+    }
+    if(phase==='spot'){
+      const raw=readActivityTimer('spot');
+      if(!raw){state('Sessie Spot Overval · timer wordt gelezen');return true;}
+      if(parseTimer(raw)<=0){state('Sessie Spot Overval · beschikbaar, Spot-module handelt af');return true;}
+      setBatchPhase('heist');try{unsafeWindow.mrbHeistCoreControl?.wake?.();}catch(_){}return true;
+    }
+    const raw=readHeistTimer();
+    if(!raw){state('Sessie Heist · timer wordt gelezen');return true;}
+    const wait=parseTimer(raw);
+    if(wait<=MIN_LOGOUT_REMAINING){state(wait<=0?'Sessie Heist · beschikbaar, Heist-module handelt af':`Sessie Heist · binnen ${raw}, ingelogd blijven`);return true;}
+    scheduleFromHeist(raw,wait);clearBatch();doLogout();return true;
+  }
+
   function tickLoggedIn(){
+    ensureSessionModules();
     if(get(HEIST_ON,false)!==true){state('Geblokkeerd: Heist staat niet actief');return;}
     const other=otherModuleActive();
     if(other){state(`Geblokkeerd: andere module actief (${other})`);return;}
+    if(monitorBatch())return;
     if(!onInfo()){state('Mijn Account openen voor Heisttimer');load('/information.php');return;}
     const raw=readHeistTimer();
     if(!raw){state('Heisttimer niet gevonden');return;}
     const wait=parseTimer(raw);
-    if(wait<=0){set(K_LOGIN_AT,0);state('Heist is Nu · ingelogd blijven');return;}
+    if(wait<=0){clearLoginSchedule();startBatch();return;}
     if(wait<=MIN_LOGOUT_REMAINING){state(`Heist binnen ${raw} · ingelogd blijven`);return;}
     const lead=Math.max(2,Math.min(10,Number(get(K_LEAD_MIN,4)||4)))*60000;
-    const loginAt=Date.now()+Math.max(60000,wait-lead);
-    set(K_LOGIN_AT,loginAt);
-    state(`Cooldown ${raw} · login gepland ${new Date(loginAt).toLocaleTimeString('nl-NL')}`);
+    const now=Date.now();
+    const readyAt=now+wait;
+    const savedReadyAt=Number(get(K_READY_AT,0)||0);
+    const savedLoginAt=Number(get(K_LOGIN_AT,0)||0);
+    let jitter=Number(get(K_JITTER_PICK,-1));
+    let loginAt=savedLoginAt;
+
+    // De serverwaarde kan op hele minuten zijn afgerond. Een verschil tot 90
+    // seconden hoort daarom bij dezelfde cyclus en behoudt dezelfde loting.
+    const sameCycle=savedReadyAt>0&&Math.abs(savedReadyAt-readyAt)<=90000&&savedLoginAt>0&&jitter>=0&&jitter<=59;
+    if(!sameCycle){
+      jitter=chooseJitterSeconds();
+      loginAt=now+Math.max(60000,wait-lead-(jitter*1000));
+      set(K_READY_AT,readyAt);
+      set(K_JITTER_PICK,jitter);
+      set(K_LOGIN_AT,loginAt);
+    }
+    state(`Cooldown ${raw} · login gepland ${new Date(loginAt).toLocaleTimeString('nl-NL')} · ${jitter}s extra eerder`);
     doLogout();
   }
   function tickLoggedOut(){
@@ -13696,6 +13805,7 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
     const at=Number(get(K_LOGIN_AT,0)||0);
     if(!at){state('Uitgelogd zonder geplande login');return;}
     if(Date.now()<at){state(`Uitgelogd · login om ${new Date(at).toLocaleTimeString('nl-NL')}`);return;}
+    if(!batchActive())startBatch();
     doLogin();
   }
   function tick(){
@@ -13725,24 +13835,46 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
     if(!root)return;
     document.getElementById('mrb-heist-session-manager-block')?.remove();
     block=document.createElement('div');block.className='gm-block';block.id='mrb-heist-session-manager-block';block.dataset.id='02b-heist-session-manager';
-    block.innerHTML=`<div class="gm-block-header"><div class="gm-block-title">Heist Sessie Manager</div><div class="gm-block-tools"><button class="gm-min">↧</button></div></div><div class="gm-block-body"><div style="display:flex;gap:8px;align-items:center"><button data-session-toggle class="gm-start">Start</button><b data-session-state>Uit</b></div><div data-session-status style="font-size:11px;margin-top:5px;color:#d8c98f">Gestopt</div><label style="display:block;margin-top:7px">Gebruikersnaam<br><input data-session-user type="text" autocomplete="username" style="width:95%"></label><label style="display:block;margin-top:5px">Wachtwoord<br><input data-session-pass type="password" autocomplete="current-password" style="width:95%"></label><label style="display:block;margin-top:5px">Inloggen vóór Heist Nu<br><select data-session-lead><option value="2">2 minuten</option><option value="3">3 minuten</option><option value="4">4 minuten</option><option value="5">5 minuten</option><option value="7">7 minuten</option><option value="10">10 minuten</option></select></label><button data-session-save class="gm-btn" style="margin-top:7px">Opslaan</button><div style="font-size:10px;opacity:.75;margin-top:6px">Werkt wanneer Heist en de Heist Sessie Manager actief zijn en alle overige modules uit staan. Blijft herhalen tot handmatig gestopt. Stopt bij captcha/Cloudflare.</div></div>`;
+    block.innerHTML=`<div class="gm-block-header"><div class="gm-block-title">Heist Sessie Manager</div><div class="gm-block-tools"><button class="gm-min">↧</button></div></div><div class="gm-block-body"><div style="display:flex;gap:8px;align-items:center"><button data-session-toggle class="gm-start">Start</button><b data-session-state>Uit</b></div><div data-session-status style="font-size:11px;margin-top:5px;color:#d8c98f">Gestopt</div><label style="display:block;margin-top:7px">Gebruikersnaam<br><input data-session-user type="text" autocomplete="username" style="width:95%"></label><label style="display:block;margin-top:5px">Wachtwoord<br><input data-session-pass type="password" autocomplete="current-password" style="width:95%"></label><label style="display:block;margin-top:5px">Inloggen vóór Heist Nu<br><select data-session-lead><option value="2">2 minuten</option><option value="3">3 minuten</option><option value="4">4 minuten</option><option value="5">5 minuten</option><option value="7">7 minuten</option><option value="10">10 minuten</option></select></label><div style="margin-top:6px;font-size:11px">Willekeurig extra eerder:<div style="display:flex;align-items:center;gap:5px;margin-top:3px"><input data-session-jitter-min type="number" min="0" max="59" step="1" style="width:48px"><span>t/m</span><input data-session-jitter-max type="number" min="0" max="59" step="1" style="width:48px"><span>seconden</span></div></div><button data-session-save class="gm-btn" style="margin-top:7px">Opslaan</button><div style="font-size:10px;opacity:.75;margin-top:6px">De Heisttimer bepaalt als enige het loginmoment. Daarna: Race → Spot Overval → Heist → uitloggen. Race, Spot en Heist worden automatisch actief gezet. Zonder Sessie Manager blijft Race iedere 30 minuten werken.</div></div>`;
     root.appendChild(block);
     block.querySelector('[data-session-user]').value=String(get(K_USER,'')||'');
     block.querySelector('[data-session-pass]').value=String(get(K_PASS,'')||'');
     block.querySelector('[data-session-lead]').value=String(get(K_LEAD_MIN,4)||4);
+    const range=jitterRange();
+    block.querySelector('[data-session-jitter-min]').value=String(range.min);
+    block.querySelector('[data-session-jitter-max]').value=String(range.max);
     block.querySelector('.gm-min').onclick=()=>block.classList.toggle('gm-collapsed');
     const saveCredentials=()=>syncVisibleCredentials();
     block.querySelector('[data-session-user]').addEventListener('input',saveCredentials);
     block.querySelector('[data-session-user]').addEventListener('change',saveCredentials);
     block.querySelector('[data-session-pass]').addEventListener('input',saveCredentials);
     block.querySelector('[data-session-pass]').addEventListener('change',saveCredentials);
-    block.querySelector('[data-session-save]').onclick=()=>{const credentials=syncVisibleCredentials();set(K_LEAD_MIN,Number(block.querySelector('[data-session-lead]').value||4));state(credentials.user&&credentials.pass?'Instellingen opgeslagen':'Login ontbreekt: vul gebruikersnaam en wachtwoord in');render();};
-    block.querySelector('[data-session-toggle]').onclick=()=>{const n=!on();if(n)syncVisibleCredentials();set(K_ON,n);if(!n){set(K_LOGIN_AT,0);state('Handmatig gestopt');}else state('Gestart · veiligheid controleren');render();setTimeout(tick,100);};
+    block.querySelector('[data-session-save]').onclick=()=>{
+      const credentials=syncVisibleCredentials();
+      set(K_LEAD_MIN,Number(block.querySelector('[data-session-lead]').value||4));
+      let min=Math.max(0,Math.min(59,Math.round(Number(block.querySelector('[data-session-jitter-min]').value)||0)));
+      let max=Math.max(0,Math.min(59,Math.round(Number(block.querySelector('[data-session-jitter-max]').value)||0)));
+      if(max<min)[min,max]=[max,min];
+      set(K_JITTER_MIN,min);set(K_JITTER_MAX,max);
+      block.querySelector('[data-session-jitter-min]').value=String(min);
+      block.querySelector('[data-session-jitter-max]').value=String(max);
+      // Alleen zolang het account nog ingelogd is mag Opslaan de huidige
+      // planning opnieuw laten berekenen. Uitgelogd blijft loginAt onaangeraakt.
+      if(!loggedOut())clearLoginSchedule();
+      state(credentials.user&&credentials.pass?`Instellingen opgeslagen · spreiding ${min}-${max}s`:'Login ontbreekt: vul gebruikersnaam en wachtwoord in');
+      render();
+    };
+    block.querySelector('[data-session-toggle]').onclick=()=>{const n=!on();if(n){syncVisibleCredentials();clearLoginSchedule();}set(K_ON,n);if(!n){clearLoginSchedule();clearBatch();state('Handmatig gestopt');}else{ensureSessionModules();state('Gestart · Heisttimer bepaalt volgende sessie');}render();setTimeout(tick,100);};
     render();
     try{window.__mrbAddManualOrderButtons?.(block);window.__mrbRefreshCategories?.();}catch(_){}
   }
 
   setInterval(tick,CHECK_MS);
+  unsafeWindow.mrbHeistSessionBatch=Object.freeze({
+    managed:()=>on(),active:()=>batchActive(),phase:()=>batchPhase(),
+    allows:name=>!on()?true:(batchActive()&&batchPhase()===String(name||'')),
+    state:()=>({managed:on(),active:batchActive(),phase:batchPhase(),startedAt:Number(get(K_BATCH_STARTED,0)||0)})
+  });
   setTimeout(tick,1000);
 })();
 
@@ -13777,6 +13909,7 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
   const status=s=>set(K_STATUS,s);
   const invitePending=()=>get(K_INVITE_PENDING,false)===true;
   const setInvitePending=v=>set(K_INVITE_PENDING,v===true);
+  const sessionAllowsHeist=()=>unsafeWindow.mrbHeistSessionBatch?.managed?.()!==true||unsafeWindow.mrbHeistSessionBatch?.allows?.('heist')===true;
 
   if(get(K_MIG,false)!==true){
     [
@@ -13804,6 +13937,10 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
     clearLoop();
     loopTimer=setTimeout(()=>{
       if(!enabled()) return;
+      if(!sessionAllowsHeist()){
+        status('Sessie Manager: Heist wacht tot Race en Spot Overval klaar zijn');
+        next(fn,1000);return;
+      }
       if(unsafeWindow.mrbManualControl?.isPaused?.()){
         const wait=Math.min(1000,Math.max(250,unsafeWindow.mrbManualControl.remaining?.()||1000));
         status(`Handmatige pauze · hervat over ${Math.max(1,Math.ceil((unsafeWindow.mrbManualControl.remaining?.()||0)/1000))}s`);
@@ -14167,7 +14304,13 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
     root.appendChild(block);
     const render=()=>{const on=enabled(),r=role();block.querySelector('[data-heist-toggle]').textContent=on?'Stop':'Start';block.querySelector('[data-heist-state]').textContent=on?`Actief · ${r==='leader'?'Leider':'Driver'}`:'Uit';block.querySelector('[data-heist-driver]').textContent=driverName();block.querySelector('[data-heist-status]').textContent=on?String(get(K_STATUS,'Wachten op controle')):'Gestopt';block.querySelector('[data-heist-cities-wrap]').style.display=r==='leader'?'block':'none';block.classList.toggle('gm-block-active',on);block.querySelectorAll('input[name="mrb-heist-role"]').forEach(x=>x.checked=x.value===r);};
     block.querySelector('.gm-min').onclick=()=>block.classList.toggle('gm-collapsed');
-    block.querySelector('[data-heist-toggle]').onclick=()=>{const on=!enabled();set(K_ON,on);clearLoop();phase='idle';acceptChecks=0;if(!on)setInvitePending(false);status(on?'Heist gestart':'Gestopt');render();if(on)next(goInfo,300);};
+    function setEnabled(on){
+      on=on===true;
+      if(enabled()===on){render();return;}
+      set(K_ON,on);clearLoop();phase='idle';acceptChecks=0;if(!on)setInvitePending(false);status(on?'Heist gestart':'Gestopt');render();if(on&&sessionAllowsHeist())next(goInfo,300);
+    }
+    unsafeWindow.mrbHeistSessionSetEnabled=setEnabled;
+    block.querySelector('[data-heist-toggle]').onclick=()=>setEnabled(!enabled());
     block.querySelectorAll('input[name="mrb-heist-role"]').forEach(x=>x.onchange=()=>{if(x.checked){set(K_ROLE,x.value);clearLoop();phase='idle';status(`Rol: ${x.value==='leader'?'Leider':'Driver'}`);render();if(enabled())next(goInfo,300);}});
     block.querySelectorAll('input[data-heist-city]').forEach(x=>x.onchange=()=>{
       const city=x.dataset.heistCity;
@@ -14187,5 +14330,10 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
   }
 
   syncMenu();
+  unsafeWindow.mrbHeistCoreControl=Object.freeze({
+    setEnabled:on=>unsafeWindow.mrbHeistSessionSetEnabled?.(on===true),
+    wake:()=>{if(enabled()&&sessionAllowsHeist()){clearLoop();next(goInfo,150);}},
+    getState:()=>({enabled:enabled(),role:role(),phase,status:String(get(K_STATUS,'')||'')})
+  });
   if(enabled()) next(goInfo,600);
 })();
