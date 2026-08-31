@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MRB Gold Recovery 1.0
-// @version      5.8.34
-// @description  Fill lackey wacht op de echte Lackeys-DOM en herprobeert kort bij mislukte paginalading; Sessie Manager batch blijft behouden.
+// @version      5.8.36
+// @description  Race herstelt Leider- en Driver-kant na annuleren van een achtergebleven race; Fill lackey page-ready fix en Sessie Manager batch blijven behouden.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
 // @include      https://*.barafranca.nl/*
@@ -20,6 +20,8 @@
 
 // ==========================================================
 // Release 5.8.34: Fill lackey wacht op een volledig geladen Lackeys-pagina, bevestigt de vulactie en herprobeert kort bij een mislukte navigatie.
+// Release 5.8.35: Race herkent een achtergebleven gestarte-race melding, annuleert die gecontroleerd en synchroniseert daarna opnieuw via Mijn Account.
+// Release 5.8.36: Driver herkent dat een eerder geaccepteerde Race door de Leider is geannuleerd, synchroniseert direct de racetimer en opent een nieuwe uitnodiging zodra Race nog beschikbaar is.
 // Release 5.8.33: de Heisttimer logt één keer in voor Race, Spot Overval en Heist; pas na alle drie volgt uitloggen.
 // Release 5.8.32: instelbare willekeurige seconden worden per Heist-cyclus één keer gekozen en persistent bij de geplande login opgeslagen.
 // Release 5.8.31: Leider kan geen Heist meer openen of reis bevestigen in een uitgevinkte stad; verouderde reisdoelen worden direct gewist.
@@ -5604,6 +5606,12 @@ try {
   let failsafeTimer = null;
   let loopTimer     = null;
 
+  // 5.8.36: Driver onthoudt kort dat hij voor de huidige uitnodiging al een auto
+  // heeft ingestuurd. Als de Leider daarna annuleert, verdwijnt de ready/wachttekst.
+  // Na enkele bevestigde lege Race-controles synchroniseert Driver opnieuw via Mijn Account.
+  let driverAcceptedWatch = false;
+  let driverAcceptedMisses = 0;
+
   const next = (fn, ms)=>{
     if(loopTimer) clearTimeout(loopTimer);
     loopTimer = setTimeout(fn, Math.max(0, ms || 0));
@@ -6158,6 +6166,45 @@ try {
     ]);
   }
 
+  // 5.8.35: wanneer de server een oude/achtergebleven gestarte race toont,
+  // blokkeert die onder meer Travel. Annuleer uitsluitend bij deze expliciete melding.
+  function raceStartedTravelBlockVisible(){
+    const body = String(document.body?.innerText || '').replace(/\s+/g,' ').trim();
+    return /je\s+hebt\s+een\s+race\s+gestart\s+in\s+.+?ga\s+hiernaar\s+terug\s+aub/i.test(body)
+      || /you\s+have\s+started\s+a\s+race\s+in\s+.+?(?:go|return)\s+back/i.test(body);
+  }
+
+  function raceFindStartedCancelButton(){
+    if (!raceStartedTravelBlockVisible()) return null;
+    return raceFindButtonByText([
+      /^annuleer$/i,
+      /^cancel$/i,
+      /^annuleren$/i
+    ]);
+  }
+
+  function raceRecoverStartedTravelBlock(source='Race'){
+    if (!raceStartedTravelBlockVisible()) return false;
+    const cancel = raceFindStartedCancelButton();
+    if (!cancel) {
+      raceRegistryState('CANCEL_PENDING', `${source}: gestarte race blokkeert Travel; Annuleer nog niet zichtbaar`);
+      next(()=>raceRecoverStartedTravelBlock(source) || goInfo(), randomDelay(1200,2200));
+      return true;
+    }
+
+    raceRegistryState('CANCELLING', `${source}: achtergebleven gestarte race annuleren`);
+    clearRacePlan();
+    raceReleaseAction();
+    raceSafeClick(cancel);
+    next(()=>{
+      if(!scriptAan) return;
+      clearRacePlan();
+      guiLoad('/information.php');
+      next(()=>checkAvailability(true), randomDelay(3000,6000));
+    }, randomDelay(1200,2200));
+    return true;
+  }
+
   // Selecteer robuust een race-auto voordat invites/verzenden worden geklikt.
   function raceSelectFirstAvailableCar(){
     let did = false;
@@ -6229,6 +6276,7 @@ try {
     if (isLoggedOut()) return pauseForGate('leader_raceFlow: uitgelogd');
     const body = document.body.innerText || '';
 
+    if (raceRecoverStartedTravelBlock('Leider-flow')) return;
     if (handleLeaderReturnToRaceCity(body)) return;
 
     if (isTired(body)){ next(goInfo, randomDelay(5000,10000)); return; }
@@ -6292,6 +6340,7 @@ try {
     next(()=>{
       const body = document.body.innerText || '';
 
+      if (raceRecoverStartedTravelBlock('Leider-wacht')) return;
       if (handleLeaderReturnToRaceCity(body)) return;
 
       if (isTired(body)){ next(goInfo, randomDelay(5000,10000)); return; }
@@ -6314,6 +6363,8 @@ try {
     raceRegistryState('STARTING', 'Race starten');
     if(!scriptAan) return;
     if (isLoggedOut()) return pauseForGate('leader_tryStart: uitgelogd');
+
+    if (raceRecoverStartedTravelBlock('Race-start')) return;
 
     const btn = raceFindRaceStartButton()
       || document.querySelector('input[type="submit"][value="Race!!!"]')
@@ -6338,6 +6389,8 @@ try {
     const $ = $jq();
     const body = document.body.innerText || '';
     const done = $ ? $('#game_container:contains("The Race has ended, check your inbox for results"), #game_container:contains("check your inbox for results"), #game_container:contains("The race has ended")').length>0 : false;
+
+    if (raceRecoverStartedTravelBlock('Race-resultaatcontrole')) return;
 
     if (done || body.includes("The race has ended") || body.includes("check your inbox for results")){
       GM_Set("lastRaceTime", Math.floor(Date.now()/1000));
@@ -6375,6 +6428,22 @@ try {
     }, randomDelay(700,1300));
   }
 
+  function raceDriverRecoverCancelledInvite(reason='oude Race-uitnodiging verdwenen'){
+    driverAcceptedWatch = false;
+    driverAcceptedMisses = 0;
+    clearRacePlan();
+    raceReleaseAction();
+    raceRegistryState('DRIVER_RESTART_AFTER_CANCEL', reason);
+    next(()=>{
+      if(!scriptAan || raceRole!=='slave') return;
+      guiLoad('/information.php');
+      // De racetimer is opnieuw de bron van waarheid. Staat die nog op Nu, dan
+      // plant checkAvailability vanzelf weer een Driver-open voor de nieuwe invite.
+      next(()=>checkAvailability(true), randomDelay(1800,3200));
+    }, randomDelay(700,1300));
+    return true;
+  }
+
   function slave_startRace(){
     raceRegistryState('DRIVER_OPEN', 'uitnodiging openen');
     if(!scriptAan) return;
@@ -6410,11 +6479,14 @@ try {
     }
 
     if (alreadyAcceptedMsg(body)){
-      console.log("⏳ Race al geaccepteerd — accept-flow opnieuw starten.");
+      driverAcceptedWatch = true;
+      driverAcceptedMisses = 0;
+      console.log("⏳ Race al geaccepteerd — wachten op Leider of annulering controleren.");
       next(()=>{
+        if(!scriptAan || raceRole!=='slave') return;
         guiLoad('/races.php');
-        next(slave_acceptLoop, randomDelay(1500,4000));
-      }, randomDelay(3000,6000));
+        next(slave_acceptLoop, randomDelay(1200,2200));
+      }, randomDelay(5000,8000));
       return;
     }
 
@@ -6423,14 +6495,35 @@ try {
     // Alleen expliciete Driver-tekst geldt als autostap. Een willekeurige
     // <select> staat ook op de Leider-pagina en mag dus nooit voldoende zijn.
     if (raceDriverHasRealCarStep()){
+      driverAcceptedMisses = 0;
       slave_selectCar();
       return;
     }
 
     const accept = $('a').filter(function(){ return /(Accepteer|Accept)/i.test($(this).text()); });
     if (accept.length){
+      driverAcceptedWatch = true;
+      driverAcceptedMisses = 0;
       accept[0].click();
       next(slave_selectCar, actionDelay());
+      return;
+    }
+
+    // Driver had aantoonbaar een geaccepteerde uitnodiging/auto, maar op een
+    // volledig opgebouwde Race-pagina is die toestand nu verdwenen. Dat gebeurt
+    // wanneer de Leider annuleert. Twee lege controles voorkomen een false positive
+    // tijdens een trage SPA-opbouw; daarna wordt direct opnieuw via Mijn Account gestart.
+    if (driverAcceptedWatch){
+      driverAcceptedMisses += 1;
+      if (driverAcceptedMisses >= 2){
+        raceDriverRecoverCancelledInvite('Leider heeft de vorige Race geannuleerd; nieuwe uitnodiging afwachten');
+        return;
+      }
+      next(()=>{
+        if(!scriptAan || raceRole!=='slave') return;
+        guiLoad('/races.php');
+        next(slave_acceptLoop, randomDelay(1200,2200));
+      }, randomDelay(1800,3000));
       return;
     }
 
@@ -6492,11 +6585,16 @@ try {
             try{ form.submit(); submitted = true; }catch{}
           }
 
+          driverAcceptedWatch = true;
+          driverAcceptedMisses = 0;
+          // Niet 18-40 seconden blind op Mijn Account wachten. Controleer de Race
+          // kort opnieuw: bij een annulering door de Leider verdwijnt de accepted/ready
+          // toestand en kan Driver meteen een nieuwe cyclus plannen.
           next(()=>{
-            clearRacePlan();
-            guiLoad('/information.php');
-            next(()=>checkAvailability(true), randomDelay(10000,20000));
-          }, randomDelay(18000,40000));
+            if(!scriptAan || raceRole!=='slave') return;
+            guiLoad('/races.php');
+            next(slave_acceptLoop, randomDelay(1200,2200));
+          }, randomDelay(6000,9000));
         }, actionDelay());
         return;
       }
