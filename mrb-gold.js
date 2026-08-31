@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MRB Gold Recovery 1.0
-// @version      5.8.36
-// @description  Race herstelt Leider- en Driver-kant na annuleren van een achtergebleven race; Fill lackey page-ready fix en Sessie Manager batch blijven behouden.
+// @version      5.8.38
+// @description  Race Driver keert na auto-ready terug naar Mijn Account, volgt de racetimer en opent nieuwe uitnodigingen opnieuw; eerdere fixes blijven behouden.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
 // @include      https://*.barafranca.nl/*
@@ -19,9 +19,11 @@
 // ==/UserScript==
 
 // ==========================================================
+// Release 5.8.38: Driver verlaat na auto-ready de Race-pagina, volgt opnieuw de Race-timer op Mijn Account en opent Race opnieuw zodra die op Nu staat.
 // Release 5.8.34: Fill lackey wacht op een volledig geladen Lackeys-pagina, bevestigt de vulactie en herprobeert kort bij een mislukte navigatie.
 // Release 5.8.35: Race herkent een achtergebleven gestarte-race melding, annuleert die gecontroleerd en synchroniseert daarna opnieuw via Mijn Account.
 // Release 5.8.36: Driver herkent dat een eerder geaccepteerde Race door de Leider is geannuleerd, synchroniseert direct de racetimer en opent een nieuwe uitnodiging zodra Race nog beschikbaar is.
+// Release 5.8.37: Driver herkent ook de Nederlandse Race-ready pagina en annuleert een stale ready-status na 90 seconden.
 // Release 5.8.33: de Heisttimer logt één keer in voor Race, Spot Overval en Heist; pas na alle drie volgt uitloggen.
 // Release 5.8.32: instelbare willekeurige seconden worden per Heist-cyclus één keer gekozen en persistent bij de geplande login opgeslagen.
 // Release 5.8.31: Leider kan geen Heist meer openen of reis bevestigen in een uitgevinkte stad; verouderde reisdoelen worden direct gewist.
@@ -5681,10 +5683,17 @@ try {
   // uniforme “moe van de race” detectie (NL + EN)
   const isTired = (text)=> /(Je\s*bent\s*nog\s*moe\s*van\s*je\s*vorige\s*race|still\s*tired\s*from\s*your\s*last\s*race)/i.test(text);
 
-  // foutmelding die Driver kan laten vastlopen
+  // Driver-ready/wachtstatus (NL + EN). De NL-pagina toont o.a.
+  // "Je hebt een auto geselecteerd om mee te racen" en "Je bent klaar voor de race".
   const alreadyAcceptedMsg = (text) =>
     /You're ready for the race/i.test(text) ||
-    /wait for the race to end/i.test(text);
+    /wait for the race to end/i.test(text) ||
+    /Je\s*hebt\s*een\s*auto\s*geselecteerd\s*om\s*mee\s*te\s*racen/i.test(text) ||
+    /Je\s*bent\s*klaar\s*voor\s*de\s*race/i.test(text) ||
+    /wacht(?:en)?\s*tot\s*de\s*race/i.test(text);
+
+  // Driver-ready is geen wachtpagina meer: na bevestiging keert Driver terug naar Mijn Account.
+
 
   // ---------- UITLOG-GUARD ----------
   function isLoggedOut(){ return gm_isGateVisible(); }
@@ -6429,6 +6438,7 @@ try {
   }
 
   function raceDriverRecoverCancelledInvite(reason='oude Race-uitnodiging verdwenen'){
+    clearDriverReadySince();
     driverAcceptedWatch = false;
     driverAcceptedMisses = 0;
     clearRacePlan();
@@ -6481,12 +6491,19 @@ try {
     if (alreadyAcceptedMsg(body)){
       driverAcceptedWatch = true;
       driverAcceptedMisses = 0;
-      console.log("⏳ Race al geaccepteerd — wachten op Leider of annulering controleren.");
+
+      // Driver heeft zijn auto bevestigd. Vanaf dit moment niet op de oude
+      // Race-pagina blijven pollen: Mijn Account is de bron van waarheid voor
+      // de volgende Race-timer. Zodra die weer op Nu staat, plant checkAvailability
+      // automatisch een nieuw bezoek aan Race en kan een nieuwe invite worden geaccepteerd.
+      raceRegistryState('DRIVER_READY_INFO', 'auto gereed; terug naar Mijn Account om Race-timer te volgen');
+      clearRacePlan();
+      raceReleaseAction();
       next(()=>{
         if(!scriptAan || raceRole!=='slave') return;
-        guiLoad('/races.php');
-        next(slave_acceptLoop, randomDelay(1200,2200));
-      }, randomDelay(5000,8000));
+        guiLoad('/information.php');
+        next(()=>checkAvailability(true), randomDelay(2500,4500));
+      }, randomDelay(2500,4500));
       return;
     }
 
@@ -6587,14 +6604,15 @@ try {
 
           driverAcceptedWatch = true;
           driverAcceptedMisses = 0;
-          // Niet 18-40 seconden blind op Mijn Account wachten. Controleer de Race
-          // kort opnieuw: bij een annulering door de Leider verdwijnt de accepted/ready
-          // toestand en kan Driver meteen een nieuwe cyclus plannen.
+          // Na auto-bevestiging altijd terug naar Mijn Account. Daar blijft Race
+          // lokaal aftellen en wordt bij Nu opnieuw een Driver-open gepland.
           next(()=>{
             if(!scriptAan || raceRole!=='slave') return;
-            guiLoad('/races.php');
-            next(slave_acceptLoop, randomDelay(1200,2200));
-          }, randomDelay(6000,9000));
+            clearRacePlan();
+            raceReleaseAction();
+            guiLoad('/information.php');
+            next(()=>checkAvailability(true), randomDelay(2500,4500));
+          }, randomDelay(5000,8000));
         }, actionDelay());
         return;
       }
