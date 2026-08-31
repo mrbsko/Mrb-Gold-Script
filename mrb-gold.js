@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MRB Gold Recovery 1.0
-// @version      5.8.38
-// @description  Race Driver keert na auto-ready terug naar Mijn Account, volgt de racetimer en opent nieuwe uitnodigingen opnieuw; eerdere fixes blijven behouden.
+// @version      5.8.39
+// @description  Race Driver verlaat de oude gereed-pagina via een onafhankelijke hard-exit en keert terug naar Mijn Account; eerdere fixes blijven behouden.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
 // @include      https://*.barafranca.nl/*
@@ -19,6 +19,7 @@
 // ==/UserScript==
 
 // ==========================================================
+// Release 5.8.39: Driver-ready gebruikt een onafhankelijke hard-exit naar Mijn Account zodat de oude Race-pagina niet kan blijven hangen.
 // Release 5.8.38: Driver verlaat na auto-ready de Race-pagina, volgt opnieuw de Race-timer op Mijn Account en opent Race opnieuw zodra die op Nu staat.
 // Release 5.8.34: Fill lackey wacht op een volledig geladen Lackeys-pagina, bevestigt de vulactie en herprobeert kort bij een mislukte navigatie.
 // Release 5.8.35: Race herkent een achtergebleven gestarte-race melding, annuleert die gecontroleerd en synchroniseert daarna opnieuw via Mijn Account.
@@ -5613,6 +5614,28 @@ try {
   // Na enkele bevestigde lege Race-controles synchroniseert Driver opnieuw via Mijn Account.
   let driverAcceptedWatch = false;
   let driverAcceptedMisses = 0;
+  // 5.8.39: aparte timer voor het verlaten van de oude Driver-ready pagina.
+  // Deze gebruikt bewust NIET de gedeelde Race loopTimer, zodat een andere Race-callback
+  // de terugkeer naar Mijn Account niet meer kan overschrijven.
+  let driverReadyExitTimer = null;
+  function clearDriverReadyExit(){
+    if (driverReadyExitTimer){ clearTimeout(driverReadyExitTimer); driverReadyExitTimer = null; }
+  }
+  function driverReadyHardExit(reason='oude Driver-ready pagina verlaten'){
+    clearDriverReadyExit();
+    driverReadyExitTimer = setTimeout(()=>{
+      driverReadyExitTimer = null;
+      if(!scriptAan || raceRole!=='slave' || isLoggedOut()) return;
+      const body = document.body?.innerText || '';
+      // Alleen ingrijpen als de Driver nog werkelijk op de oude gereed/wachtpagina staat.
+      if (!alreadyAcceptedMsg(body)) return;
+      raceRegistryState('DRIVER_READY_INFO', reason);
+      clearRacePlan();
+      raceReleaseAction();
+      guiLoad('/information.php');
+      next(()=>checkAvailability(true), randomDelay(2500,4500));
+    }, randomDelay(3500,5500));
+  }
 
   const next = (fn, ms)=>{
     if(loopTimer) clearTimeout(loopTimer);
@@ -5621,6 +5644,7 @@ try {
   const clearAll = ()=>{
     if(loopTimer) clearTimeout(loopTimer);
     if(failsafeTimer) clearTimeout(failsafeTimer);
+    clearDriverReadyExit();
   };
 
   const block = addBlock(`
@@ -6496,14 +6520,11 @@ try {
       // Race-pagina blijven pollen: Mijn Account is de bron van waarheid voor
       // de volgende Race-timer. Zodra die weer op Nu staat, plant checkAvailability
       // automatisch een nieuw bezoek aan Race en kan een nieuwe invite worden geaccepteerd.
-      raceRegistryState('DRIVER_READY_INFO', 'auto gereed; terug naar Mijn Account om Race-timer te volgen');
+      raceRegistryState('DRIVER_READY_INFO', 'auto gereed; hard-exit naar Mijn Account gepland');
       clearRacePlan();
       raceReleaseAction();
-      next(()=>{
-        if(!scriptAan || raceRole!=='slave') return;
-        guiLoad('/information.php');
-        next(()=>checkAvailability(true), randomDelay(2500,4500));
-      }, randomDelay(2500,4500));
+      // Onafhankelijke hard-exit: kan niet meer door de gedeelde Race-loop worden geannuleerd.
+      driverReadyHardExit('oude Race is gereed; terug naar Mijn Account om nieuwe Race-timer te volgen');
       return;
     }
 
@@ -6604,6 +6625,9 @@ try {
 
           driverAcceptedWatch = true;
           driverAcceptedMisses = 0;
+          // Zet direct ook de onafhankelijke hard-exit klaar. Zodra de bevestigingspagina
+          // zichtbaar is, kan geen andere Race-callback deze terugkeer meer blokkeren.
+          driverReadyHardExit('auto bevestigd; oude Race-ready pagina verlaten');
           // Na auto-bevestiging altijd terug naar Mijn Account. Daar blijft Race
           // lokaal aftellen en wordt bij Nu opnieuw een Driver-open gepland.
           next(()=>{
