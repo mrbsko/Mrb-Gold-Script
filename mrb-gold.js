@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MRB Gold Recovery 1.0
-// @version      5.8.33
-// @description  Heist Sessie Manager verwerkt Race, Spot Overval en Heist in één Heist-gestuurde sessie.
+// @version      5.8.34
+// @description  Fill lackey wacht op de echte Lackeys-DOM en herprobeert kort bij mislukte paginalading; Sessie Manager batch blijft behouden.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
 // @include      https://*.barafranca.nl/*
@@ -19,6 +19,7 @@
 // ==/UserScript==
 
 // ==========================================================
+// Release 5.8.34: Fill lackey wacht op een volledig geladen Lackeys-pagina, bevestigt de vulactie en herprobeert kort bij een mislukte navigatie.
 // Release 5.8.33: de Heisttimer logt één keer in voor Race, Spot Overval en Heist; pas na alle drie volgt uitloggen.
 // Release 5.8.32: instelbare willekeurige seconden worden per Heist-cyclus één keer gekozen en persistent bij de geplande login opgeslagen.
 // Release 5.8.31: Leider kan geen Heist meer openen of reis bevestigen in een uitgevinkte stad; verouderde reisdoelen worden direct gewist.
@@ -10923,36 +10924,77 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
   }
   function clear(){ if(timer) clearTimeout(timer); timer=null; }
   function plan(ts){ clear(); nextAt=ts; GM_Set(K_NEXT,nextAt); if(running) timer=setTimeout(runOnce,Math.max(250,nextAt-Date.now())); paint(); }
+  const RETRY_MS=15000;
+  const PAGE_READY_TIMEOUT=30000;
+  const FILL_COMPLETE_TIMEOUT=25000;
   function loadLackeys(){
     try{ const gui=unsafeWindow?.omerta?.GUI?.container; if(gui?.loadPage){ gui.loadPage('/?module=Lackeys'); return; } }catch(e){}
     location.href='/?module=Lackeys';
   }
-  async function waitForFillButton(timeout=20000){
+  function lackeysDomReady(){
+    const text=String(document.querySelector('#game_container')?.innerText || document.body?.innerText || '');
+    const hasNames=/\bSpats\b/i.test(text) && /\bNoodles\b/i.test(text);
+    const hasControls=!!document.querySelector(
+      '[data-lackey="1"][data-action="send"], [data-lackey="1"][data-action="hire"], '+
+      '[data-lackey="2"][data-action="send"], [data-lackey="2"][data-action="hire"]'
+    );
+    return hasNames && hasControls;
+  }
+  async function waitForLackeysPage(timeout=PAGE_READY_TIMEOUT){
     const start=Date.now();
-    while(Date.now()-start<timeout){
+    while(running && Date.now()-start<timeout){
+      if(lackeysDomReady()) return true;
+      await sleep(200);
+    }
+    return false;
+  }
+  async function waitForFillButton(timeout=10000){
+    const start=Date.now();
+    while(running && Date.now()-start<timeout){
       const el=document.querySelector('#btnFillAllLackeysInline');
-      if(el) return el;
+      if(el && (el.offsetParent!==null || el.getClientRects().length)) return el;
       await sleep(150);
     }
     return null;
+  }
+  async function waitForFillComplete(btn, timeout=FILL_COMPLETE_TIMEOUT){
+    const start=Date.now();
+    let started=false;
+    while(running && Date.now()-start<timeout){
+      const filling=!!btn?.disabled || /filling/i.test(String(btn?.value || btn?.textContent || ''));
+      if(filling) started=true;
+      if(started && !filling) return true;
+      await sleep(150);
+    }
+    return false;
   }
   async function runOnce(){
     if(!running||busy) return;
     busy=true; paint('<span class="ok">▶ Lackeys…</span>');
     try{
-      if(!/[?&]module=Lackeys\b/i.test(location.href)){
+      if(!lackeysDomReady()){
+        paint('<span class="ok">▶ Lackeys laden…</span>');
         loadLackeys();
-        await sleep(1200);
       }
+      const pageReady=await waitForLackeysPage();
+      if(!pageReady) throw new Error('Lackeys-pagina werd niet volledig geladen.');
+
       const btn=await waitForFillButton();
-      if(!btn) throw new Error('Fill all lackeys knop niet gevonden.');
+      if(!btn) throw new Error('Fill all lackeys knop niet gevonden op geladen Lackeys-pagina.');
+
+      paint('<span class="ok">▶ Lackeys bijvullen…</span>');
       btn.click();
-      await sleep(9000);
+      const completed=await waitForFillComplete(btn);
+      if(!completed) throw new Error('Fill all lackeys actie gaf geen bevestigde afronding.');
+
       plan(Date.now()+PERIOD_MS);
+      paint('<span class="ok">✅ Lackeys bijgewerkt</span>');
     }catch(e){
       console.warn('[FillLackeyLean]',e);
-      plan(Date.now()+PERIOD_MS);
-      paint('<span class="bad">⛔ Error</span>');
+      // Een tijdelijke SPA-/paginalaadfout mag nooit een volledige 6-uurscyclus kosten.
+      // Kort opnieuw proberen; pas na een bevestigde vulactie begint de 6-uursperiode.
+      plan(Date.now()+RETRY_MS);
+      paint('<span class="bad">⛔ Tijdelijke fout — nieuwe poging over 15s</span>');
     }finally{ busy=false; }
   }
   block.querySelector('#flToggle')?.addEventListener('click',()=>{
