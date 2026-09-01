@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MRB Gold Recovery 1.0
-// @version      5.8.40
+// @version      5.8.41
 // @description  Race Driver verlaat de oude gereed-pagina via een onafhankelijke hard-exit en keert terug naar Mijn Account; eerdere fixes blijven behouden.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -17,6 +17,13 @@
 // @connect      script.googleusercontent.com
 // @run-at       document-end
 // ==/UserScript==
+
+// ==========================================================
+// 5.8.41 HEIST COOLDOWN HARD STOP
+// - Heist herbevestigt de echte timer voordat Leider GroupCrimes opent.
+// - Zichtbare GroupCrimes-cooldown stopt direct elke stale Heist Leider-flow.
+// - Tijdens cooldown geen Heist-hercontrole of GroupCrimes-renavigatie.
+// ==========================================================
 
 // ==========================================================
 // 5.8.40 STABILITY RESET
@@ -13860,6 +13867,22 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
     while((m=re.exec(s))){const n=+m[1],u=m[2].toLowerCase();if(u.startsWith('d'))total+=n*864e5;else if(u.startsWith('h')||u.startsWith('u'))total+=n*36e5;else if(u.startsWith('m'))total+=n*6e4;else total+=n*1e3;}
     return total;
   }
+  function readGroupHeistCooldown(){
+    if(!onGroup())return '';
+    const t=heistVisibleText();
+    const m=t.match(/(?:Je kunt weer een heist doen in|You can do another heist in)\s*((?:(?:\d+)\s*(?:D|H|M|S|dag(?:en)?|uur|uren|min(?:uten)?|sec(?:onden)?)\s*)+)/i);
+    return norm(m?.[1]||'');
+  }
+  function hardStopHeistCooldown(raw,source='server'){
+    const wait=parseTimer(raw);
+    if(!(wait>0))return false;
+    phase='cooldown'; acceptChecks=0; travelTarget=''; heistLastGroupNavAt=0;
+    setInvitePending(false);
+    status(`Heist cooldown (${source}): ${raw} · flow volledig gestopt`);
+    load('/information.php');
+    next(checkAvailability,Math.min(wait+rand(5000,15000),2147480000));
+    return true;
+  }
   function readHeistTimer(){
     for(const row of document.querySelectorAll('tr')){
       const cells=[...row.querySelectorAll(':scope > th,:scope > td')];
@@ -14375,12 +14398,28 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
   function leaderStart(){
     if(heistCrimesCarsOwnPriority()){status('Heist wacht: Crimes/Cars heeft voorrang');next(leaderStart,5000);return;}
     if(waitForRaceBefore(leaderStart,'Heist Leider'))return;
+    // 5.8.41: een eerder geplande start mag nooit blind GroupCrimes openen.
+    // Op Mijn Account is de actuele server-timer opnieuw de bron van waarheid.
+    if(onInfo()){
+      const raw=readHeistTimer();
+      if(raw){
+        const wait=parseTimer(raw);
+        if(wait>0){setInvitePending(false);phase='cooldown';status(`Heist start geannuleerd · cooldown: ${raw}`);next(goInfo,wait+rand(5000,15000));return;}
+        if(!/^(Nu|Now|Ready)$/i.test(raw)){status(`Heist start wacht op geldige timerstatus: ${raw}`);next(goInfo,10000);return;}
+      }
+    }
     phase='inviting';acceptChecks=0;load('/?module=GroupCrimes');next(()=>inspectLeaderGroup(true),rand(1500,3000));
   }
   function inspectLeaderGroup(initial=false){
     if(!enabled()||role()!=='leader')return;
     if(heistCrimesCarsOwnPriority()){status('Heist Leider-controle wacht: Crimes/Cars rondt eerst af');next(()=>inspectLeaderGroup(initial),3000);return;}
     if(waitForRaceBefore(()=>inspectLeaderGroup(initial),'Heist Leider-controle'))return;
+    // 5.8.41: GroupCrimes zelf kan al aantonen dat de vorige Heist is afgerond.
+    // Stop dan onmiddellijk de stale Leider-flow voordat enige hernavigatie plaatsvindt.
+    if(onGroup()){
+      const cooldownRaw=readGroupHeistCooldown();
+      if(cooldownRaw&&hardStopHeistCooldown(cooldownRaw,'Groepsmisdaden'))return;
+    }
     if(!onGroup()){
       const since=Date.now()-heistLastGroupNavAt;
       if(since>=HEIST_GROUP_RENAV_MIN_MS){
