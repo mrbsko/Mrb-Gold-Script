@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MRB Gold Recovery 1.0
-// @version      5.8.41
+// @version      5.8.42
 // @description  Race Driver verlaat de oude gereed-pagina via een onafhankelijke hard-exit en keert terug naar Mijn Account; eerdere fixes blijven behouden.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -17,6 +17,13 @@
 // @connect      script.googleusercontent.com
 // @run-at       document-end
 // ==/UserScript==
+
+// ==========================================================
+// 5.8.42 SPOT COOLDOWN HARD STOP
+// - Een zichtbare Spot-cooldown op Groepsmisdaden stopt direct een stale Spot-flow.
+// - Een servercooldown op Mijn Account wist ALTIJD leaderGo/driverAccepted/start-state.
+// - Een verlopen lokale Spot-timer mag niet zelfstandig naar GroupCrimes; eerst verse Mijn Account-bevestiging.
+// ==========================================================
 
 // ==========================================================
 // 5.8.41 HEIST COOLDOWN HARD STOP
@@ -1689,6 +1696,36 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
     set(K.timerAt, wait > 0 ? Date.now() + wait : 0);
   }
 
+  function readGroupSpotCooldown() {
+    if (!isGroupPage()) return '';
+    const t = pageText();
+    const m = t.match(/(?:Je kunt opnieuw een overval doen in|Je kunt weer een overval doen in|You can (?:do|raid) another (?:spot )?(?:raid|robbery) in)\s*((?:(?:\d+)\s*(?:D|H|M|S|dag(?:en)?|uur|uren|min(?:uten)?|sec(?:onden)?)\s*)+)/i);
+    return norm(m?.[1] || '');
+  }
+
+  function hardStopSpotCooldown(raw, source='server') {
+    const wait = parseSpotDuration(raw);
+    if (!(wait > 0)) return false;
+    set(K.timerReady, false);
+    set(K.timerAt, Date.now() + wait);
+    set(K.state, 'COOLDOWN');
+    set(K.leaderGo, false);
+    set(K.driverAccepted, false);
+    set(K.driverAcceptedAt, 0);
+    set(K.driverLastVerify, 0);
+    set(K.startCount, 0);
+    set(K.lastReadyCheck, 0);
+    set(K.lastAction, 0);
+    set(K.startClickedAt, 0);
+    set(K.secondPass, '');
+    set(K.spotOpenedAt, 0);
+    setStatus('COOLDOWN', `Spot Overval cooldown (${source}): ${raw}. Actieve flow volledig gewist.`);
+    if (!isInfoPage() && canNavigate()) {
+      goInformationForFreshTimers('Spot-cooldown bevestigd op Groepsmisdaden; terug naar Mijn Account en volledig passief.');
+    }
+    return true;
+  }
+
   function localTimerText() {
     const remaining = Math.max(0, timerAt() - Date.now());
     if (!remaining) return 'Nu';
@@ -2011,6 +2048,12 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
       const timer = readSpotTimer();
       if (!timer.found) { setStatus('WAIT_TIMER_READ', 'Spot Overval-timer nog niet gevonden op Mijn Account.'); return; }
       syncSpotTimer(timer);
+      if (!timer.ready) {
+        // De actuele servercooldown is de absolute bron van waarheid.
+        // Wis elke oude/pending Spot-cyclus, ook wanneer startCount nog 0 is.
+        hardStopSpotCooldown(timer.raw, 'Mijn Account');
+        return;
+      }
 
       // Spot heeft zijn eigen timer nu veilig gelezen. Synchroniseer vervolgens
       // Crimes, Cars en Race vanaf dezelfde Mijn Account-pagina. Als Crimes of
@@ -2060,6 +2103,8 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
     }
 
     if (isGroupPage()) {
+      const groupCooldown = readGroupSpotCooldown();
+      if (groupCooldown && hardStopSpotCooldown(groupCooldown, 'Groepsmisdaden')) return;
       const entry = findSpotEntry();
       if (entry && (get(K.leaderGo, false) || Number(get(K.startCount, 0) || 0) > 0)) {
         // De gewone Spot-link is opnieuw zichtbaar: de vorige overval is geannuleerd/verdwenen.
@@ -2076,9 +2121,13 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
       // Start is al verzonden. Laat Crimes, Cars en andere modules hun pagina gebruiken;
       // Spot claimt de navigatie pas weer via de rustige hercontrole op Mijn Account.
       setStatus('WAIT_START_BACKGROUND', 'Start/Update is verzonden. Spot blijft op de achtergrond en blokkeert andere modules niet.');
-    } else if (timerReady() || get(K.leaderGo, false)) {
-      if (timerReady()) set(K.timerReady, true);
+    } else if (get(K.leaderGo, false)) {
       if (navigateToGroup()) setStatus('RECOVER_GROUP', 'Actieve Leider-flow hersteld via Groepsmisdaden.');
+    } else if (timerReady()) {
+      // Een lokale deadline die Nu bereikt is mag nooit zelfstandig GroupCrimes openen.
+      // Eerst verse serverbevestiging op Mijn Account om stale ready-state te voorkomen.
+      if (goInformationForFreshTimers('Lokale Spot-timer is verlopen; eerst verse serverbevestiging op Mijn Account voordat Groepsmisdaden mag openen.')) return;
+      setStatus('WAIT_TIMER_VERIFY', 'Lokale Spot-timer is verlopen; wachten op verse Mijn Account-bevestiging.');
     } else if (timerAt() > Date.now()) {
       setStatus('LOCAL_COOLDOWN', `Spot telt lokaal af: ${localTimerText()}. Andere modules houden de pagina volledig vrij.`);
     } else if (/^(COOLDOWN|COMPLETE_COOLDOWN)$/i.test(state())) {
@@ -2136,6 +2185,10 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
       const timer = readSpotTimer();
       if (!timer.found) { setStatus('DRIVER_WAIT_TIMER_READ', 'Spot Overval-timer nog niet gevonden.'); return; }
       syncSpotTimer(timer);
+      if (!timer.ready) {
+        hardStopSpotCooldown(timer.raw, 'Mijn Account Driver');
+        return;
+      }
       if (get(K.driverAccepted, false)) {
         if (!timer.ready) {
           set(K.driverAccepted, false); set(K.driverAcceptedAt, 0); set(K.driverLastVerify, 0); set(K.lastAction, 0);
