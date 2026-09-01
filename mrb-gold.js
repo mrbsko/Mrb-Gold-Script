@@ -5790,6 +5790,11 @@ async function poll(){
 
 
 // ==========================================================
+// 5.8.46 HEIST SERVER-TIMER RACE UNLOCK
+// - Heist controleert op Mijn Account eerst de echte Race-timer.
+// - Staat Race aantoonbaar op cooldown, dan mag een stale Race-lock/START-plan Heist niet blokkeren.
+// - Alleen stale Race-state wordt vrijgegeven; een echte Race op Nu blijft voorrang houden.
+//
 // 5.8.45 RACE LEADER RELEASE / HEIST RECOVERY
 // - Race geeft zijn transaction-lock nu altijd vrij zodra de flow bewust
 //   terugkeert naar Mijn Account.
@@ -14587,8 +14592,45 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
         ||(!!st.doCars&&Number(st.carsNext||0)<=now+1500);
     }catch(_){return false;}
   }
+  function readRaceTimerForHeist(){
+    if(!onInfo()) return '';
+    for(const row of document.querySelectorAll('tr')){
+      const cells=[...row.querySelectorAll(':scope > th,:scope > td')];
+      if(cells.length<2) continue;
+      const label=norm(cells[0]?.textContent||'').replace(/[:?]+$/,'');
+      if(!/^(?:Volgende\s+.*race.*|Next\s+.*race.*)$/i.test(label)) continue;
+      return norm(cells[1]?.textContent||cells[cells.length-1]?.textContent||'');
+    }
+    return '';
+  }
+  function releaseStaleRaceBeforeHeist(){
+    const raw=readRaceTimerForHeist();
+    if(!raw || /^(Nu|Now|Ready)$/i.test(raw)) return false;
+    const wait=parseTimer(raw);
+    if(!(wait>0)) return false;
+
+    // De server bevestigt dat Race al klaar/cooldown is. Een in-memory
+    // WAITING_DRIVER/RUNNING of achtergebleven startplan is dan per definitie stale.
+    try{unsafeWindow.mrbRaceTransaction?.release?.();}catch(_){}
+    try{
+      const saved=get('race_idlePlan_v1','');
+      const plan=typeof saved==='string'&&saved?JSON.parse(saved):saved;
+      if(plan?.type==='start') set('race_idlePlan_v1','');
+    }catch(_){set('race_idlePlan_v1','');}
+    try{
+      const race=unsafeWindow.mrbModuleStateRegistry?.get?.('race');
+      const phase=String(race?.phase||race?.state||'').toUpperCase();
+      if(/^(?:STARTING|LEADER_OPEN|LEADER_INVITE|WAITING_DRIVER|RUNNING|DRIVER_OPEN|DRIVER_ACCEPT|DRIVER_CAR|WAIT_CRIMES_CARS)$/.test(phase)){
+        unsafeWindow.mrbModuleStateRegistry?.set?.('Race',{phase:'IDLE',state:'IDLE',detail:`servercooldown bevestigd: ${raw}`,updatedAt:Date.now(),running:!!get('race_scriptAan',false)});
+      }
+    }catch(_){}
+    return true;
+  }
   function heistRaceOwnPriority(){
     try{
+      // 5.8.46: serverstatus wint van oude JavaScript-state. Dit is hetzelfde
+      // herstel dat een handmatige browserrefresh eerder toevallig veroorzaakte.
+      releaseStaleRaceBeforeHeist();
       if(unsafeWindow.mrbRaceTransaction?.active?.()===true)return true;
 
       // De herstelde bewezen Race-module publiceert zijn actuele fase in het
