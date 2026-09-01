@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MRB Gold Recovery 1.0
-// @version      5.8.43
+// @version      5.8.44
 // @description  Race Driver verlaat de oude gereed-pagina via een onafhankelijke hard-exit en keert terug naar Mijn Account; eerdere fixes blijven behouden.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -17,6 +17,14 @@
 // @connect      script.googleusercontent.com
 // @run-at       document-end
 // ==/UserScript==
+
+// ==========================================================
+// 5.8.44 SPOT SECOND-PASS COOLDOWN GUARD
+// - Spot second-pass mag nooit GroupCrimes openen als een server/local cooldown bekend is.
+// - LeaderTick controleert cooldown VOOR second-pass herstel/navigatie.
+// - Stale secondPass/startCount/leaderGo wordt bij cooldown hard gewist.
+// - Navigation Audit blijft actief om de fix te verifieren.
+// ==========================================================
 
 // ==========================================================
 // 5.8.43 NAVIGATION AUDIT - SESSION MANAGER FOCUS
@@ -1947,7 +1955,32 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
     return true;
   }
 
+  function spotCooldownKnown(){
+    const at = timerAt();
+    const st = String(state() || '').toUpperCase();
+    return (at > Date.now() + 1000 && get(K.timerReady, false) !== true) || /^(?:COOLDOWN|COMPLETE_COOLDOWN|DRIVER_COOLDOWN)$/.test(st);
+  }
+
+  function clearStaleSecondPassForCooldown(reason='cooldown bekend'){
+    set(K.leaderGo, false);
+    set(K.driverAccepted, false);
+    set(K.driverAcceptedAt, 0);
+    set(K.driverLastVerify, 0);
+    set(K.startCount, 0);
+    set(K.lastReadyCheck, 0);
+    set(K.lastAction, 0);
+    set(K.startClickedAt, 0);
+    set(K.secondPass, '');
+    set(K.spotOpenedAt, 0);
+    setStatus('COOLDOWN', `Spot second-pass gestopt: ${reason}. Volledig passief tot verse server-timer.`);
+  }
+
   function loadGroupCrimesForSecondPass(){
+    // 5.8.44: een oude second-pass callback mag nooit een bekende cooldown doorbreken.
+    if (spotCooldownKnown()) {
+      clearStaleSecondPassForCooldown('bekende Spot-cooldown blokkeert GroupCrimes');
+      return false;
+    }
     if (!canNavigate()) return false;
     markNav();
     try { unsafeWindow.omerta?.GUI?.container?.loadPage?.('/?module=GroupCrimes'); }
@@ -1960,6 +1993,13 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
   // opent Groepsmisdaden -> Spot opnieuw en klikt daar pas opnieuw Start/Update.
   function handleExplicitSecondPass(){
     if (Number(get(K.startCount, 0) || 0) !== 1) return false;
+
+    // 5.8.44: second-pass is uitsluitend geldig binnen een aantoonbaar actieve Spot-cyclus.
+    // Een bekende cooldown is altijd sterker dan oude start/secondPass-state.
+    if (spotCooldownKnown()) {
+      clearStaleSecondPassForCooldown('cooldown was al bekend voordat second-pass kon starten');
+      return true;
+    }
     let pass = String(get(K.secondPass, '') || 'need_group');
     const lastClick = Number(get(K.startClickedAt, 0) || 0);
     const elapsed = lastClick ? Date.now() - lastClick : Infinity;
@@ -2069,6 +2109,24 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
   }
 
   async function leaderTick() {
+    // 5.8.44: servercooldown controleren VOOR enige second-pass/recovery-navigatie.
+    // Dit voorkomt precies de GroupCrimes -> Mijn Account -> GroupCrimes lus van een stale secondPass.
+    if (isInfoPage()) {
+      const freshTimer = readSpotTimer();
+      if (freshTimer?.found) {
+        syncSpotTimer(freshTimer);
+        if (!freshTimer.ready && hardStopSpotCooldown(freshTimer.raw, 'Mijn Account pre-second-pass')) return;
+      }
+    }
+    if (isGroupPage()) {
+      const freshGroupCooldown = readGroupSpotCooldown();
+      if (freshGroupCooldown && hardStopSpotCooldown(freshGroupCooldown, 'Groepsmisdaden pre-second-pass')) return;
+    }
+    if (spotCooldownKnown()) {
+      clearStaleSecondPassForCooldown('lokale/servercooldown al bekend bij LeaderTick');
+      return;
+    }
+
     if (handleExplicitSecondPass()) return;
 
     // Altijd een half afgeronde Spot Overval opruimen. Dit geldt ook wanneer
