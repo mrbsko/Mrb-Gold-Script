@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MRB Gold Recovery 1.0
-// @version      5.8.47
+// @version      5.8.48
 // @description  Race Driver verlaat de oude gereed-pagina via een onafhankelijke hard-exit en keert terug naar Mijn Account; eerdere fixes blijven behouden.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -18,6 +18,7 @@
 // @run-at       document-end
 // ==/UserScript==
 
+// Release 5.8.48: Heist Driver wacht passief op Mijn Account wanneer nog geen uitnodiging zichtbaar is; voorkomt vaststaan op Groepsmisdaden.
 // ==========================================================
 // 5.8.47 HEIST COOLDOWN SCOPE FIX
 // - readGroupHeistCooldown en hardStopHeistCooldown staan nu in de Heist-core scope.
@@ -14815,7 +14816,11 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
     }
     const acc=acceptLink();
     if(acc){status('Heist-uitnodiging accepteren');acc.click();next(driverFinalize,rand(1500,4000));return;}
-    status('Driver wacht op Heist-uitnodiging');next(driverAcceptLoop,rand(15000,30000));
+    // 5.8.48: zonder echte uitnodiging blijft de Driver niet op Groepsmisdaden hangen.
+    // Eén controle is genoeg; daarna terug naar Mijn Account en pas later opnieuw kijken.
+    status('Geen Heist-uitnodiging zichtbaar · terug naar Mijn Account en later opnieuw controleren');
+    load('/information.php');
+    next(driverStart,rand(15000,30000));
   }
   function driverFinalize(){
     if(!enabled()||role()!=='driver')return;
