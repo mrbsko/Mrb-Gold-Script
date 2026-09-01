@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MRB Gold Recovery 1.0
-// @version      5.8.42
+// @version      5.8.43
 // @description  Race Driver verlaat de oude gereed-pagina via een onafhankelijke hard-exit en keert terug naar Mijn Account; eerdere fixes blijven behouden.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -17,6 +17,101 @@
 // @connect      script.googleusercontent.com
 // @run-at       document-end
 // ==/UserScript==
+
+// ==========================================================
+// 5.8.43 NAVIGATION AUDIT - SESSION MANAGER FOCUS
+// - Wijzigt GEEN moduleflow.
+// - Logt centrale mrbNavigate-aanvragen plus directe Omerta GUI loadPage-aanvragen.
+// - Extra focus op Race/Spot/Heist Sessie Manager interactie.
+// ==========================================================
+(function MRBNavigationAudit543(){
+  'use strict';
+  if (unsafeWindow.__mrbNavAudit543Installed) return;
+  unsafeWindow.__mrbNavAudit543Installed = true;
+
+  const MAX = 500;
+  const rows = [];
+  const counts = new Map();
+  const clean = v => String(v == null ? '' : v).replace(/\s+/g,' ').trim();
+  const nowText = () => new Date().toLocaleTimeString();
+  const shortStack = () => {
+    try {
+      return String(new Error().stack || '').split('\n').slice(3,8).map(clean).join(' <- ');
+    } catch(_) { return ''; }
+  };
+  function add(kind, source, target, result, extra='') {
+    const ts = Date.now();
+    const key = `${clean(source)||'unknown'} -> ${clean(target)||'-'}`;
+    const recent = (counts.get(key) || []).filter(x => ts - x < 60000);
+    recent.push(ts); counts.set(key, recent);
+    const row = { ts, time: nowText(), kind, source: clean(source)||'unknown', target: clean(target)||'-', result: clean(result)||'-', count60s: recent.length, extra: clean(extra) };
+    rows.push(row); if (rows.length > MAX) rows.splice(0, rows.length-MAX);
+    console.log(`[MRB NAV AUDIT] ${row.time} | ${row.kind} | ${row.source} -> ${row.target} | ${row.result} | 60s=${row.count60s}${row.extra ? ' | '+row.extra : ''}`);
+    return row;
+  }
+  unsafeWindow.__mrbNavAuditLog = add;
+  unsafeWindow.mrbNavAudit = function(last=80){
+    const out = rows.slice(-Math.max(1, Number(last)||80));
+    try { console.table(out); } catch(_) { console.log(out); }
+    return out;
+  };
+  unsafeWindow.mrbNavAuditSummary = function(){
+    const cutoff = Date.now()-60000;
+    const map = new Map();
+    for (const r of rows) {
+      if (r.ts < cutoff) continue;
+      const k = `${r.source} -> ${r.target}`;
+      map.set(k, (map.get(k)||0)+1);
+    }
+    const out=[...map.entries()].map(([route,count])=>({route,count})).sort((a,b)=>b.count-a.count);
+    try { console.table(out); } catch(_) { console.log(out); }
+    return out;
+  };
+
+  function wrapCentral(){
+    const fn = unsafeWindow.mrbNavigate;
+    if (typeof fn !== 'function' || fn.__mrbAuditWrapped) return false;
+    const wrapped = function(target, meta={}){
+      const source = meta?.source || meta?.owner || 'mrbNavigate';
+      let ret;
+      try { ret = fn.apply(this, arguments); }
+      catch(e){ add('mrbNavigate', source, target, 'THROW', e?.message||e); throw e; }
+      add('mrbNavigate', source, target, ret === false ? 'BLOCKED/FALSE' : 'RETURN '+String(ret), '');
+      return ret;
+    };
+    wrapped.__mrbAuditWrapped = true;
+    wrapped.__mrbAuditOriginal = fn;
+    unsafeWindow.mrbNavigate = wrapped;
+    add('audit','system','mrbNavigate','WRAPPED');
+    return true;
+  }
+
+  function wrapGui(){
+    try {
+      const gui = unsafeWindow?.omerta?.GUI?.container;
+      const fn = gui?.loadPage;
+      if (!gui || typeof fn !== 'function' || fn.__mrbAuditWrapped) return false;
+      const wrapped = function(target){
+        const stack = shortStack();
+        add('GUI.loadPage','direct-gui',target,'CALL',stack);
+        return fn.apply(this, arguments);
+      };
+      wrapped.__mrbAuditWrapped = true;
+      wrapped.__mrbAuditOriginal = fn;
+      gui.loadPage = wrapped;
+      add('audit','system','GUI.loadPage','WRAPPED');
+      return true;
+    } catch(_) { return false; }
+  }
+
+  let attempts = 0;
+  const arm = setInterval(()=>{
+    attempts++;
+    wrapCentral(); wrapGui();
+    if (attempts >= 120) clearInterval(arm);
+  },500);
+  setTimeout(()=>{ wrapCentral(); wrapGui(); },50);
+})();
 
 // ==========================================================
 // 5.8.42 SPOT COOLDOWN HARD STOP
