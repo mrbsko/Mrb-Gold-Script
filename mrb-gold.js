@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MRB Gold Recovery 1.0
-// @version      5.8.44
+// @version      5.8.45
 // @description  Race Driver verlaat de oude gereed-pagina via een onafhankelijke hard-exit en keert terug naar Mijn Account; eerdere fixes blijven behouden.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -19,7 +19,7 @@
 // ==/UserScript==
 
 // ==========================================================
-// 5.8.44 SPOT SECOND-PASS COOLDOWN GUARD
+// 5.8.45 SPOT SECOND-PASS COOLDOWN GUARD
 // - Spot second-pass mag nooit GroupCrimes openen als een server/local cooldown bekend is.
 // - LeaderTick controleert cooldown VOOR second-pass herstel/navigatie.
 // - Stale secondPass/startCount/leaderGo wordt bij cooldown hard gewist.
@@ -1976,7 +1976,7 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
   }
 
   function loadGroupCrimesForSecondPass(){
-    // 5.8.44: een oude second-pass callback mag nooit een bekende cooldown doorbreken.
+    // 5.8.45: een oude second-pass callback mag nooit een bekende cooldown doorbreken.
     if (spotCooldownKnown()) {
       clearStaleSecondPassForCooldown('bekende Spot-cooldown blokkeert GroupCrimes');
       return false;
@@ -5789,6 +5789,14 @@ async function poll(){
 })();
 
 
+// ==========================================================
+// 5.8.45 RACE LEADER RELEASE / HEIST RECOVERY
+// - Race geeft zijn transaction-lock nu altijd vrij zodra de flow bewust
+//   terugkeert naar Mijn Account.
+// - Voorkomt stale WAITING_DRIVER/RUNNING die Heist na Race kan blokkeren.
+// - De bestaande Race Driver/Leider handelingen blijven inhoudelijk gelijk.
+// ==========================================================
+
 // =====================================================================
 // 1) RACEBLOK
 // =====================================================================
@@ -6332,7 +6340,15 @@ try {
   function goInfo(){
     if(!scriptAan) return;
     if (isLoggedOut()) return pauseForGate('goInfo: uitgelogd');
+    // 5.8.45: zodra Race bewust terugkeert naar Mijn Account is de lopende
+    // Race-transactie voor andere modules klaar. In 5.8.44 kon vooral de Leider
+    // hier terugkeren terwijl WAITING_DRIVER/RUNNING in het geheugen bleef staan.
+    // Heist zag die stale lock vervolgens als een nog actieve Race. Een echte
+    // browserrefresh loste dit op omdat raceCorePhase dan opnieuw IDLE werd.
+    // Geef de lock daarom VOOR de navigatie vrij; checkAvailability leest daarna
+    // op Mijn Account opnieuw de actuele server-timer en bouwt zo nodig een nieuw plan.
     clearRacePlan();
+    raceReleaseAction('Race terug naar Mijn Account; server-timer opnieuw synchroniseren');
     guiLoad('/information.php');
     next(()=>checkAvailability(true), randomDelay(3000,6000));
   }
