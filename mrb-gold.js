@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MRB Gold Recovery 1.0
-// @version      5.8.39
+// @version      5.8.40
 // @description  Race Driver verlaat de oude gereed-pagina via een onafhankelijke hard-exit en keert terug naar Mijn Account; eerdere fixes blijven behouden.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -17,6 +17,14 @@
 // @connect      script.googleusercontent.com
 // @run-at       document-end
 // ==/UserScript==
+
+// ==========================================================
+// 5.8.40 STABILITY RESET
+// - Herstelt ontbrekende Race release-helper zodat Race zijn actieve status echt vrijgeeft.
+// - Heist gebruikt zichtbare SPA-module als bron van waarheid i.p.v. een verouderde URL.
+// - GroupCrimes-detectie aangescherpt om herhaald laden van dezelfde pagina te voorkomen.
+// - Geen nieuwe modulefunctionaliteit toegevoegd.
+// ==========================================================
 
 // ==========================================================
 // Release 5.8.39: Driver-ready gebruikt een onafhankelijke hard-exit naar Mijn Account zodat de oude Race-pagina niet kan blijven hangen.
@@ -1572,13 +1580,14 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
 
   function isInfoPage() { return /information\.php/i.test(location.href) || !!document.querySelector('.moduleInformation, #module_Information, #game_container.moduleInformation'); }
   function isGroupPage() {
-    const container = document.querySelector('#game_container');
+    const container = document.querySelector('#game_container, #game_container_wrapper, main');
     const cls = low(container?.className || '');
-    // Tijdens een SPA-wissel kan de URL nog GroupCrimes bevatten terwijl de
-    // zichtbare container al Spot is. De zichtbare module is dan leidend.
+    const visibleText = norm(container?.innerText || '');
+    // Tijdens een SPA-wissel kan de URL achterlopen. De zichtbare module is leidend.
     if (/modulespots|modulespot\b/.test(cls) || document.querySelector('#module_Spots,.moduleSpots')) return false;
     if (/modulegroupcrimes/.test(cls) || document.querySelector('#module_GroupCrimes,.moduleGroupCrimes')) return true;
-    return /module=GroupCrimes/i.test(location.href);
+    if (/^(?:GROEPSMISDADEN|GROUP CRIMES)\b/i.test(visibleText)) return true;
+    return /module=GroupCrimes/i.test(location.href) && !isSpotTargetPage();
   }
   function isSpotTargetPage() { return /start\s+raiding\s+in/i.test(pageText()) && !!findTargetTable(); }
   function isDriverInvitePage() { const text = low(pageText()); return !!findCarSelect() && /accepteer\s+uitnodiging|accept\s+invitation/.test(text); }
@@ -1602,7 +1611,7 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
       links.find(a => /klik hier om het te doen|click here to do it|bekijk.*overval|open.*raid|overval details|raid details/i.test(norm(a.textContent))) || null;
   }
   function clickOnce(el) { if (!visible(el) || !actionAllowed()) return false; markAction(); el.click(); return true; }
-  function navigateToGroup() { if (!canNavigate()) return false; const link = findGroupLink(); if (!link) return false; markNav(); link.click(); return true; }
+  function navigateToGroup() { if (isGroupPage()) return true; if (!canNavigate()) return false; const link = findGroupLink(); if (!link) return false; markNav(); link.click(); return true; }
   function openSpot() { if (!canNavigate()) return false; const link = findSpotEntry(); if (!link) return false; markNav(); set(K.spotOpenedAt, Date.now()); link.click(); return true; }
   function spotPageSettling() {
     const openedAt = Number(get(K.spotOpenedAt, 0) || 0);
@@ -5601,6 +5610,32 @@ try {
       });
     } catch(e) {}
   }
+
+  // 5.8.40: centrale vrijgave van een afgeronde/gepauzeerde Race-actie.
+  // In 5.8.38/5.8.39 werd deze helper wel aangeroepen maar nergens gedefinieerd,
+  // waardoor callbacks met een ReferenceError stopten voordat Mijn Account kon openen.
+  function raceReleaseAction(detail='Race-actie vrijgegeven'){
+    raceCorePhase = 'IDLE';
+    raceCoreDetail = String(detail || 'Race-actie vrijgegeven');
+    raceCoreUpdatedAt = Date.now();
+    try {
+      unsafeWindow.mrbModuleStateRegistry?.set?.('Race', {
+        phase:'IDLE', state:'IDLE', detail:raceCoreDetail, updatedAt:raceCoreUpdatedAt,
+        running:!!scriptAan, role:raceRole
+      });
+    } catch(e) {}
+    return true;
+  }
+
+  // Alleen echte transactie-fasen blokkeren Heist. Idle/cooldown/info-wacht nooit.
+  const RACE_ACTIVE_PHASE_RE = /^(?:STARTING|LEADER_OPEN|LEADER_INVITE|WAITING_DRIVER|RUNNING|DRIVER_OPEN|DRIVER_ACCEPT|DRIVER_CAR|TRAVEL|CANCEL_PENDING|CANCELLING)$/;
+  try {
+    unsafeWindow.mrbRaceTransaction = Object.freeze({
+      active:()=>RACE_ACTIVE_PHASE_RE.test(String(raceCorePhase||'').toUpperCase()),
+      phase:()=>String(raceCorePhase||'IDLE'),
+      release:()=>raceReleaseAction('extern vrijgegeven')
+    });
+  } catch(e) {}
 
   // persistente idle-planning
   const K_RACE_PLAN = 'race_idlePlan_v1'; // { type:'start'|'info', at:number, createdAt:number }
@@ -14109,6 +14144,8 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
 
   let loopTimer=null;
   let phase='idle';
+  let heistLastGroupNavAt=0;
+  const HEIST_GROUP_RENAV_MIN_MS=10000;
   let acceptChecks=0;
   let travelTarget='';
   let lastPageLoad=0;
@@ -14137,10 +14174,24 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
     try{unsafeWindow?.omerta?.GUI?.container?.loadPage(path);}catch(_){location.href=path;}
   }
   function text(){return norm(document.body?.innerText||'');}
-  function onInfo(){return /information\.php/i.test(location.href);}
-  function onGroup(){return /module=GroupCrimes/i.test(location.href)||!!document.querySelector('#module_GroupCrimes,.moduleGroupCrimes');}
-  function onHeist(){return /module=Heist/i.test(location.href)||!!document.querySelector('#module_Heist,.moduleHeist');}
-  function onTravel(){return /module=Travel/i.test(location.href)||!!document.querySelector('#module_Travel,.moduleTravel');}
+  function heistVisibleRoot(){return document.querySelector('#game_container, #game_container_wrapper, main')||document.body;}
+  function heistVisibleText(){return norm(heistVisibleRoot()?.innerText||'');}
+  function onGroup(){
+    const root=heistVisibleRoot(), cls=String(root?.className||'').toLowerCase(), t=heistVisibleText();
+    if(/modulegroupcrimes/.test(cls)||document.querySelector('#module_GroupCrimes,.moduleGroupCrimes'))return true;
+    if(/^(?:GROEPSMISDADEN|GROUP CRIMES)\b/i.test(t))return true;
+    return /module=GroupCrimes/i.test(location.href)&&!onHeist()&&!onTravel();
+  }
+  function onHeist(){return !!document.querySelector('#module_Heist,.moduleHeist')||/moduleheist/.test(String(heistVisibleRoot()?.className||'').toLowerCase())||/module=Heist/i.test(location.href);}
+  function onTravel(){return !!document.querySelector('#module_Travel,.moduleTravel')||/moduletravel/.test(String(heistVisibleRoot()?.className||'').toLowerCase())||/module=Travel/i.test(location.href);}
+  function onInfo(){
+    const root=heistVisibleRoot(), cls=String(root?.className||'').toLowerCase(), t=heistVisibleText();
+    // Zichtbare GroupCrimes/Heist/Travel wint altijd van een achterlopende information.php URL.
+    if(onGroup()||onHeist()||onTravel())return false;
+    if(/moduleinformation/.test(cls)||document.querySelector('.moduleInformation,#module_Information,#game_container.moduleInformation'))return true;
+    if(/\bWachttijden\b/i.test(t)&&/Volgende\s+(?:misdaadpoging|autojatpoging|heist)/i.test(t))return true;
+    return /information\.php/i.test(location.href);
+  }
   function visible(el){return !!(el&&!el.disabled&&(el.offsetParent!==null||el.getClientRects?.().length));}
 
   function parseTimer(raw){
@@ -14330,7 +14381,20 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
     if(!enabled()||role()!=='leader')return;
     if(heistCrimesCarsOwnPriority()){status('Heist Leider-controle wacht: Crimes/Cars rondt eerst af');next(()=>inspectLeaderGroup(initial),3000);return;}
     if(waitForRaceBefore(()=>inspectLeaderGroup(initial),'Heist Leider-controle'))return;
-    if(!onGroup()){load('/?module=GroupCrimes');next(()=>inspectLeaderGroup(initial),rand(1200,2200));return;}
+    if(!onGroup()){
+      const since=Date.now()-heistLastGroupNavAt;
+      if(since>=HEIST_GROUP_RENAV_MIN_MS){
+        heistLastGroupNavAt=Date.now();
+        load('/?module=GroupCrimes');
+        status('Heist: Groepsmisdaden éénmalig geopend; wachten op zichtbare pagina');
+        next(()=>inspectLeaderGroup(initial),rand(2500,4000));
+      }else{
+        status(`Heist: SPA-pagina wordt nog opgebouwd; geen hernavigatie (${Math.ceil((HEIST_GROUP_RENAV_MIN_MS-since)/1000)}s)`);
+        next(()=>inspectLeaderGroup(initial),Math.max(1200,HEIST_GROUP_RENAV_MIN_MS-since));
+      }
+      return;
+    }
+    heistLastGroupNavAt=0;
     const transfer=transferLink();
     if(transfer){setInvitePending(false);status(`Heist winst versturen naar ${driverName()}`);transfer.click();next(goInfo,rand(5000,10000));return;}
     const start=finalStart();
