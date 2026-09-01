@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MRB Gold Recovery 1.0
-// @version      5.8.46
+// @version      5.8.47
 // @description  Race Driver verlaat de oude gereed-pagina via een onafhankelijke hard-exit en keert terug naar Mijn Account; eerdere fixes blijven behouden.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -17,6 +17,13 @@
 // @connect      script.googleusercontent.com
 // @run-at       document-end
 // ==/UserScript==
+
+// ==========================================================
+// 5.8.47 HEIST COOLDOWN SCOPE FIX
+// - readGroupHeistCooldown en hardStopHeistCooldown staan nu in de Heist-core scope.
+// - Voorkomt ReferenceError tijdens inspectLeaderGroup op Groepsmisdaden.
+// - Race/Spot logica blijft verder ongewijzigd.
+// ==========================================================
 
 // ==========================================================
 // 5.8.45 SPOT SECOND-PASS COOLDOWN GUARD
@@ -14452,6 +14459,29 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
     let m; while((m=re.exec(s))){const n=+m[1],u=m[2].toLowerCase();if(u.startsWith('d'))total+=n*864e5;else if(u.startsWith('h')||u.startsWith('u'))total+=n*36e5;else if(u.startsWith('m'))total+=n*6e4;else total+=n*1e3;}
     return total;
   }
+  // 5.8.47: deze helpers moeten binnen MRBHeistComArchitectureNL leven.
+  // In 5.8.46 stonden ze alleen in de aparte Sessie Manager-IIFE, waardoor
+  // inspectLeaderGroup() een ReferenceError kreeg zodra Groepsmisdaden open stond.
+  function readGroupHeistCooldown(){
+    if(!onGroup())return '';
+    const t=heistVisibleText();
+    const m=t.match(/(?:Je kunt weer een heist doen in|You can do another heist in)\s*((?:(?:\d+)\s*(?:D|H|M|S|dag(?:en)?|uur|uren|min(?:uten)?|sec(?:onden)?)\s*)+)/i);
+    return norm(m?.[1]||'');
+  }
+  function hardStopHeistCooldown(raw,source='server'){
+    const wait=parseTimer(raw);
+    if(!(wait>0))return false;
+    phase='cooldown';
+    acceptChecks=0;
+    travelTarget='';
+    heistLastGroupNavAt=0;
+    setInvitePending(false);
+    status(`Heist cooldown (${source}): ${raw} · flow volledig gestopt`);
+    load('/information.php');
+    next(checkAvailability,Math.min(wait+rand(5000,15000),2147480000));
+    return true;
+  }
+
   function readHeistTimer(){
     for(const row of document.querySelectorAll('tr')){
       const cells=[...row.querySelectorAll(':scope > th,:scope > td')];
