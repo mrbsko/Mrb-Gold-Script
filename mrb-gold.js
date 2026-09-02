@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MRB Gold Recovery 1.0
-// @version      5.8.52
-// @description  Gold cleanup: Captcha Alert, Lackey Timer en ingebouwde Heist Sessie Manager volledig verwijderd; spelmodules ongewijzigd.
+// @version      5.8.53
+// @description  Race transaction ownership: Crimes/Cars blijft hoogste prioriteit vóór Race-start, maar kan een eenmaal gestarte Race-flow niet meer uit de pagina drukken.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
 // @include      https://*.barafranca.nl/*
@@ -18,6 +18,7 @@
 // @run-at       document-end
 // ==/UserScript==
 
+// Release 5.8.53: Race start pas nadat echt gereedstaande Crimes/Cars zijn afgehandeld; eenmaal gestart houdt Race transaction ownership tot bewuste vrijgave.
 // Release 5.8.51: Captcha Alert, Lackey Timer en ingebouwde Heist Sessie Manager schoon verwijderd. Centrale captcha/gate-beveiliging blijft behouden.
 // Release 5.8.50: Race Driver krijgt na auto-bevestiging een onafhankelijke gegarandeerde terugkeer naar Mijn Account; deze kan niet door andere Race-callbacks worden overschreven.
 // Release 5.8.49: Race Leader verlaat na maximaal drie resultaatcontroles altijd de racepagina en keert terug naar Mijn Account; voorkomt vastlopen wanneer de eindtekst niet wordt herkend.
@@ -549,11 +550,19 @@
       // gewone module mag de door de speler gekozen pagina vervangen.
       if (!meta?.manualPauseBypass && unsafeWindow.mrbManualControl?.isPaused?.()) return true;
 
-      // Een Crimes/Cars-cyclus blijft atomair vanaf het opeisen van de
-      // gereedstaande timer tot en met de bevestiging op Mijn Account. De
-      // vaste SPA-lease van 6,5 seconden was korter dan paginalaad + 3-5s
-      // actievertraging en liet andere modules soms vlak vóór de klik binnen.
-      if (!crimesCarsPriority) {
+      // 5.8.53: transaction ownership tussen Race en Crimes/Cars.
+      // Crimes/Cars houdt de hoogste prioriteit VOORDAT Race werkelijk start.
+      // Zodra Race echter in een echte transactie-fase zit, mag een nieuwe
+      // Crimes/Cars-cyclus de Race-pagina niet meer vervangen. Anders ontstaat
+      // Race -> Crimes -> Race-pingpong en kan Leider nooit de invite afronden.
+      let raceOwnsTransaction = false;
+      try { raceOwnsTransaction = !!unsafeWindow.mrbRaceTransaction?.active?.(); } catch(_) {}
+      if (raceOwnsTransaction && crimesCarsPriority) return true;
+
+      // Een reeds lopende Crimes/Cars-cyclus blijft atomair zolang Race nog
+      // niet gestart is. Tijdens een actieve Race-transactie mag een eventuele
+      // late/stale CC-busy vlag Race zelf niet blokkeren.
+      if (!crimesCarsPriority && !(raceOwnsTransaction && source.toLowerCase()==='race')) {
         try {
           const st = unsafeWindow.mrbV9CrimesCars?.state?.();
           const ccOwnsPage = !!st?.running && (!!st.busy || !!st.confirmPendingKind || !!st.forcedRetryKind);
@@ -595,7 +604,7 @@
     };
 
     unsafeWindow.mrbNavigationGate = {
-      version:'4.9',
+      version:'4.10',
       state:()=>({lastNavigationAt,lastTarget,lastTargetAt,activeSource,activeUntil}),
       reset:()=>{lastNavigationAt=0;lastTarget='';lastTargetAt=0;activeSource='';activeUntil=0;}
     };
@@ -5626,6 +5635,27 @@ try {
   function randomDelay(min,max){ return Math.floor(Math.random()*(max-min+1))+min; }
   function actionDelay(){ return (typeof unsafeWindow.mrbVarDelayMs === 'function') ? unsafeWindow.mrbVarDelayMs() : randomDelay(2000,5000); }
 
+
+  // 5.8.53: Crimes/Cars mag Race vóór de transactie nog voorgaan, maar niet er middenin.
+  function raceCrimesCarsOwnPriority(){
+    try {
+      const st = unsafeWindow.mrbV9CrimesCars?.state?.();
+      if (!st?.running) return false;
+      const now = Date.now();
+      return !!st.busy || !!st.confirmPendingKind || !!st.forcedRetryKind
+        || (!!st.doCrimes && Number(st.crimesNext || 0) <= now + 1500)
+        || (!!st.doCars && Number(st.carsNext || 0) <= now + 1500);
+    } catch(_) { return false; }
+  }
+  function raceYieldToCrimesCars(source='Race wacht op Crimes/Cars'){
+    try { unsafeWindow.mrbV9CrimesCars?.wake?.(); } catch(_) {}
+    raceRegistryState('WAIT_CRIMES_CARS', source);
+    clearRacePlan();
+    saveRacePlan({ type:'info', at:Date.now()+randomDelay(1800,2800), createdAt:Date.now() });
+    armStoredRacePlan();
+    return true;
+  }
+
   function parseTimer(txt){
     const value = String(txt || '').replace(/\s+/g,' ').trim();
     if (!value || /^(Nu|Now)$/i.test(value)) return 0;
@@ -5706,6 +5736,9 @@ try {
       if (latest.type === 'start'){
         clearRacePlan();
         if (isLoggedOut()) return pauseForGate('Geplande racestart tijdens gate');
+        // Tijdens de startspreiding kan Crimes/Cars alsnog op Nu komen. Start
+        // Race dan nog niet: laat CC eerst dezelfde atomaire actie afronden.
+        if (raceCrimesCarsOwnPriority()) return raceYieldToCrimesCars('Race-start uitgesteld voor Crimes/Cars');
         if (raceRole === 'leader') leader_startRace();
         else slave_startRace();
         return;
@@ -6641,6 +6674,14 @@ try {
     const status = readRaceStatusByLabel();
 
     if (/^(Nu|NOW|Now)$/i.test(status)){
+      // Hoogste prioriteit blijft behouden: als Crimes/Cars werkelijk gereed of
+      // al bezig is, wordt nog GEEN Race-transactie geopend. Eerst CC afronden,
+      // daarna opnieuw vanaf Mijn Account de Race-timer lezen.
+      if (raceCrimesCarsOwnPriority()){
+        raceYieldToCrimesCars('Race Nu, maar Crimes/Cars eerst');
+        return;
+      }
+
       const existingPlan = loadRacePlan();
       if (existingPlan && existingPlan.type === 'start' && existingPlan.at > Date.now() + 250){
         armStoredRacePlan();
@@ -8998,6 +9039,13 @@ if (pausedCaptcha){
     maybePassiveInfoSync();
 
     if (pausedCaptcha || busy || confirmPendingKind) { paint(); return; }
+
+    // 5.8.53: eenmaal gestarte Race is atomair. Crimes/Cars blijft hoogste
+    // prioriteit vóór Race-start, maar start geen nieuwe cyclus midden in een
+    // actieve Race-transactie. Na Race-release pakt de volgende tick de due timer.
+    try {
+      if (unsafeWindow.mrbRaceTransaction?.active?.()) { paint(); return; }
+    } catch(_) {}
 
     const job = pickNextJob();
     if (!job) { paint(); return; }
