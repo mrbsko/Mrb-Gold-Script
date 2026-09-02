@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MRB Gold Recovery 1.0
-// @version      5.8.48
-// @description  Race Driver verlaat de oude gereed-pagina via een onafhankelijke hard-exit en keert terug naar Mijn Account; eerdere fixes blijven behouden.
+// @version      5.8.50
+// @description  Race keert voor Leider en Driver altijd terug naar Mijn Account; Driver-exit is onafhankelijk van de gedeelde Race-loop.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
 // @include      https://*.barafranca.nl/*
@@ -18,6 +18,8 @@
 // @run-at       document-end
 // ==/UserScript==
 
+// Release 5.8.50: Race Driver krijgt na auto-bevestiging een onafhankelijke gegarandeerde terugkeer naar Mijn Account; deze kan niet door andere Race-callbacks worden overschreven.
+// Release 5.8.49: Race Leader verlaat na maximaal drie resultaatcontroles altijd de racepagina en keert terug naar Mijn Account; voorkomt vastlopen wanneer de eindtekst niet wordt herkend.
 // Release 5.8.48: Heist Driver wacht passief op Mijn Account wanneer nog geen uitnodiging zichtbaar is; voorkomt vaststaan op Groepsmisdaden.
 // ==========================================================
 // 5.8.47 HEIST COOLDOWN SCOPE FIX
@@ -5883,27 +5885,34 @@ try {
   // Na enkele bevestigde lege Race-controles synchroniseert Driver opnieuw via Mijn Account.
   let driverAcceptedWatch = false;
   let driverAcceptedMisses = 0;
-  // 5.8.39: aparte timer voor het verlaten van de oude Driver-ready pagina.
-  // Deze gebruikt bewust NIET de gedeelde Race loopTimer, zodat een andere Race-callback
-  // de terugkeer naar Mijn Account niet meer kan overschrijven.
+  // 5.8.50: onafhankelijke Driver-exit. Na een bevestigde/ingestuurde auto mag de
+  // Driver niet afhankelijk blijven van de gedeelde Race loopTimer. Die timer kan door
+  // een andere Race-callback worden vervangen. Deze aparte timer keert daarom altijd
+  // terug naar Mijn Account zolang de Driver nog op een Race-pagina staat.
   let driverReadyExitTimer = null;
   function clearDriverReadyExit(){
     if (driverReadyExitTimer){ clearTimeout(driverReadyExitTimer); driverReadyExitTimer = null; }
   }
-  function driverReadyHardExit(reason='oude Driver-ready pagina verlaten'){
+  function driverReadyHardExit(reason='Driver-race afgerond; terug naar Mijn Account'){
     clearDriverReadyExit();
     driverReadyExitTimer = setTimeout(()=>{
       driverReadyExitTimer = null;
       if(!scriptAan || raceRole!=='slave' || isLoggedOut()) return;
-      const body = document.body?.innerText || '';
-      // Alleen ingrijpen als de Driver nog werkelijk op de oude gereed/wachtpagina staat.
-      if (!alreadyAcceptedMsg(body)) return;
-      raceRegistryState('DRIVER_READY_INFO', reason);
+      if (/information\.php/i.test(location.href)) {
+        raceReleaseAction(reason);
+        return;
+      }
+      // Alleen Race zelf verlaten; nooit een andere modulepagina onverwacht onderbreken.
+      if (!/races\.php/i.test(location.href)) return;
+      raceRegistryState('DRIVER_POST_RACE_HOME', reason);
       clearRacePlan();
-      raceReleaseAction();
+      raceReleaseAction(reason);
       guiLoad('/information.php');
-      next(()=>checkAvailability(true), randomDelay(2500,4500));
-    }, randomDelay(3500,5500));
+      setTimeout(()=>{
+        if(!scriptAan || raceRole!=='slave' || isLoggedOut()) return;
+        if (/information\.php/i.test(location.href)) checkAvailability(true);
+      }, randomDelay(2500,4500));
+    }, randomDelay(6500,9000));
   }
 
   const next = (fn, ms)=>{
@@ -6692,7 +6701,7 @@ try {
     }
   }
 
-  function leader_checkDone(){
+  function leader_checkDone(attempt=0){
     raceRegistryState('RUNNING', 'wacht op race-resultaat');
     if(!scriptAan) return;
     if (isLoggedOut()) return pauseForGate('leader_checkDone: uitgelogd');
@@ -6707,8 +6716,14 @@ try {
       next(goInfo, randomDelay(5000,10000));
     } else if (isTired(body)){
       next(goInfo, randomDelay(5000,10000));
+    } else if (attempt >= 2){
+      // 5.8.49: de Race-start is al verzonden. Als de website geen bekende
+      // eindtekst toont, mag Race niet onbeperkt op /races.php blijven pollen.
+      // Mijn Account is daarna de bron van waarheid voor de nieuwe Race-timer.
+      raceRegistryState('POST_RACE_HOME', 'resultaattekst niet herkend; terug naar Mijn Account');
+      next(goInfo, randomDelay(2500,4500));
     } else {
-      next(leader_checkDone, randomDelay(5000,8000));
+      next(()=>leader_checkDone(attempt+1), randomDelay(5000,8000));
     }
   }
 
@@ -6797,11 +6812,11 @@ try {
       // Race-pagina blijven pollen: Mijn Account is de bron van waarheid voor
       // de volgende Race-timer. Zodra die weer op Nu staat, plant checkAvailability
       // automatisch een nieuw bezoek aan Race en kan een nieuwe invite worden geaccepteerd.
-      raceRegistryState('DRIVER_READY_INFO', 'auto gereed; hard-exit naar Mijn Account gepland');
+      raceRegistryState('DRIVER_READY_INFO', 'auto gereed; gegarandeerde terugkeer naar Mijn Account gepland');
       clearRacePlan();
       raceReleaseAction();
       // Onafhankelijke hard-exit: kan niet meer door de gedeelde Race-loop worden geannuleerd.
-      driverReadyHardExit('oude Race is gereed; terug naar Mijn Account om nieuwe Race-timer te volgen');
+      driverReadyHardExit('Driver is gereed; terug naar Mijn Account om de Race-timer te volgen');
       return;
     }
 
@@ -6904,16 +6919,9 @@ try {
           driverAcceptedMisses = 0;
           // Zet direct ook de onafhankelijke hard-exit klaar. Zodra de bevestigingspagina
           // zichtbaar is, kan geen andere Race-callback deze terugkeer meer blokkeren.
-          driverReadyHardExit('auto bevestigd; oude Race-ready pagina verlaten');
-          // Na auto-bevestiging altijd terug naar Mijn Account. Daar blijft Race
-          // lokaal aftellen en wordt bij Nu opnieuw een Driver-open gepland.
-          next(()=>{
-            if(!scriptAan || raceRole!=='slave') return;
-            clearRacePlan();
-            raceReleaseAction();
-            guiLoad('/information.php');
-            next(()=>checkAvailability(true), randomDelay(2500,4500));
-          }, randomDelay(5000,8000));
+          driverReadyHardExit('Auto bevestigd; Driver verlaat Race altijd naar Mijn Account');
+          // De onafhankelijke Driver-exit hierboven is nu de enige eigenaar van deze
+          // terugkeer. Daardoor kan een andere Race-callback hem niet meer annuleren.
         }, actionDelay());
         return;
       }
