@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MRB Gold Recovery 1.0
-// @version      5.8.54
-// @description  Centrale Logged-Out Safe Mode: zodra de sessie wegvalt stopt alle Gold-automatisering en blijft de loginpagina volledig vrij.
+// @version      5.8.56
+// @description  Stabiliteitsfix: Race single-flight terugkeer, globale route-circuitbreaker en 403 server-backoff tegen navigatie-/requeststorms.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
 // @include      https://*.barafranca.nl/*
@@ -18,6 +18,8 @@
 // @run-at       document-end
 // ==/UserScript==
 
+// Release 5.8.56: Race single-flight naar Mijn Account, globale route-circuitbreaker en 403 server-backoff voorkomen herhaalde navigatie-/requeststorms; normale moduleflows blijven verder ongewijzigd.
+// Release 5.8.55: lichte Flight Recorder bewaart de laatste 2 minuten van navigatie, route/state-wijzigingen, errors, click-limit en sessieverlies; bevriest een incident-snapshot bij Safe Mode. Geen moduleflow gewijzigd.
 // Release 5.8.54: centrale Logged-Out Safe Mode bevriest navigatie, callbacks en synthetische acties zodra de sessie wegvalt; hervat pas na stabiel ingelogde game-shell.
 // Release 5.8.53: Race start pas nadat echt gereedstaande Crimes/Cars zijn afgehandeld; eenmaal gestart houdt Race transaction ownership tot bewuste vrijgave.
 // Release 5.8.51: Captcha Alert, Lackey Timer en ingebouwde Heist Sessie Manager schoon verwijderd. Centrale captcha/gate-beveiliging blijft behouden.
@@ -38,6 +40,125 @@
 // - Stale secondPass/startCount/leaderGo wordt bij cooldown hard gewist.
 // - Navigation Audit blijft actief om de fix te verifieren.
 // ==========================================================
+
+// ==========================================================
+// 5.8.55 FLIGHT RECORDER - DIAGNOSTIEK ZONDER MODULEFLOW-WIJZIGING
+// - Houdt alleen de laatste 2 minuten / max 260 compacte events bij.
+// - Logt navigatie-audit, route/state-wijzigingen, click-limit/Cloudflare/login-signalen en JS-errors.
+// - Bij Logged-Out Safe Mode wordt een incident-snapshot persistent bewaard.
+// - Slaat NOOIT invoervelden, wachtwoorden of formulierwaarden op.
+// - Console: mrbFlightRecorder.report() / .lastIncident() / .clearIncident()
+// ==========================================================
+(function MRBFlightRecorder5855(){
+  'use strict';
+  if (unsafeWindow.__mrbFlightRecorder5855Installed) return;
+  unsafeWindow.__mrbFlightRecorder5855Installed = true;
+
+  const KEY_LIVE = 'mrb_flight_recorder_live_v1';
+  const KEY_INCIDENT = 'mrb_flight_recorder_last_incident_v1';
+  const WINDOW_MS = 2 * 60 * 1000;
+  const MAX_EVENTS = 260;
+  const PERSIST_MS = 4000;
+  const SAMPLE_MS = 1000;
+  let events = [];
+  let frozen = false;
+  let dirty = false;
+  let lastPersist = 0;
+  let lastEnvSig = '';
+  let lastModuleSig = '';
+
+  const gmGet=(k,d)=>{try{return GM_getValue(k,d);}catch(_){return d;}};
+  const gmSet=(k,v)=>{try{GM_setValue(k,v);}catch(_){}};
+  const clean=v=>String(v==null?'':v).replace(/\s+/g,' ').trim().slice(0,420);
+  const route=()=>clean((location.pathname||'')+(location.search||'')+(location.hash||''));
+  const pageClass=()=>clean(document.querySelector('#game_container')?.className||'').slice(0,160);
+
+  function trim(){
+    const cutoff=Date.now()-WINDOW_MS;
+    events=events.filter(e=>Number(e.ts)>=cutoff);
+    if(events.length>MAX_EVENTS) events=events.slice(-MAX_EVENTS);
+  }
+  function add(kind, detail={}){
+    if(frozen && kind!=='RECORDER_RESUME') return null;
+    const row={
+      ts:Date.now(), time:new Date().toISOString(), kind:clean(kind)||'event',
+      route:route(), pageClass:pageClass(),
+      ...Object.fromEntries(Object.entries(detail||{}).map(([k,v])=>[k, typeof v==='number'||typeof v==='boolean'?v:clean(v)]))
+    };
+    events.push(row); trim(); dirty=true;
+    return row;
+  }
+  function persist(force=false){
+    const now=Date.now();
+    if(!dirty && !force) return;
+    if(!force && now-lastPersist<PERSIST_MS) return;
+    trim();
+    gmSet(KEY_LIVE, JSON.stringify({version:'5.8.55',savedAt:now,frozen,events}));
+    dirty=false; lastPersist=now;
+  }
+  function freeze(reason='session-safe'){
+    if(frozen) return;
+    add('INCIDENT_FREEZE',{reason});
+    frozen=true; trim();
+    gmSet(KEY_INCIDENT, JSON.stringify({version:'5.8.55',frozenAt:Date.now(),reason:clean(reason),events:[...events]}));
+    dirty=true; persist(true);
+    try{console.warn(`[MRB FLIGHT] Incident bewaard (${events.length} events):`, reason);}catch(_){}
+  }
+  function resume(reason='session-restored'){
+    frozen=false; events=[];
+    add('RECORDER_RESUME',{reason});
+    persist(true);
+  }
+  function parse(raw){try{return raw?JSON.parse(raw):null;}catch(_){return null;}}
+  function lastIncident(){return parse(gmGet(KEY_INCIDENT,''));}
+  function live(){trim(); return [...events];}
+  function report(){
+    const incident=lastIncident();
+    const rows=incident?.events?.length?incident.events:live();
+    try{console.table(rows);}catch(_){console.log(rows);}
+    return {source:incident?.events?.length?'lastIncident':'live', incident, events:rows};
+  }
+  function clearIncident(){gmSet(KEY_INCIDENT,''); return true;}
+
+  window.addEventListener('error',e=>add('JS_ERROR',{message:e?.message||e?.error?.message||'error',source:e?.filename||'',line:Number(e?.lineno||0),col:Number(e?.colno||0)}),true);
+  window.addEventListener('unhandledrejection',e=>add('UNHANDLED_REJECTION',{message:e?.reason?.message||e?.reason||'promise rejection'}),true);
+  window.addEventListener('hashchange',()=>add('ROUTE_HASHCHANGE'),true);
+  window.addEventListener('popstate',()=>add('ROUTE_POPSTATE'),true);
+  window.addEventListener('pagehide',()=>persist(true),true);
+
+  function envSnapshot(){
+    try{
+      const body=clean(document.body?.innerText||'').slice(0,2200);
+      const clickLimit=/You reached your click limit\./i.test(body);
+      const cloudflare=/Verifying you are human|Verify you are human|Verifieer dat u een mens bent|This may take a few seconds|Dit kan enkele seconden duren/i.test(body) || !!document.querySelector('form[action*="cdn-cgi"],#cf-challenge-running,#challenge-running,#challenge-form,iframe[src*="challenges.cloudflare.com"]');
+      const login=!!([...document.querySelectorAll('a[data-bs-target="#signupModal"],a[data-bs-target="#loginModal"],input[type="password"],form[action*="login" i],#loginModal,#signupModal')].find(el=>{try{const cs=getComputedStyle(el);return cs.display!=='none'&&cs.visibility!=='hidden'&&(el.offsetWidth||el.offsetHeight||el.getClientRects?.().length);}catch(_){return true;}}));
+      const shell=!!document.querySelector('#game_container');
+      const nav=unsafeWindow.mrbNavigationState||{};
+      const safe=unsafeWindow.mrbSessionSafeMode?.state?.()||{};
+      const sig=JSON.stringify([route(),pageClass(),clickLimit,cloudflare,login,shell,clean(nav.source),clean(nav.target),!!safe.active,clean(safe.reason)]);
+      if(sig!==lastEnvSig){
+        lastEnvSig=sig;
+        add('ENV_CHANGE',{clickLimit,cloudflare,login,shell,navSource:nav.source||'',navTarget:nav.target||'',sessionSafe:!!safe.active,safeReason:safe.reason||''});
+      }
+      const reg=unsafeWindow.mrbModuleStateRegistry?.list?.();
+      if(Array.isArray(reg)){
+        const compact=reg.map(x=>({name:clean(x?.name||x?.id||x?.module||''),enabled:!!(x?.enabled||x?.running||x?.requestedEnabled),state:clean(x?.state||x?.phase||'')})).filter(x=>x.name||x.state);
+        const msig=JSON.stringify(compact);
+        if(msig!==lastModuleSig){lastModuleSig=msig;add('MODULE_STATES',{states:msig.slice(0,1800)});}
+      }
+    }catch(_){}
+    persist(false);
+  }
+
+  unsafeWindow.mrbFlightRecorder=Object.freeze({
+    version:'5.8.55', add, freeze, resume, live, lastIncident, report, clearIncident,
+    state:()=>({frozen,count:events.length,lastIncident:!!lastIncident()})
+  });
+  add('RECORDER_START',{priorIncident:!!lastIncident()});
+  setInterval(envSnapshot,SAMPLE_MS);
+  setInterval(()=>persist(false),PERSIST_MS);
+  setTimeout(envSnapshot,250);
+})();
 
 // ==========================================================
 // 5.8.43 NAVIGATION AUDIT - SESSION MANAGER FOCUS
@@ -67,6 +188,7 @@
     recent.push(ts); counts.set(key, recent);
     const row = { ts, time: nowText(), kind, source: clean(source)||'unknown', target: clean(target)||'-', result: clean(result)||'-', count60s: recent.length, extra: clean(extra) };
     rows.push(row); if (rows.length > MAX) rows.splice(0, rows.length-MAX);
+    try { unsafeWindow.mrbFlightRecorder?.add?.('NAV_AUDIT',{navKind:row.kind,source:row.source,target:row.target,result:row.result,count60s:row.count60s,extra:row.extra}); } catch(_) {}
     console.log(`[MRB NAV AUDIT] ${row.time} | ${row.kind} | ${row.source} -> ${row.target} | ${row.result} | 60s=${row.count60s}${row.extra ? ' | '+row.extra : ''}`);
     return row;
   }
@@ -321,6 +443,7 @@
       if (!active) {
         active = true; enteredAt = Date.now(); reason = String(why || 'Uitgelogd');
         try { console.warn('[MRB SESSION SAFE] Automatisering bevroren:', reason); } catch(_) {}
+        try { unsafeWindow.mrbFlightRecorder?.freeze?.(reason); } catch(_) {}
         try { unsafeWindow.mrbNavigationGate?.reset?.(); } catch(_) {}
         try { unsafeWindow.mrbRaceTransaction?.release?.('session-safe'); } catch(_) {}
         try { window.dispatchEvent(new CustomEvent('mrb:session-safe-change',{detail:state()})); } catch(_) {}
@@ -334,6 +457,7 @@
       setMenuHidden(false);
       try { unsafeWindow.mrbNavigationGate?.reset?.(); } catch(_) {}
       try { console.info('[MRB SESSION SAFE] Ingelogde sessie stabiel; Gold hervat.'); } catch(_) {}
+      try { unsafeWindow.mrbFlightRecorder?.resume?.('sessie stabiel hersteld'); } catch(_) {}
       try { window.dispatchEvent(new CustomEvent('mrb:session-safe-change',{detail:state()})); } catch(_) {}
     }
 
@@ -583,11 +707,81 @@
     const NAV_MIN_GAP_MS = 2600;
     const SAME_TARGET_GAP_MS = 10000;
     const NAV_IN_FLIGHT_MS = 6500;
+    const NAV_BURST_WINDOW_MS = 30000;
+    const NAV_BURST_MAX = 3;
+    const NAV_CIRCUIT_COOLDOWN_MS = 60000;
+    const GLOBAL_ROUTE_COOLDOWN_MS = 120000;
     let lastNavigationAt = 0;
     let lastTarget = '';
     let lastTargetAt = 0;
     let activeSource = '';
     let activeUntil = 0;
+    const navAttempts = new Map();
+    const globalRouteAttempts = new Map();
+    let serverBackoffUntil = Number(sessionStorage.getItem('mrb_server_backoff_until_v5856') || 0) || 0;
+    let serverBackoffReason = String(sessionStorage.getItem('mrb_server_backoff_reason_v5856') || '');
+
+    function tripServerBackoff(reason='HTTP 403', ms=120000){
+      const until = Math.max(serverBackoffUntil, Date.now() + Math.max(30000, Number(ms)||120000));
+      serverBackoffUntil = until;
+      serverBackoffReason = String(reason||'server backoff');
+      try { sessionStorage.setItem('mrb_server_backoff_until_v5856', String(until)); sessionStorage.setItem('mrb_server_backoff_reason_v5856', serverBackoffReason); } catch(_) {}
+      try { console.warn('[MRB Gold 5.8.56] SERVER BACKOFF', serverBackoffReason, Math.ceil((until-Date.now())/1000)+'s'); } catch(_) {}
+      try { unsafeWindow.mrbFlightRecorder?.add?.('SERVER_BACKOFF',{reason:serverBackoffReason,until}); } catch(_) {}
+      return until;
+    }
+    function serverBackoffActive(){ return Date.now() < serverBackoffUntil; }
+    unsafeWindow.mrbServerBackoff = Object.freeze({
+      trip:tripServerBackoff,
+      active:serverBackoffActive,
+      state:()=>({active:serverBackoffActive(),until:serverBackoffUntil,remainingMs:Math.max(0,serverBackoffUntil-Date.now()),reason:serverBackoffReason}),
+      clear:()=>{serverBackoffUntil=0;serverBackoffReason='';try{sessionStorage.removeItem('mrb_server_backoff_until_v5856');sessionStorage.removeItem('mrb_server_backoff_reason_v5856');}catch(_){} return true;}
+    });
+
+    function navCircuitAllows(source,wanted){
+      const now=Date.now();
+      const key=String(source||'onbekend').toLowerCase()+'|'+String(wanted||'');
+      let st=navAttempts.get(key);
+      if(!st || now-st.windowStart>NAV_BURST_WINDOW_MS) st={windowStart:now,count:0,blockedUntil:0};
+      if(st.blockedUntil>now){ navAttempts.set(key,st); return false; }
+      st.count+=1;
+      if(st.count>NAV_BURST_MAX){
+        st.blockedUntil=now+NAV_CIRCUIT_COOLDOWN_MS; navAttempts.set(key,st);
+        try { console.warn('[MRB Gold 5.8.56] navigation circuit open',source,wanted); } catch(_) {}
+        try { unsafeWindow.mrbFlightRecorder?.add?.('NAV_ROUTE_CIRCUIT',{source,target:wanted,until:st.blockedUntil}); } catch(_) {}
+        return false;
+      }
+      navAttempts.set(key,st);
+      const routeKey=String(wanted||'');
+      let rt=globalRouteAttempts.get(routeKey);
+      if(!rt || now-rt.windowStart>NAV_BURST_WINDOW_MS) rt={windowStart:now,count:0,blockedUntil:0};
+      if(rt.blockedUntil>now){ globalRouteAttempts.set(routeKey,rt); return false; }
+      rt.count+=1;
+      if(rt.count>NAV_BURST_MAX){
+        rt.blockedUntil=now+GLOBAL_ROUTE_COOLDOWN_MS; globalRouteAttempts.set(routeKey,rt);
+        try { console.warn('[MRB Gold 5.8.56] global route circuit open',wanted); } catch(_) {}
+        try { unsafeWindow.mrbFlightRecorder?.add?.('GLOBAL_ROUTE_CIRCUIT',{target:wanted,until:rt.blockedUntil}); } catch(_) {}
+        return false;
+      }
+      globalRouteAttempts.set(routeKey,rt);
+      return true;
+    }
+
+    let ajaxWatchInstalled=false;
+    const installAjax403Watch=()=>{
+      if(ajaxWatchInstalled) return true;
+      try{
+        const jq=unsafeWindow.jQuery||unsafeWindow.$;
+        if(!jq?.fn?.jquery) return false;
+        jq(document).ajaxError((_e,xhr,settings)=>{
+          if(Number(xhr?.status)===403) tripServerBackoff(`HTTP 403 AJAX ${String(settings?.url||'').slice(0,120)}`,120000);
+        });
+        ajaxWatchInstalled=true;
+        return true;
+      }catch(_){return false;}
+    };
+    installAjax403Watch();
+    setInterval(()=>{ if(!ajaxWatchInstalled) installAjax403Watch(); },5000);
 
     const clean = value => String(value || '').trim();
     function canonical(raw){
@@ -701,6 +895,9 @@
       const wanted = canonical(target);
       const current = currentCanonical();
 
+      if (!meta?.manualPauseBypass && serverBackoffActive()) return true;
+      if (!meta?.force && !navCircuitAllows(source,wanted)) return true;
+
       // Tijdens handmatige bediening blijven timers actief, maar geen enkele
       // gewone module mag de door de speler gekozen pagina vervangen.
       if (!meta?.manualPauseBypass && unsafeWindow.mrbManualControl?.isPaused?.()) return true;
@@ -760,7 +957,7 @@
 
     unsafeWindow.mrbNavigationGate = {
       version:'4.10',
-      state:()=>({lastNavigationAt,lastTarget,lastTargetAt,activeSource,activeUntil}),
+      state:()=>({lastNavigationAt,lastTarget,lastTargetAt,activeSource,activeUntil,serverBackoffUntil,serverBackoffReason}),
       reset:()=>{lastNavigationAt=0;lastTarget='';lastTargetAt=0;activeSource='';activeUntil=0;}
     };
   })();
@@ -934,6 +1131,7 @@ return false;
     // Melding is zichtbaar:
     // - nog nooit geactiveerd => start 60s cooldown
     if (st === 0){
+      try { unsafeWindow.mrbFlightRecorder?.add?.('CLICK_LIMIT_START',{until:Date.now()+60_000}); } catch(_) {}
       gm_setClickLimitState(Date.now() + 60_000);
       return true;
     }
@@ -946,6 +1144,7 @@ return false;
     // - cooldown is voorbij, maar melding staat nog op scherm:
     //   markeer als klaar (-1) en laat scripts weer doorlopen zodat ze kunnen weg navigeren.
     if (st > 0 && Date.now() >= st){
+      try { unsafeWindow.mrbFlightRecorder?.add?.('CLICK_LIMIT_COOLDOWN_DONE'); } catch(_) {}
       gm_setClickLimitState(-1);
       return false;
     }
@@ -5778,9 +5977,43 @@ try {
 
   const $jq = ()=> (unsafeWindow.$ || unsafeWindow.jQuery || null);
 
+  // 5.8.56: Race mag maar een terugkeer naar Mijn Account tegelijk open hebben.
+  let raceInfoNavPendingUntil = 0;
+  let raceInfoRecoveryUntil = 0;
+  function raceInfoArrived(){
+    if (!/information\.php/i.test(location.href)) return false;
+    raceInfoNavPendingUntil=0;
+    raceInfoRecoveryUntil=0;
+    return true;
+  }
+  function armRaceInfoSingleFlight(){
+    const now=Date.now();
+    if (raceInfoArrived()) return false;
+    if (now < raceInfoRecoveryUntil || now < raceInfoNavPendingUntil) return false;
+    raceInfoNavPendingUntil=now+10000;
+    try { unsafeWindow.mrbFlightRecorder?.add?.('RACE_INFO_NAV_START',{pendingUntil:raceInfoNavPendingUntil}); } catch(_) {}
+    setTimeout(()=>{
+      if (raceInfoArrived()) return;
+      if (Date.now() < raceInfoNavPendingUntil) return;
+      raceInfoNavPendingUntil=0;
+      raceInfoRecoveryUntil=Date.now()+45000;
+      raceRegistryState('RECOVERY_WAIT','Mijn Account niet bevestigd; Race 45s in herstelrust');
+      try { unsafeWindow.mrbFlightRecorder?.add?.('RACE_INFO_RECOVERY_WAIT',{until:raceInfoRecoveryUntil}); } catch(_) {}
+    },10100);
+    return true;
+  }
 
   const guiLoad = (path)=>{
     if (unsafeWindow.mrbSessionSafeMode?.active?.()) return false;
+    if (unsafeWindow.mrbServerBackoff?.active?.()) return true;
+    const toInfo=/information\.php/i.test(String(path||''));
+    if (toInfo){
+      if (raceInfoArrived()) return true;
+      if (!armRaceInfoSingleFlight()) {
+        try { unsafeWindow.mrbFlightRecorder?.add?.('RACE_INFO_NAV_SUPPRESS',{pendingUntil:raceInfoNavPendingUntil,recoveryUntil:raceInfoRecoveryUntil}); } catch(_) {}
+        return true;
+      }
+    }
     if (unsafeWindow.mrbNavigate?.(path,{source:'race'})) return true;
     try { unsafeWindow.omerta.GUI.container.loadPage(path); return true; }
     catch {
@@ -8471,6 +8704,7 @@ if (pausedCaptcha){
 
   async function backgroundSyncTimers(source='periodiek'){
     if (!running || backgroundSyncBusy || isLoggedOut() || captchaActief()) return false;
+    if (unsafeWindow.mrbServerBackoff?.active?.()) return false;
     if (busy || confirmPendingKind || forcedRetryActive() || jailPauseActive()) return false;
 
     const now = Date.now();
@@ -8485,7 +8719,10 @@ if (pausedCaptcha){
         cache:'no-store',
         headers:{'X-Requested-With':'XMLHttpRequest'}
       });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      if (!response.ok) {
+        if (response.status === 403) try { unsafeWindow.mrbServerBackoff?.trip?.('HTTP 403 background /information.php',120000); } catch(_) {}
+        throw new Error(`HTTP ${response.status}`);
+      }
       const html = await response.text();
       const doc = new DOMParser().parseFromString(html, 'text/html');
       const parsed = readTimersFromRoot(doc);
