@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MRB Gold Recovery 1.0
-// @version      5.8.53
-// @description  Race transaction ownership: Crimes/Cars blijft hoogste prioriteit vóór Race-start, maar kan een eenmaal gestarte Race-flow niet meer uit de pagina drukken.
+// @version      5.8.54
+// @description  Centrale Logged-Out Safe Mode: zodra de sessie wegvalt stopt alle Gold-automatisering en blijft de loginpagina volledig vrij.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
 // @include      https://*.barafranca.nl/*
@@ -18,6 +18,7 @@
 // @run-at       document-end
 // ==/UserScript==
 
+// Release 5.8.54: centrale Logged-Out Safe Mode bevriest navigatie, callbacks en synthetische acties zodra de sessie wegvalt; hervat pas na stabiel ingelogde game-shell.
 // Release 5.8.53: Race start pas nadat echt gereedstaande Crimes/Cars zijn afgehandeld; eenmaal gestart houdt Race transaction ownership tot bewuste vrijgave.
 // Release 5.8.51: Captcha Alert, Lackey Timer en ingebouwde Heist Sessie Manager schoon verwijderd. Centrale captcha/gate-beveiliging blijft behouden.
 // Release 5.8.50: Race Driver krijgt na auto-bevestiging een onafhankelijke gegarandeerde terugkeer naar Mijn Account; deze kan niet door andere Race-callbacks worden overschreven.
@@ -113,6 +114,12 @@
       if (!gui || typeof fn !== 'function' || fn.__mrbAuditWrapped) return false;
       const wrapped = function(target){
         const stack = shortStack();
+        try {
+          if (unsafeWindow.mrbSessionSafeMode?.active?.()) {
+            add('GUI.loadPage','direct-gui',target,'BLOCKED SESSION SAFE',stack);
+            return false;
+          }
+        } catch(_) {}
         add('GUI.loadPage','direct-gui',target,'CALL',stack);
         return fn.apply(this, arguments);
       };
@@ -239,6 +246,150 @@
   function GM_Get(k, def){ try{ return GM_getValue(k, def);}catch{ return def; } }
   function GM_Set(k, v){ try{ GM_setValue(k, v);}catch{} }
 
+  // ---------- 5.8.54: CENTRALE LOGGED-OUT SAFE MODE ----------
+  // Eén sessie-owner voor heel Gold. Zodra de echte loginbediening zichtbaar is
+  // (of een eerder bevestigde game-shell langere tijd verdwijnt), bevriest Gold
+  // alle automatisering. Instellingen blijven aan; alleen uitvoering wordt gepauzeerd.
+  (function installLoggedOutSafeMode(){
+    const CHECK_MS = 400;
+    const SHELL_MISSING_CONFIRM_MS = 1800;
+    const LOGIN_STABLE_RESUME_MS = 5000;
+    let active = false;
+    let reason = '';
+    let enteredAt = 0;
+    let healthySince = 0;
+    let missingSince = 0;
+    let everAuthenticated = false;
+    let hiddenMenuDisplay = null;
+
+    const visible = el => {
+      if (!el || el.closest?.('#geneoSuperMenu,#mrbGoldMenu')) return false;
+      try {
+        const cs = getComputedStyle(el);
+        return cs.visibility !== 'hidden' && cs.display !== 'none' && !!(el.offsetWidth || el.offsetHeight || el.getClientRects?.().length);
+      } catch(_) { return true; }
+    };
+
+    function loginVisible(){
+      try {
+        if ([...document.querySelectorAll('a[data-bs-target="#signupModal"],a[data-bs-target="#loginModal"]')].some(visible)) return true;
+        if ([...document.querySelectorAll('input[type="password"],form[action*="login" i],#loginModal,#signupModal')].some(visible)) return true;
+        const nav = document.querySelector('.navbar-brand');
+        const navTxt = visible(nav) ? String(nav.innerText || '').toUpperCase() : '';
+        if (navTxt.includes('LOGIN') || navTxt.includes('SIGNUP')) return true;
+        const body = String(document.body?.innerText || '').replace(/\s+/g,' ').trim();
+        if (/\b(?:login|log in|inloggen|sign up|aanmelden)\b/i.test(body) && !document.querySelector('#game_container')) {
+          return !!document.querySelector('form,input[type="password"],button,input[type="submit"]');
+        }
+      } catch(_) {}
+      return false;
+    }
+
+    function cloudflareVisible(){
+      try {
+        const t=String(document.body?.innerText||'').replace(/\s+/g,' ').trim();
+        return /Verifying you are human|Verify you are human|Verifieer dat u een mens bent|This may take a few seconds|Dit kan enkele seconden duren/i.test(t) || !!document.querySelector('form[action*="cdn-cgi"],script[src*="cdn-cgi/challenge-platform"],[data-cf-beacon],.cf-browser-verification,#cf-challenge-running,#challenge-running,#challenge-form,iframe[src*="challenges.cloudflare.com"]');
+      } catch(_) { return false; }
+    }
+
+    function authenticatedShell(){
+      if (loginVisible() || cloudflareVisible()) return false;
+      try {
+        const gc = document.querySelector('#game_container');
+        const gui = unsafeWindow?.omerta?.GUI?.container;
+        const infoHint = document.querySelector('a[href*="information.php"],.moduleInformation,#module_Information,#game_container.moduleInformation');
+        const gameText = String(gc?.innerText || '').replace(/\s+/g,' ').trim();
+        return !!(gc && (gui || infoHint || gameText.length > 20));
+      } catch(_) { return false; }
+    }
+
+    function setMenuHidden(hide){
+      try {
+        const menu = document.getElementById('mrbGoldMenu');
+        if (!menu) return;
+        if (hide) {
+          if (hiddenMenuDisplay === null) hiddenMenuDisplay = menu.style.display || '';
+          menu.style.display = 'none';
+        } else {
+          menu.style.display = hiddenMenuDisplay === null ? '' : hiddenMenuDisplay;
+          hiddenMenuDisplay = null;
+        }
+      } catch(_) {}
+    }
+
+    function enter(why='Uitgelogd'){
+      if (!active) {
+        active = true; enteredAt = Date.now(); reason = String(why || 'Uitgelogd');
+        try { console.warn('[MRB SESSION SAFE] Automatisering bevroren:', reason); } catch(_) {}
+        try { unsafeWindow.mrbNavigationGate?.reset?.(); } catch(_) {}
+        try { unsafeWindow.mrbRaceTransaction?.release?.('session-safe'); } catch(_) {}
+        try { window.dispatchEvent(new CustomEvent('mrb:session-safe-change',{detail:state()})); } catch(_) {}
+      } else if (why) reason = String(why);
+      setMenuHidden(true);
+    }
+
+    function leave(){
+      if (!active) return;
+      active = false; reason = ''; enteredAt = 0; healthySince = 0; missingSince = 0;
+      setMenuHidden(false);
+      try { unsafeWindow.mrbNavigationGate?.reset?.(); } catch(_) {}
+      try { console.info('[MRB SESSION SAFE] Ingelogde sessie stabiel; Gold hervat.'); } catch(_) {}
+      try { window.dispatchEvent(new CustomEvent('mrb:session-safe-change',{detail:state()})); } catch(_) {}
+    }
+
+    function sample(){
+      const login = loginVisible();
+      const shell = authenticatedShell();
+      if (shell) { everAuthenticated = true; missingSince = 0; }
+
+      if (login) {
+        healthySince = 0; missingSince = 0; enter('Login/Signup zichtbaar'); return true;
+      }
+
+      // Alleen na een eerder bewezen ingelogde sessie is een verdwenen game-shell
+      // een logoutsignaal. De korte bevestiging voorkomt false positives tijdens SPA-rendering.
+      if (!active && everAuthenticated && !shell && !cloudflareVisible()) {
+        if (!missingSince) missingSince = Date.now();
+        if (Date.now() - missingSince >= SHELL_MISSING_CONFIRM_MS) {
+          enter('Ingelogde game-shell verdwenen'); return true;
+        }
+      } else if (!active) {
+        missingSince = 0;
+      }
+
+      if (active) {
+        setMenuHidden(true);
+        if (shell) {
+          if (!healthySince) healthySince = Date.now();
+          if (Date.now() - healthySince >= LOGIN_STABLE_RESUME_MS) leave();
+        } else {
+          healthySince = 0;
+        }
+      }
+      return active;
+    }
+
+    function state(){ return {active, reason, enteredAt, healthySince, everAuthenticated}; }
+    unsafeWindow.mrbSessionSafeMode = Object.freeze({ active:()=>{ sample(); return active; }, state, sample, loginVisible, authenticatedShell });
+
+    // Synthetische moduleklikken worden tijdens logout centraal geneutraliseerd.
+    // Echte gebruikersklikken blijven ongemoeid zodat handmatig inloggen altijd kan.
+    document.addEventListener('click', e=>{
+      if (!active || e.isTrusted) return;
+      try { e.preventDefault(); e.stopImmediatePropagation(); } catch(_) {}
+    }, true);
+    document.addEventListener('submit', e=>{
+      if (!active) return;
+      const form=e.target;
+      const isLogin=!!form?.matches?.('form[action*="login" i],#loginModal form,#signupModal form') || !!form?.querySelector?.('input[type="password"]');
+      if (isLogin) return;
+      try { e.preventDefault(); e.stopImmediatePropagation(); } catch(_) {}
+    }, true);
+
+    sample();
+    window.setInterval(sample, CHECK_MS);
+  })();
+
 
   // ---------- SPRINT 5.1: CENTRALE PULSMANAGER ----------
   // Alle bestaande module-intervals lopen via één native browserinterval.
@@ -269,6 +420,8 @@
     }
 
     function runDueTasks(){
+      // 5.8.54: bij logout mag GEEN enkele geregistreerde spelcallback draaien.
+      try { if (unsafeWindow.mrbSessionSafeMode?.active?.()) return; } catch(_) {}
       const now = Date.now();
       for (const task of Array.from(tasks.values())){
         if (!tasks.has(task.id) || task.running || now < task.nextAt) continue;
@@ -540,6 +693,8 @@
     }
 
     unsafeWindow.mrbNavigate = function(target, meta={}){
+      // 5.8.54: loginpagina is exclusief van de gebruiker; Gold navigeert daar nooit.
+      try { if (unsafeWindow.mrbSessionSafeMode?.active?.()) return true; } catch(_) {}
       const now = Date.now();
       const source = clean(meta?.source || meta?.owner || 'onbekend');
       const crimesCarsPriority = source.toLowerCase().includes('crimes-cars');
@@ -3716,6 +3871,7 @@ Naam3"></textarea><br><br>
   }
 
   function loadPage(path){
+    if (unsafeWindow.mrbSessionSafeMode?.active?.()) return false;
     // Centrale D&D-navigatiepoort. Travel vereist voortaan ALTIJD beide:
     // 1) een recente expliciete vluchtvrijgave en 2) een kortdurende autorisatie
     // van de huidige D&D-actie. Een oude autorisatie of verlopen next_ts is niet genoeg.
@@ -4454,6 +4610,7 @@ Naam3"></textarea><br><br>
   }
 
   function clickSmugglingSubmit(attempt=1){
+    if (unsafeWindow.mrbSessionSafeMode?.active?.()) return false;
     const form = findSmugglingForm();
     const btn = findSmugglingSubmit();
     if (!btn || btn.disabled || btn.getAttribute('aria-disabled') === 'true') return false;
@@ -5059,12 +5216,14 @@ Naam3"></textarea><br><br>
   const sleep = (ms)=>new Promise(r=>setTimeout(r, ms));
 
   const loadPage = (function(){
+    const blocked=()=>{ try{return !!unsafeWindow.mrbSessionSafeMode?.active?.();}catch(_){return false;} };
     try{
       const gui = unsafeWindow?.omerta?.GUI?.container;
-      if (unsafeWindow.mrbNavigate) return (p)=>unsafeWindow.mrbNavigate(p,{source:'module'});
-      if (gui && typeof gui.loadPage === 'function') return (p)=>gui.loadPage(p);
+      if (unsafeWindow.mrbNavigate) return (p)=> blocked()?false:unsafeWindow.mrbNavigate(p,{source:'module'});
+      if (gui && typeof gui.loadPage === 'function') return (p)=> blocked()?false:gui.loadPage(p);
     }catch{}
     return (p)=>{
+      if (blocked()) return false;
       if (p.startsWith('?')) location.search = p;
       else if (p.startsWith('#')) unsafeWindow.mrbNavigate ? unsafeWindow.mrbNavigate(p,{source:'fallback'}) : (location.hash = p.slice(1));
       else unsafeWindow.mrbNavigate ? unsafeWindow.mrbNavigate(p,{source:'fallback'}) : (location.href = p);
@@ -5621,6 +5780,7 @@ try {
 
 
   const guiLoad = (path)=>{
+    if (unsafeWindow.mrbSessionSafeMode?.active?.()) return false;
     if (unsafeWindow.mrbNavigate?.(path,{source:'race'})) return true;
     try { unsafeWindow.omerta.GUI.container.loadPage(path); return true; }
     catch {
@@ -7144,6 +7304,7 @@ try {
   }
 
   function clickKoopVerkoop(){
+    if (unsafeWindow.mrbSessionSafeMode?.active?.()) return false;
     const form = findForm();
     const root = form || document;
 
@@ -7612,12 +7773,14 @@ try {
 
   // ---- SPA loader
   const loadPage = (()=>{
+    const blocked=()=>{ try{return !!unsafeWindow.mrbSessionSafeMode?.active?.();}catch(_){return false;} };
     try{
       const gui = unsafeWindow?.omerta?.GUI?.container;
-      if (unsafeWindow.mrbNavigate) return h=>unsafeWindow.mrbNavigate(h,{source:'crimes-cars'});
-      if (gui && typeof gui.loadPage === 'function') return h=>gui.loadPage(h);
+      if (unsafeWindow.mrbNavigate) return h=>blocked()?false:unsafeWindow.mrbNavigate(h,{source:'crimes-cars'});
+      if (gui && typeof gui.loadPage === 'function') return h=>blocked()?false:gui.loadPage(h);
     }catch{}
     return h=>{
+      if (blocked()) return false;
       // Barafranca NL gebruikt SPA-routes zoals /index.php#/?module=Cars.
       // De oude fallback stuurde /?module=Cars naar de root-query, waardoor Cars soms niet laadde.
       if (h.startsWith('/?module=')) location.href = '/index.php#' + h;
@@ -9578,7 +9741,8 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
 
   // ---------- Navigatie helper ----------
   function loadPage(target){
-    if (unsafeWindow.mrbNavigate?.(target,{source:'bullets'})) return;
+    if (unsafeWindow.mrbSessionSafeMode?.active?.()) return false;
+    if (unsafeWindow.mrbNavigate?.(target,{source:'bullets'})) return true;
     try { const gui=unsafeWindow?.omerta?.GUI?.container; if (gui&&typeof gui.loadPage==='function'){ gui.loadPage(target); return; } } catch(e) {}
     location.href=target;
   }
@@ -9978,6 +10142,7 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
   }
 
   async function submitBuy(){
+    if (unsafeWindow.mrbSessionSafeMode?.active?.()) throw new Error('SESSION_SAFE');
     const amount = findBulletAmountInput();
     const buyBtn = findBulletBuyButton();
     if (!amount || !buyBtn) throw new Error('Koopformulier niet gevonden (bedragveld of Koop-knop ontbreekt).');
@@ -10458,6 +10623,7 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
   function allowedCities(){return CITIES.filter(city=>allowed[city]!==false);}
 
   function loadPage(path){
+    if (unsafeWindow.mrbSessionSafeMode?.active?.()) return false;
     try{if(unsafeWindow.mrbNavigate)return unsafeWindow.mrbNavigate(path,{source:'travel-roundtrip'});}catch(_){}
     try{if(unsafeWindow?.omerta?.GUI?.container?.loadPage){unsafeWindow.omerta.GUI.container.loadPage(path);return true;}}catch(_){}
     location.href=/^\/\?module=/i.test(path)?'/index.php#'+path:path;
@@ -11949,8 +12115,9 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
   function touch(){ try{ planner()?.touchNavigation?.(OWNER,45000); }catch(e){} }
   function release(){ try{ planner()?.releaseNavigation?.(OWNER); }catch(e){} }
   function loadPage(path){
+    if (unsafeWindow.mrbSessionSafeMode?.active?.()) return false;
     touch();
-    if (unsafeWindow.mrbNavigate?.(path,{owner:OWNER,source:'milestones',ttl:45000})) return;
+    if (unsafeWindow.mrbNavigate?.(path,{owner:OWNER,source:'milestones',ttl:45000})) return true;
     try{ unsafeWindow.omerta?.GUI?.container?.loadPage?.(path); return; }catch(e){}
     location.href=path;
   }
@@ -12147,7 +12314,8 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
   }
 
   function loadPage(t){
-    if (unsafeWindow.mrbNavigate?.(t,{source:'module'})) return;
+    if (unsafeWindow.mrbSessionSafeMode?.active?.()) return false;
+    if (unsafeWindow.mrbNavigate?.(t,{source:'module'})) return true;
     try { const gui=unsafeWindow?.omerta?.GUI?.container; if(gui&&typeof gui.loadPage==='function'){ gui.loadPage(t); return; } } catch(e) {}
     if (t.startsWith('?')) location.search=t; else location.href=t;
   }
@@ -13369,6 +13537,10 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
     clearLoop();
     loopTimer=setTimeout(()=>{
       if(!enabled()) return;
+      if(unsafeWindow.mrbSessionSafeMode?.active?.()){
+        status('Uitgelogd · Heist gepauzeerd');
+        next(fn,5000);return;
+      }
       if(!sessionAllowsHeist()){
         status('Sessie Manager: Heist wacht tot Race en Spot Overval klaar zijn');
         next(fn,1000);return;
@@ -13382,7 +13554,8 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
     },Math.max(0,ms||0));
   }
   function load(path){
-    if(Date.now()-lastPageLoad<900) return;
+    if (unsafeWindow.mrbSessionSafeMode?.active?.()) return false;
+    if(Date.now()-lastPageLoad<900) return false;
     lastPageLoad=Date.now();
     try{unsafeWindow?.omerta?.GUI?.container?.loadPage(path);}catch(_){location.href=path;}
   }
