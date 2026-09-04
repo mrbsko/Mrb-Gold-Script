@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         MRB Gold Recovery 1.0
-// @version      5.8.56
-// @description  Stabiliteitsfix: Race single-flight terugkeer, globale route-circuitbreaker en 403 server-backoff tegen navigatie-/requeststorms.
+// @name         MRB Gold
+// @version      6.0.0
+// @description  MRB Gold: centrale Unified Scheduler, navigatie-owner, retry-circuitbreaker en strikte actieguards.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
 // @include      https://*.barafranca.nl/*
@@ -18,7 +18,50 @@
 // @run-at       document-end
 // ==/UserScript==
 
-// Release 5.8.56: Race single-flight naar Mijn Account, globale route-circuitbreaker en 403 server-backoff voorkomen herhaalde navigatie-/requeststorms; normale moduleflows blijven verder ongewijzigd.
+// Release 6.0.0-test26: final audit / Gold candidate. Tijdelijke Navigation Audit verwijderd; bewezen modules gebruiken waar veilig alleen de centrale mrbNavigate-owner als navigatiepad. Dode directe GUI/location fallbacks uit Spot, Bodyguard, D&D, Boozen, Bullets, Travel en Fill Lackey verwijderd. Milestones bewust volledig ongemoeid gelaten. Geen actieflow of prioriteitsvolgorde gewijzigd.
+// Release 6.0.0-test25b: D&D wacht op een volledige, tweemaal stabiel gelezen Travel-prijsmatrix voordat hoogste/laagste Cocaine-stad wordt gekozen. Geen lokale verkoop op basis van gedeeltelijk gerenderde SPA-tabel.
+
+// Release 6.0.0-test25: performance root-cause cleanup op basis van DevTools-profiel. Session-safe active() is nu een goedkope cached state-read in plaats van een volledige DOM-scan per guard-call; login/Cloudflare/shell-detectie vermijdt innerText/layout-scans op een bewezen game-shell. Flight Recorder gebruikt lichte textContent snapshots. Unified Dispatcher scant Mijn Account-timers in één pass en gebruikt adaptieve deadlines (250ms alleen vlak rond Crimes/Cars-due/actieve transacties, 1s idle). Functionele moduleflows en Milestones inhoudelijk ongemoeid.
+// Release 6.0.0-test24: centrale timerkernel deadline-driven gemaakt (geen vaste 100ms poll meer). Session Manager/Refresh plannerManaged/V9-bridge en legacy self-timeout verwijderd; één Unified task beheert alleen unieke refresh/freeze-functies. Dubbele timer-sync vanuit Session Manager verwijderd. Milestones inhoudelijk ongemoeid.
+// Release 6.0.0-test20d: Bodyguard de-train gebruikt de zichtbare Attack/Defence-rij als bron van waarheid voor de Untrain-knop, in plaats van te vertrouwen op de interne action-naam.
+// Release 6.0.0-test20e: Bodyguard train/de-train gescheiden binnen dezelfde Unified task. Untrain negeert de 1-minuut trainingstimer; train respecteert die timer en krijgt zodra hij vrij is een actie-slot, waarna de-trainen tijdens de nieuwe cooldown direct doorgaat. Geen tweede loop.
+// Release 6.0.0-test23d: D&D valideert voor ELKE nieuwe marktbeslissing eerst live de volledige smokkelvoorraad. De inventory-snapshot is alleen nog korte overdracht Smokkelen -> Travel binnen dezelfde marktcyclus; een oude lege snapshot kan nooit meer direct een koopreis starten.
+// Release 6.0.0-test23c: D&D pending marktstad wordt alleen als aankomstdoel vertrouwd na een daadwerkelijk geslaagde reis. Oude/stale pending koop/verkoopsteden worden eerst via actuele Travel-prijzen opnieuw gevalideerd.
+// Release 6.0.0-test23b: Small modules cleanup opnieuw vanaf TEST22. Fill Lackey gebruikt geen eigen 6-uurs timeout-owner meer maar een enkele Unified timerkernel-task met persistente nextAt. Milestones is volledig behouden en wordt pas later apart getest/opgeschoond.
+// Release 6.0.0-test22: OC cleanup. Oude V9 planner/task-wrapper en nep-cooldown polling verwijderd; OC blijft bewust PREP-only totdat actuele HTML-selectors zijn gekoppeld. Toggle/rol/state registry en legacy-flow blokkade blijven behouden via een kleine compatibele controller.
+// Release 6.0.0-test21: Bullets cleanup. Oude plannerManaged/V9-plannerbridge en dubbele legacy-mainLoop verwijderd; Bullets draait via één Unified task. Lokale prijscheck, maxprijs, kooplimieten en Sluggs-flow blijven behouden.
+// Release 6.0.0-test20c: Bodyguard exact-target omtraining. Stats boven het ingestelde doel worden eerst via untrain_attack/untrain_defense afgebouwd (confirm automatisch akkoord), daarna worden tekorten naar het exacte Attack/Defence-doel getraind. Zelfde Unified task/cooldowns; geen tweede de-trainer-loop.
+// Release 6.0.0-test20b: centrale Group Transaction Owner voor Race/Heist/Spot. Een eenmaal gestarte groepsflow houdt exclusief ownership totdat de eigen module cooldown/idle bevestigt; nieuwe groepsflows blijven geparkeerd. Crimes/Cars mogen veilig preempten zonder ownership te wissen.
+// Release 6.0.0-test20: Bodyguard Trainer cleanup. Dode plannerManaged/V9-plannerbridge en fallback-dualiteit verwijderd; Bodyguard draait via een enkele benoemde Unified Scheduler-task. Trainingslogica, presets, aankopen en prioriteitsinstelling inhoudelijk ongewijzigd.
+// Release 6.0.0-test19b: gedeelde Jail Buyout-controller voor Boozen en D&D. Beide blijven, wanneer cc_buyout actief is, gecontroleerd uitkopen totdat de gevangenisstatus echt weg is en hervatten daarna hun eigen flow. Geen aparte jail-fixloops per module.
+// Release 6.0.0-test19f: Boozen same-route form recovery. Een /smuggling.php-resultaat zonder formulier wordt via de centrale navigator exact eenmaal als same-route herstel geladen; geen parkeerroute via Mijn Account en geen directe GUI-bypass.
+// Release 6.0.0-test19e: Boozen buyout/result recovery. Een /smuggling.php-resultaat zonder echt formulier wordt niet meer als actieve Smokkelen-pagina behandeld: Boozen parkeert eenmalig via Mijn Account en laat de volgende hoofdloop schoon terugkeren naar Smokkelen. Geen extra watchdog of directe GUI-bypass.
+// Release 6.0.0-test19d: Boozen continuous transaction. Na jail/resultaat wordt het echte Smokkelen-formulier single-flight hersteld; zolang Boozen actief is blijft de cyclus verkopen -> kopen herhalen. Vaste 3.5s waits vervangen door korte server-settle zonder extra watchdog.
+// Release 6.0.0-test18g: D&D Smokkelen-overgang single-flight. Per D&D-transactie maximaal een /smuggling.php-aanvraag; daarna passief wachten op het echte formulier. Een overgenomen SPA-route wordt yield, geen hernavigatiestorm. Koop/verkoopdoelen en Race-fix uit TEST18F blijven behouden.
+// Release 6.0.0-test18e: D&D transaction travel-gate + local optimal action.
+// Release 6.0.0-test18d: D&D flight-deadline parking. Zichtbare Travel-cooldown wordt als serverwaarheid opgeslagen; D&D verlaat Travel en plant geen nieuwe Travel-request voor de opgeslagen vluchtdeadline. Geen polling van Travel tijdens cooldown.
+// Release 6.0.0-test18c: D&D page-ownership root-cause fix. Een Travel-navigatie geldt pas als geslaagd zodra de Travel DOM/prijstabel werkelijk zichtbaar is; Crimes/Cars-preemption wordt als yield behandeld, niet als prijsleesfout.
+// Release 6.0.0-test18: D&D cleanup: dode plannerManaged/V9-planner-dualiteit en orphaned plannerStep verwijderd. Werkende trade-core, koop/verkoop/reislogica en centrale mrbSetTimeout scheduling blijven inhoudelijk ongewijzigd.
+
+// Release 6.0.0-test17-heist-clean: Heist cleanup: dode heistCrimesCarsOwnPriority()-checks en de laatste handmatige mrbResumePriorityTimers-handoff verwijderd; Unified Dispatcher is nu de enige Crimes/Cars-prioriteitsarbiter voor Heist. Leider/Driver-flow, steden, reizen, invite, auto, Race-ownership, start, winst en cooldown inhoudelijk ongewijzigd.
+// Release 6.0.0-test15b-cc-observer-single-flight: Crimes/Cars root-cause fix: waitAndClick MutationObserver is one-shot zodra een DOM-trigger een volgende actie/overgang claimt. Voorkomt herhaald klikken op #popupButtonNow en meerdere identieke GUI.loadPage-calls tijdens dezelfde SPA-overgang. Geen scheduler-, selectie- of actieflow gewijzigd.
+// Release 6.0.0-test15-race-clean: Race cleanup: dode Crimes/Cars-priority/yieldpaden en lokale 2s Race-watcher verwijderd; Unified Scheduler is de enige externe Race-wake. Leider/Driver-acties, auto, invite, resultaat en Info single-flight zijn inhoudelijk ongewijzigd.
+// Release 6.0.0-test16-spot-clean: Spot cleanup: dode Crimes/Cars-prioriteitscheck en handmatige mrbResumePriorityTimers-handoff verwijderd; Unified Dispatcher is nu de enige cross-module arbiter voor Spot. Leider/Driver-flow, invite-probe, auto, second-pass, Heist-prioriteit en resultaatflow ongewijzigd.
+// Release 6.0.0-test17b: Heist wake single-flight: Unified wake mag een reeds geplande Leider/Driver-callback niet meer annuleren. Expliciete Heist-fasen voorkomen scheduler-starvation terwijl server Heist op Nu blijft staan.
+// Release 6.0.0-test17c: Spot shared-page ownership: een passieve/cooldown Spot mag GroupCrimes niet meer wegtrekken wanneer Heist die gedeelde pagina heeft geopend. Spot wist zijn cooldown-state wel, maar navigeert alleen terug naar Mijn Account als de actuele GroupCrimes-pagina aantoonbaar door een actieve Spot-flow wordt bezeten.
+// Release 6.0.0-test14b-cc-clean: Unified Dispatcher scope-fix: mrbResumePriorityTimers sluit nu vóór de dispatcher; hierdoor wordt de centrale dispatcher daadwerkelijk geinstalleerd.
+// Release 6.0.0-test14-cc-clean: Crimes/Cars cleanup: lokale 1s-runner en V9 planner-mode verwijderd; alleen de Unified Scheduler mag CC wakker maken. Actieflow, server-confirmatie, page-owner guards en recovery blijven ongewijzigd.
+// Release 6.0.0-test13: Centrale Idle Home Watchdog: na 2 minuten echte inactiviteit op een niet-homepagina keert de Unified Scheduler veilig terug naar Mijn Account voor verse timers; atomaire acties, handmatige bediening, Safe Mode en server-backoff blokkeren dit.
+// Release 6.0.0-test12: Crimes/Cars foreign-result recovery. Een achtergebleven Race-resultaat op de Crimes/Cars-route wordt als interstitial behandeld: owner vrij, terug Mijn Account, server opnieuw bevestigen en begrensd retryen zonder navigatielus.
+// Release 6.0.0-test11: Spot Driver invite-probe single-flight + Heist-priority yield; handmatige gamebediening pauzeert ook op click/change zodat garagekeuzes niet door automation worden weggehaald.
+// Release 6.0.0-test10: Race single-flight terugkeer naar Mijn Account; globale route-circuitbreaker over alle modules; HTTP 403 zet automation 2 minuten in server-backoff zodat retries juist afnemen.
+// Release 6.0.0-test9: Crimes/Cars action-owner hardening. Geen game_container/generieke submit fallback meer; vlak voor elke CC-actie wordt de exacte modulepagina en handmatige pauze opnieuw gevalideerd. Verkeerde-pagina clicks worden geblokkeerd en gelogd.
+// Release 6.0.0-test7: diagnostieklaag bovenop test6. Unified Scheduler logt runnable/preempt/wake/block-beslissingen, Leider/Driver-state en bewaart automatisch een anomaly-checkpoint bij langdurig blokkeren. Moduleflow zelf is ongewijzigd.
+// Release 6.0.0-test6: Crimes/Cars deadlines preempten veilige Race/Heist/Spot-wachtfases: bij lokaal verlopen serverdeadline eerst geforceerd Mijn Account bevestigen en daarna direct CC uitvoeren. Leider en Driver gebruiken dezelfde preemption.
+// Release 6.0.0-test8: Race Driver-wake is nu een echte centrale job (geen ontbrekende bridge meer); stale Race-info-plannen worden bij server-Nu overschreven. Crimes/Cars krijgt een korte navigatielease tegen dubbele identieke SPA-loads.
+// Release 6.0.0-test5: WAIT/yield-fasen zijn niet langer exclusief. Unified Scheduler verlaagt Race/Heist/Spot tijdens wachtfasen dynamisch in prioriteit; cross-module legacy-prioritychecks bepalen niet meer wie blokkeert.
+// Release 6.0.0-test3: Unified Scheduler gebruikt voor Crimes/Cars uitsluitend server-bevestigde Mijn Account timers als runnable-signaal. Lokale deadlines mogen geen vroege navigatie meer starten; Too Early herstelt via timersync in plaats van een 1s navigatieretry.
+// Release 6.0.0-test1: experimentele Unified Scheduler-build. Alle MRB-module timeouts/intervals na core lopen via een centrale timerkernel; directe module-navigatie wordt via mrbNavigate geleid; navigatie-retrystormen krijgen een circuitbreaker; D&D/Boozen/Lackeys krijgen striktere action guards. TESTBUILD - niet bedoeld als nieuwe stabiele Gold-basis.
 // Release 5.8.55: lichte Flight Recorder bewaart de laatste 2 minuten van navigatie, route/state-wijzigingen, errors, click-limit en sessieverlies; bevriest een incident-snapshot bij Safe Mode. Geen moduleflow gewijzigd.
 // Release 5.8.54: centrale Logged-Out Safe Mode bevriest navigatie, callbacks en synthetische acties zodra de sessie wegvalt; hervat pas na stabiel ingelogde game-shell.
 // Release 5.8.53: Race start pas nadat echt gereedstaande Crimes/Cars zijn afgehandeld; eenmaal gestart houdt Race transaction ownership tot bewuste vrijgave.
@@ -128,7 +171,8 @@
 
   function envSnapshot(){
     try{
-      const body=clean(document.body?.innerText||'').slice(0,2200);
+      // TEST25: textContent vermijdt de layout/style-flush die innerText iedere seconde kan veroorzaken.
+      const body=clean(document.body?.textContent||'').slice(0,2200);
       const clickLimit=/You reached your click limit\./i.test(body);
       const cloudflare=/Verifying you are human|Verify you are human|Verifieer dat u een mens bent|This may take a few seconds|Dit kan enkele seconden duren/i.test(body) || !!document.querySelector('form[action*="cdn-cgi"],#cf-challenge-running,#challenge-running,#challenge-form,iframe[src*="challenges.cloudflare.com"]');
       const login=!!([...document.querySelectorAll('a[data-bs-target="#signupModal"],a[data-bs-target="#loginModal"],input[type="password"],form[action*="login" i],#loginModal,#signupModal')].find(el=>{try{const cs=getComputedStyle(el);return cs.display!=='none'&&cs.visibility!=='hidden'&&(el.offsetWidth||el.offsetHeight||el.getClientRects?.().length);}catch(_){return true;}}));
@@ -161,106 +205,9 @@
 })();
 
 // ==========================================================
-// 5.8.43 NAVIGATION AUDIT - SESSION MANAGER FOCUS
-// - Wijzigt GEEN moduleflow.
-// - Logt centrale mrbNavigate-aanvragen plus directe Omerta GUI loadPage-aanvragen.
-// - Extra focus op Race/Spot/Heist Sessie Manager interactie.
+// TEST26: tijdelijke Navigation Audit verwijderd na clean-base validatie.
+// Flight Recorder blijft behouden voor incidentanalyse.
 // ==========================================================
-(function MRBNavigationAudit543(){
-  'use strict';
-  if (unsafeWindow.__mrbNavAudit543Installed) return;
-  unsafeWindow.__mrbNavAudit543Installed = true;
-
-  const MAX = 500;
-  const rows = [];
-  const counts = new Map();
-  const clean = v => String(v == null ? '' : v).replace(/\s+/g,' ').trim();
-  const nowText = () => new Date().toLocaleTimeString();
-  const shortStack = () => {
-    try {
-      return String(new Error().stack || '').split('\n').slice(3,8).map(clean).join(' <- ');
-    } catch(_) { return ''; }
-  };
-  function add(kind, source, target, result, extra='') {
-    const ts = Date.now();
-    const key = `${clean(source)||'unknown'} -> ${clean(target)||'-'}`;
-    const recent = (counts.get(key) || []).filter(x => ts - x < 60000);
-    recent.push(ts); counts.set(key, recent);
-    const row = { ts, time: nowText(), kind, source: clean(source)||'unknown', target: clean(target)||'-', result: clean(result)||'-', count60s: recent.length, extra: clean(extra) };
-    rows.push(row); if (rows.length > MAX) rows.splice(0, rows.length-MAX);
-    try { unsafeWindow.mrbFlightRecorder?.add?.('NAV_AUDIT',{navKind:row.kind,source:row.source,target:row.target,result:row.result,count60s:row.count60s,extra:row.extra}); } catch(_) {}
-    console.log(`[MRB NAV AUDIT] ${row.time} | ${row.kind} | ${row.source} -> ${row.target} | ${row.result} | 60s=${row.count60s}${row.extra ? ' | '+row.extra : ''}`);
-    return row;
-  }
-  unsafeWindow.__mrbNavAuditLog = add;
-  unsafeWindow.mrbNavAudit = function(last=80){
-    const out = rows.slice(-Math.max(1, Number(last)||80));
-    try { console.table(out); } catch(_) { console.log(out); }
-    return out;
-  };
-  unsafeWindow.mrbNavAuditSummary = function(){
-    const cutoff = Date.now()-60000;
-    const map = new Map();
-    for (const r of rows) {
-      if (r.ts < cutoff) continue;
-      const k = `${r.source} -> ${r.target}`;
-      map.set(k, (map.get(k)||0)+1);
-    }
-    const out=[...map.entries()].map(([route,count])=>({route,count})).sort((a,b)=>b.count-a.count);
-    try { console.table(out); } catch(_) { console.log(out); }
-    return out;
-  };
-
-  function wrapCentral(){
-    const fn = unsafeWindow.mrbNavigate;
-    if (typeof fn !== 'function' || fn.__mrbAuditWrapped) return false;
-    const wrapped = function(target, meta={}){
-      const source = meta?.source || meta?.owner || 'mrbNavigate';
-      let ret;
-      try { ret = fn.apply(this, arguments); }
-      catch(e){ add('mrbNavigate', source, target, 'THROW', e?.message||e); throw e; }
-      add('mrbNavigate', source, target, ret === false ? 'BLOCKED/FALSE' : 'RETURN '+String(ret), '');
-      return ret;
-    };
-    wrapped.__mrbAuditWrapped = true;
-    wrapped.__mrbAuditOriginal = fn;
-    unsafeWindow.mrbNavigate = wrapped;
-    add('audit','system','mrbNavigate','WRAPPED');
-    return true;
-  }
-
-  function wrapGui(){
-    try {
-      const gui = unsafeWindow?.omerta?.GUI?.container;
-      const fn = gui?.loadPage;
-      if (!gui || typeof fn !== 'function' || fn.__mrbAuditWrapped) return false;
-      const wrapped = function(target){
-        const stack = shortStack();
-        try {
-          if (unsafeWindow.mrbSessionSafeMode?.active?.()) {
-            add('GUI.loadPage','direct-gui',target,'BLOCKED SESSION SAFE',stack);
-            return false;
-          }
-        } catch(_) {}
-        add('GUI.loadPage','direct-gui',target,'CALL',stack);
-        return fn.apply(this, arguments);
-      };
-      wrapped.__mrbAuditWrapped = true;
-      wrapped.__mrbAuditOriginal = fn;
-      gui.loadPage = wrapped;
-      add('audit','system','GUI.loadPage','WRAPPED');
-      return true;
-    } catch(_) { return false; }
-  }
-
-  let attempts = 0;
-  const arm = setInterval(()=>{
-    attempts++;
-    wrapCentral(); wrapGui();
-    if (attempts >= 120) clearInterval(arm);
-  },500);
-  setTimeout(()=>{ wrapCentral(); wrapGui(); },50);
-})();
 
 // ==========================================================
 // 5.8.42 SPOT COOLDOWN HARD STOP
@@ -294,6 +241,8 @@
 // Release 5.8.33: de Heisttimer logt één keer in voor Race, Spot Overval en Heist; pas na alle drie volgt uitloggen.
 // Release 5.8.32: instelbare willekeurige seconden worden per Heist-cyclus één keer gekozen en persistent bij de geplande login opgeslagen.
 // Release 5.8.31: Leider kan geen Heist meer openen of reis bevestigen in een uitgevinkte stad; verouderde reisdoelen worden direct gewist.
+// TEST 6.0.0-test5: echte Unified arbitration: WAIT-fasen yielden, cross-module legacy-prioritychecks uit, Race-yield naar Mijn Account is force-safe.
+// TEST 6.0.0-test3: Race WAITING_DRIVER yields to Mijn Account/Crimes-Cars; appended Heist-core uses unified timerkernel without ReferenceError.
 // Release 5.8.30: volledige Race-module teruggezet naar de bewezen 5.8.12-flow van vóór de WAITING_DRIVER-hoofdmenuregressie.
 // Release 5.8.29: een reeds verlopen Crimes/Cars-deadline mag pas vooruit na een aantoonbare poging; navigatieprioriteit blijft tot en met de timerbevestiging actief.
 // Release 5.8.28: Driver herkent de autostap robuuster, behandelt "ready" als geslaagde acceptatie en controleert uitnodigingen sneller. Een actieve Race-transactie blokkeert Heist-reizen totdat de racecooldown is bevestigd.
@@ -373,7 +322,9 @@
   // (of een eerder bevestigde game-shell langere tijd verdwijnt), bevriest Gold
   // alle automatisering. Instellingen blijven aan; alleen uitvoering wordt gepauzeerd.
   (function installLoggedOutSafeMode(){
-    const CHECK_MS = 400;
+    // TEST25: guards vragen active() zeer vaak op. Detectie zelf gebeurt centraal;
+    // active() leest alleen de laatst bevestigde state en triggert geen DOM-scan meer.
+    const CHECK_MS = 1000;
     const SHELL_MISSING_CONFIRM_MS = 1800;
     const LOGIN_STABLE_RESUME_MS = 5000;
     let active = false;
@@ -397,10 +348,12 @@
         if ([...document.querySelectorAll('a[data-bs-target="#signupModal"],a[data-bs-target="#loginModal"]')].some(visible)) return true;
         if ([...document.querySelectorAll('input[type="password"],form[action*="login" i],#loginModal,#signupModal')].some(visible)) return true;
         const nav = document.querySelector('.navbar-brand');
-        const navTxt = visible(nav) ? String(nav.innerText || '').toUpperCase() : '';
+        const navTxt = visible(nav) ? String(nav.textContent || '').toUpperCase() : '';
         if (navTxt.includes('LOGIN') || navTxt.includes('SIGNUP')) return true;
-        const body = String(document.body?.innerText || '').replace(/\s+/g,' ').trim();
-        if (/\b(?:login|log in|inloggen|sign up|aanmelden)\b/i.test(body) && !document.querySelector('#game_container')) {
+        // Een bewezen game-shell is voldoende om de dure body-scan over te slaan.
+        if (document.querySelector('#game_container')) return false;
+        const body = String(document.body?.textContent || '').replace(/\s+/g,' ').trim();
+        if (/\b(?:login|log in|inloggen|sign up|aanmelden)\b/i.test(body)) {
           return !!document.querySelector('form,input[type="password"],button,input[type="submit"]');
         }
       } catch(_) {}
@@ -409,19 +362,23 @@
 
     function cloudflareVisible(){
       try {
-        const t=String(document.body?.innerText||'').replace(/\s+/g,' ').trim();
-        return /Verifying you are human|Verify you are human|Verifieer dat u een mens bent|This may take a few seconds|Dit kan enkele seconden duren/i.test(t) || !!document.querySelector('form[action*="cdn-cgi"],script[src*="cdn-cgi/challenge-platform"],[data-cf-beacon],.cf-browser-verification,#cf-challenge-running,#challenge-running,#challenge-form,iframe[src*="challenges.cloudflare.com"]');
+        const selectorHit=!!document.querySelector('form[action*="cdn-cgi"],script[src*="cdn-cgi/challenge-platform"],[data-cf-beacon],.cf-browser-verification,#cf-challenge-running,#challenge-running,#challenge-form,iframe[src*="challenges.cloudflare.com"]');
+        if (selectorHit) return true;
+        // Normale ingelogde gamepagina: geen volledige bodytekst scannen.
+        if (document.querySelector('#game_container')) return false;
+        const t=String(document.body?.textContent||'').replace(/\s+/g,' ').trim();
+        return /Verifying you are human|Verify you are human|Verifieer dat u een mens bent|This may take a few seconds|Dit kan enkele seconden duren/i.test(t);
       } catch(_) { return false; }
     }
 
-    function authenticatedShell(){
-      if (loginVisible() || cloudflareVisible()) return false;
+    function authenticatedShell(login=false, cloudflare=false){
+      if (login || cloudflare) return false;
       try {
         const gc = document.querySelector('#game_container');
+        if (!gc) return false;
         const gui = unsafeWindow?.omerta?.GUI?.container;
         const infoHint = document.querySelector('a[href*="information.php"],.moduleInformation,#module_Information,#game_container.moduleInformation');
-        const gameText = String(gc?.innerText || '').replace(/\s+/g,' ').trim();
-        return !!(gc && (gui || infoHint || gameText.length > 20));
+        return !!(gui || infoHint || gc.childElementCount > 0);
       } catch(_) { return false; }
     }
 
@@ -463,7 +420,8 @@
 
     function sample(){
       const login = loginVisible();
-      const shell = authenticatedShell();
+      const cloudflare = cloudflareVisible();
+      const shell = authenticatedShell(login, cloudflare);
       if (shell) { everAuthenticated = true; missingSince = 0; }
 
       if (login) {
@@ -472,7 +430,7 @@
 
       // Alleen na een eerder bewezen ingelogde sessie is een verdwenen game-shell
       // een logoutsignaal. De korte bevestiging voorkomt false positives tijdens SPA-rendering.
-      if (!active && everAuthenticated && !shell && !cloudflareVisible()) {
+      if (!active && everAuthenticated && !shell && !cloudflare) {
         if (!missingSince) missingSince = Date.now();
         if (Date.now() - missingSince >= SHELL_MISSING_CONFIRM_MS) {
           enter('Ingelogde game-shell verdwenen'); return true;
@@ -494,7 +452,7 @@
     }
 
     function state(){ return {active, reason, enteredAt, healthySince, everAuthenticated}; }
-    unsafeWindow.mrbSessionSafeMode = Object.freeze({ active:()=>{ sample(); return active; }, state, sample, loginVisible, authenticatedShell });
+    unsafeWindow.mrbSessionSafeMode = Object.freeze({ active:()=>active, state, sample, loginVisible, authenticatedShell });
 
     // Synthetische moduleklikken worden tijdens logout centraal geneutraliseerd.
     // Echte gebruikersklikken blijven ongemoeid zodat handmatig inloggen altijd kan.
@@ -515,105 +473,208 @@
   })();
 
 
-  // ---------- SPRINT 5.1: CENTRALE PULSMANAGER ----------
-  // Alle bestaande module-intervals lopen via één native browserinterval.
-  // De callbacks, intervalduur en moduleflow blijven ongewijzigd. De manager
-  // voorkomt alleen 25 los concurrerende browserintervals en callback-overlap.
+  // ---------- 6.0.0 TEST: UNIFIED TIMER SCHEDULER ----------
+  // Alle MRB-module intervals EN timeouts lopen vanaf hier via één deadline-queue.
+  // Er is geen vaste poll-heartbeat: de kernel slaapt tot de eerstvolgende echte deadline.
   const mrbCentralPulse = (() => {
-    const nativeSetInterval = window.setInterval.bind(window);
-    const nativeClearInterval = window.clearInterval.bind(window);
-    const PULSE_MS = 250;
+    const nativeSetTimeout = window.setTimeout.bind(window);
+    const nativeClearTimeout = window.clearTimeout.bind(window);
+    const MIN_WAKE_MS = 50;
     const tasks = new Map();
     let sequence = 0;
     let pulseHandle = null;
+    let armedFor = 0;
 
-    function normalizeDelay(value){
+    function normalizeDelay(value, minimum=MIN_WAKE_MS){
       const n = Number(value);
-      return Number.isFinite(n) ? Math.max(PULSE_MS, Math.floor(n)) : PULSE_MS;
+      return Number.isFinite(n) ? Math.max(minimum, Math.floor(n)) : minimum;
     }
-
-    function ensurePulse(){
-      if (pulseHandle !== null || !tasks.size) return;
-      pulseHandle = nativeSetInterval(runDueTasks, PULSE_MS);
+    function inferPriority(stack='', label=''){
+      const hay=(String(stack)+' '+String(label)).toLowerCase();
+      if(/crimes|cars|autojat/.test(hay)) return 100;
+      if(/race/.test(hay)) return 90;
+      if(/heist/.test(hay)) return 80;
+      if(/spot|raid|groupcrimes/.test(hay)) return 75;
+      if(/d&d|dnd|smugglingcore/.test(hay)) return 60;
+      if(/bullets/.test(hay)) return 55;
+      if(/travel/.test(hay)) return 45;
+      if(/filllackey|lackey/.test(hay)) return 35;
+      if(/bodyguard/.test(hay)) return 74;
+      if(/boozen/.test(hay)) return 25;
+      if(/sessionmanager|refresh/.test(hay)) return 15;
+      return 10;
     }
-
-    function stopPulseWhenIdle(){
-      if (tasks.size || pulseHandle === null) return;
-      nativeClearInterval(pulseHandle);
-      pulseHandle = null;
+    function inferModule(stack='', label=''){
+      const hay=(String(stack)+' '+String(label)).toLowerCase();
+      if(/crimes|cars|autojat/.test(hay)) return 'crimes-cars';
+      if(/race/.test(hay)) return 'race';
+      if(/heist/.test(hay)) return 'heist';
+      if(/spot|raid|groupcrimes/.test(hay)) return 'spot';
+      if(/d&d|dnd|smugglingcore/.test(hay)) return 'dnd';
+      if(/bullets/.test(hay)) return 'bullets';
+      if(/filllackey|lackey/.test(hay)) return 'lackey';
+      if(/bodyguard/.test(hay)) return 'bodyguard';
+      if(/boozen/.test(hay)) return 'boozen';
+      if(/travel/.test(hay)) return 'travel';
+      return 'other';
     }
-
-    function runDueTasks(){
-      // 5.8.54: bij logout mag GEEN enkele geregistreerde spelcallback draaien.
-      try { if (unsafeWindow.mrbSessionSafeMode?.active?.()) return; } catch(_) {}
-      const now = Date.now();
-      for (const task of Array.from(tasks.values())){
-        if (!tasks.has(task.id) || task.running || now < task.nextAt) continue;
-
-        // Plan eerst de volgende beurt. Een langzame callback veroorzaakt zo
-        // geen inhaalstorm en dezelfde taak kan nooit parallel aan zichzelf lopen.
-        task.nextAt = now + task.delay;
-        task.running = true;
-        try {
-          const result = task.callback(...task.args);
-          if (result && typeof result.then === 'function'){
-            Promise.resolve(result)
-              .catch(error => console.error('[MRB Central Pulse]', task.label, error))
-              .finally(() => { task.running = false; });
-          } else {
-            task.running = false;
-          }
-        } catch(error){
-          task.running = false;
-          console.error('[MRB Central Pulse]', task.label, error);
+    function dynamicPriority(task){
+      let p=task.priority;
+      try {
+        if(task.module==='race'){
+          const r=unsafeWindow.mrbModuleStateRegistry?.get?.('race');
+          const phase=String(r?.phase||r?.state||'').toUpperCase();
+          if(/^(?:WAITING_DRIVER|IDLE|COOLDOWN|DRIVER_READY|LEADER_WAIT_DRIVER)$/.test(phase)) p=40;
+        } else if(task.module==='heist'){
+          const h=unsafeWindow.mrbModuleStateRegistry?.get?.('heist');
+          const phase=String(h?.phase||h?.state||'').toUpperCase();
+          if(/(?:WAIT.*DRIVER|WAIT.*LEADER|IDLE|COOLDOWN)/.test(phase)) p=38;
+        } else if(task.module==='spot'){
+          const st=unsafeWindow.mrbSpotRaidCoreV3?.getState?.();
+          const phase=String(st?.state||'').toUpperCase();
+          if(/(?:WAIT.*DRIVER|WAIT.*LEADER|IDLE|COOLDOWN|DRIVER_READY)/.test(phase)) p=36;
+        } else if(task.module==='bodyguard'){
+          const st=unsafeWindow.mrbV10BodyguardTrainer?.state?.();
+          p=String(st?.priorityMode||'normal')==='strict'?99:74;
         }
-      }
-      stopPulseWhenIdle();
+      }catch(_){ }
+      return p;
     }
-
-    function add(callback, delay, ...args){
-      if (typeof callback !== 'function') return 0;
-      const id = ++sequence;
-      const normalized = normalizeDelay(delay);
-      tasks.set(id, {
-        id,
-        callback,
-        args,
-        delay: normalized,
-        nextAt: Date.now() + normalized,
-        running: false,
-        label: callback.name || `interval-${id}`
-      });
+    function nextWakeAt(){
+      let at=Infinity;
+      for(const task of tasks.values()){
+        if(task.running) continue;
+        if(task.nextAt<at) at=task.nextAt;
+      }
+      return Number.isFinite(at)?at:0;
+    }
+    function cancelPulse(){
+      if(pulseHandle!==null) nativeClearTimeout(pulseHandle);
+      pulseHandle=null; armedFor=0;
+    }
+    function ensurePulse(){
+      const at=nextWakeAt();
+      if(!at){ cancelPulse(); return; }
+      // Alleen opnieuw armeren wanneer een nieuw task eerder afloopt dan de
+      // reeds geplande deadline. Geen permanente 100ms heartbeat meer.
+      if(pulseHandle!==null && armedFor && armedFor<=at) return;
+      cancelPulse();
+      armedFor=at;
+      pulseHandle=nativeSetTimeout(()=>{ pulseHandle=null; armedFor=0; runDueTasks(); }, Math.max(MIN_WAKE_MS,at-Date.now()));
+    }
+    function stopPulseWhenIdle(){ if(!tasks.size) cancelPulse(); }
+    function finishInterval(task){
+      if (!tasks.has(task.id)) return;
+      task.running=false;
+      task.nextAt=Date.now()+task.delay;
+      ensurePulse();
+    }
+    function runTask(task){
+      if (!tasks.has(task.id) || task.running) return;
+      if (task.once) tasks.delete(task.id);
+      else task.running=true;
+      try {
+        const result=task.callback(...task.args);
+        if (result && typeof result.then === 'function') {
+          Promise.resolve(result)
+            .catch(error=>console.error('[MRB Unified Scheduler]',task.label,error))
+            .finally(()=>{ if(!task.once) finishInterval(task); });
+        } else if (!task.once) {
+          finishInterval(task);
+        }
+      } catch(error) {
+        console.error('[MRB Unified Scheduler]',task.label,error);
+        if (!task.once) finishInterval(task);
+      }
+    }
+    function runDueTasks(){
+      try { if (unsafeWindow.mrbSessionSafeMode?.active?.()) { ensurePulse(); return; } } catch(_) {}
+      const now=Date.now();
+      const due=Array.from(tasks.values())
+        .filter(t=>!t.running && now>=t.nextAt)
+        .sort((a,b)=>(dynamicPriority(b)-dynamicPriority(a))||(a.nextAt-b.nextAt)||(a.id-b.id));
+      // Bewust begrensd per heartbeat: geen callback-storm na een lange tab-slaap.
+      for (const task of due.slice(0,8)) runTask(task);
+      stopPulseWhenIdle();
+      ensurePulse();
+    }
+    function add(callback, delay, args, once){
+      if (typeof callback!=='function') return 0;
+      const id=++sequence;
+      const normalized=normalizeDelay(delay, once?0:MIN_WAKE_MS);
+      let stack=''; try{ stack=new Error().stack||''; }catch(_){}
+      const label=callback.name || `${once?'timeout':'interval'}-${id}`;
+      tasks.set(id,{id,callback,args,delay:normalized,nextAt:Date.now()+normalized,running:false,once:!!once,label,module:inferModule(stack,label),priority:inferPriority(stack,label)});
       ensurePulse();
       return id;
     }
-
-    function remove(id){
-      tasks.delete(Number(id));
-      stopPulseWhenIdle();
-    }
-
+    function addInterval(callback,delay,...args){ return add(callback,delay,args,false); }
+    function addTimeout(callback,delay,...args){ return add(callback,delay,args,true); }
+    function remove(id){ tasks.delete(Number(id)); stopPulseWhenIdle(); }
     function state(){
-      return {
-        pulseMs: PULSE_MS,
-        activeTasks: tasks.size,
-        runningTasks: Array.from(tasks.values()).filter(task => task.running).length,
-        tasks: Array.from(tasks.values()).map(task => ({
-          id: task.id,
-          label: task.label,
-          delay: task.delay,
-          nextAt: task.nextAt,
-          running: task.running
-        }))
-      };
+      return {mode:'deadline',minWakeMs:MIN_WAKE_MS,activeTasks:tasks.size,runningTasks:Array.from(tasks.values()).filter(t=>t.running).length,
+        tasks:Array.from(tasks.values()).map(t=>({id:t.id,label:t.label,module:t.module,kind:t.once?'timeout':'interval',priority:t.priority,effectivePriority:dynamicPriority(t),delay:t.delay,nextAt:t.nextAt,running:t.running}))};
     }
-
-    return { add, remove, state };
+    return {addInterval,addTimeout,remove,state};
   })();
 
-  const mrbSetInterval = (callback, delay, ...args) => mrbCentralPulse.add(callback, delay, ...args);
-  const mrbClearInterval = id => mrbCentralPulse.remove(id);
-  unsafeWindow.mrbCentralPulse = { state: () => mrbCentralPulse.state() };
+  const mrbSetInterval=(callback,delay,...args)=>mrbCentralPulse.addInterval(callback,delay,...args);
+  const mrbClearInterval=id=>mrbCentralPulse.remove(id);
+  const mrbSetTimeout=(callback,delay,...args)=>mrbCentralPulse.addTimeout(callback,delay,...args);
+  const mrbClearTimeout=id=>mrbCentralPulse.remove(id);
+  unsafeWindow.mrbCentralPulse={state:()=>mrbCentralPulse.state()};
+  unsafeWindow.mrbUnifiedScheduler={version:'6.0.0-test25',state:()=>mrbCentralPulse.state()};
+  // TEST3: ook later aangeplakte modules (zoals de Heist-core) gebruiken exact
+  // dezelfde centrale timerkernel; geen native/losse timers buiten de scheduler.
+  unsafeWindow.mrbUnifiedTimers=Object.freeze({
+    setInterval:mrbSetInterval, clearInterval:mrbClearInterval,
+    setTimeout:mrbSetTimeout, clearTimeout:mrbClearTimeout
+  });
+
+
+  // ---------- TEST20B: CENTRALE GROUP TRANSACTION OWNER ----------
+  // Race, Heist en Spot mogen niet tegelijk een nieuwe groepsflow starten.
+  // De eerste echte groepsflow houdt ownership tot de eigen module expliciet
+  // cooldown/idle bevestigt. Crimes/Cars mogen tussendoor preempten, maar wissen
+  // deze owner nooit. Hierdoor blijft een uitnodiging/start in dezelfde stad/flow.
+  (function installGroupTransactionOwner(){
+    let owner='';
+    let phase='';
+    let since=0;
+    let updatedAt=0;
+    const normOwner=v=>{v=String(v||'').toLowerCase();return /^(?:race|heist|spot)$/.test(v)?v:'';};
+    function snapshot(){return {active:!!owner,owner,phase,since,updatedAt};}
+    function acquire(who,nextPhase='starting'){
+      who=normOwner(who);
+      if(!who)return false;
+      if(owner && owner!==who)return false;
+      const now=Date.now();
+      if(!owner){owner=who;since=now;}
+      phase=String(nextPhase||phase||'active');updatedAt=now;
+      try{unsafeWindow.mrbFlightRecorder?.add?.('GROUP_OWNER_ACQUIRE',{owner,phase,since});}catch(_){}
+      return true;
+    }
+    function touch(who,nextPhase='active'){
+      who=normOwner(who);
+      if(owner!==who)return false;
+      phase=String(nextPhase||phase||'active');updatedAt=Date.now();
+      return true;
+    }
+    function release(who,reason='completed'){
+      who=normOwner(who);
+      if(!owner || (who && owner!==who))return false;
+      const old=owner,oldPhase=phase;
+      owner='';phase='';since=0;updatedAt=Date.now();
+      try{unsafeWindow.mrbFlightRecorder?.add?.('GROUP_OWNER_RELEASE',{owner:old,phase:oldPhase,reason:String(reason||'')});}catch(_){}
+      return true;
+    }
+    function canStart(who){who=normOwner(who);return !!who && (!owner || owner===who);}
+    function blocked(who){who=normOwner(who);return !!owner && owner!==who;}
+    unsafeWindow.mrbGroupTransaction=Object.freeze({
+      version:'6.0.0-test20b', acquire,touch,release,canStart,blocked,
+      owner:()=>owner, active:()=>!!owner, state:snapshot
+    });
+  })();
 
   // ---------- SPRINT 5.8.23: CENTRALE HANDMATIGE BEDIENINGSPAUZE ----------
   // Een echte gebruikersactie buiten het MRB-menu geeft de speler 60 seconden
@@ -676,7 +737,7 @@
         pauseBtn.addEventListener('click', ()=>pause('Handmatig gepauzeerd via MRB-menu'));
         resumeBtn.addEventListener('click', resume);
         render();
-      } catch(_) { panel = null; setTimeout(mount, 1000); }
+      } catch(_) { panel = null; mrbSetTimeout(mount, 1000); }
     }
     function render(){
       if (!panel?.isConnected) return;
@@ -688,10 +749,12 @@
     }
 
     document.addEventListener('pointerdown', trustedActivity, true);
+    document.addEventListener('click', trustedActivity, true);
+    document.addEventListener('change', trustedActivity, true);
     document.addEventListener('keydown', trustedActivity, true);
     document.addEventListener('input', trustedActivity, true);
     mrbSetInterval(()=>{ render(); isPaused(); }, 500);
-    setTimeout(mount, 250);
+    mrbSetTimeout(mount, 250);
 
     unsafeWindow.mrbManualControl = Object.freeze({
       version:'5.8.23', pause, resume, isPaused, remaining, state
@@ -707,10 +770,6 @@
     const NAV_MIN_GAP_MS = 2600;
     const SAME_TARGET_GAP_MS = 10000;
     const NAV_IN_FLIGHT_MS = 6500;
-    const NAV_BURST_WINDOW_MS = 30000;
-    const NAV_BURST_MAX = 3;
-    const NAV_CIRCUIT_COOLDOWN_MS = 60000;
-    const GLOBAL_ROUTE_COOLDOWN_MS = 120000;
     let lastNavigationAt = 0;
     let lastTarget = '';
     let lastTargetAt = 0;
@@ -718,15 +777,22 @@
     let activeUntil = 0;
     const navAttempts = new Map();
     const globalRouteAttempts = new Map();
-    let serverBackoffUntil = Number(sessionStorage.getItem('mrb_server_backoff_until_v5856') || 0) || 0;
-    let serverBackoffReason = String(sessionStorage.getItem('mrb_server_backoff_reason_v5856') || '');
+    const NAV_BURST_WINDOW_MS = 30000;
+    const NAV_BURST_MAX = 3;
+    const NAV_CIRCUIT_COOLDOWN_MS = 60000;
+    const GLOBAL_ROUTE_COOLDOWN_MS = 120000;
 
+    // TEST10: server-backoff is globaal. Zodra een 403 wordt gezien, doet Gold
+    // juist MINDER: twee minuten geen automatische navigatie/background-sync.
+    // Handmatige browsernavigatie blijft van de gebruiker zelf.
+    let serverBackoffUntil = Number(sessionStorage.getItem('mrb_server_backoff_until_test10') || 0) || 0;
+    let serverBackoffReason = String(sessionStorage.getItem('mrb_server_backoff_reason_test10') || '');
     function tripServerBackoff(reason='HTTP 403', ms=120000){
       const until = Math.max(serverBackoffUntil, Date.now() + Math.max(30000, Number(ms)||120000));
       serverBackoffUntil = until;
       serverBackoffReason = String(reason||'server backoff');
-      try { sessionStorage.setItem('mrb_server_backoff_until_v5856', String(until)); sessionStorage.setItem('mrb_server_backoff_reason_v5856', serverBackoffReason); } catch(_) {}
-      try { console.warn('[MRB Gold 5.8.56] SERVER BACKOFF', serverBackoffReason, Math.ceil((until-Date.now())/1000)+'s'); } catch(_) {}
+      try { sessionStorage.setItem('mrb_server_backoff_until_test10', String(until)); sessionStorage.setItem('mrb_server_backoff_reason_test10', serverBackoffReason); } catch(_) {}
+      try { console.warn('[MRB Unified TEST10] SERVER BACKOFF', serverBackoffReason, Math.ceil((until-Date.now())/1000)+'s'); } catch(_) {}
       try { unsafeWindow.mrbFlightRecorder?.add?.('SERVER_BACKOFF',{reason:serverBackoffReason,until}); } catch(_) {}
       return until;
     }
@@ -735,7 +801,7 @@
       trip:tripServerBackoff,
       active:serverBackoffActive,
       state:()=>({active:serverBackoffActive(),until:serverBackoffUntil,remainingMs:Math.max(0,serverBackoffUntil-Date.now()),reason:serverBackoffReason}),
-      clear:()=>{serverBackoffUntil=0;serverBackoffReason='';try{sessionStorage.removeItem('mrb_server_backoff_until_v5856');sessionStorage.removeItem('mrb_server_backoff_reason_v5856');}catch(_){} return true;}
+      clear:()=>{serverBackoffUntil=0;serverBackoffReason='';try{sessionStorage.removeItem('mrb_server_backoff_until_test10');sessionStorage.removeItem('mrb_server_backoff_reason_test10');}catch(_){} return true;}
     });
 
     function navCircuitAllows(source,wanted){
@@ -745,28 +811,29 @@
       if(!st || now-st.windowStart>NAV_BURST_WINDOW_MS) st={windowStart:now,count:0,blockedUntil:0};
       if(st.blockedUntil>now){ navAttempts.set(key,st); return false; }
       st.count+=1;
-      if(st.count>NAV_BURST_MAX){
-        st.blockedUntil=now+NAV_CIRCUIT_COOLDOWN_MS; navAttempts.set(key,st);
-        try { console.warn('[MRB Gold 5.8.56] navigation circuit open',source,wanted); } catch(_) {}
-        try { unsafeWindow.mrbFlightRecorder?.add?.('NAV_ROUTE_CIRCUIT',{source,target:wanted,until:st.blockedUntil}); } catch(_) {}
-        return false;
-      }
+      if(st.count>NAV_BURST_MAX){ st.blockedUntil=now+NAV_CIRCUIT_COOLDOWN_MS; navAttempts.set(key,st); try{console.warn('[MRB Unified] navigation circuit open',source,wanted);}catch(_){} return false; }
       navAttempts.set(key,st);
+
+      // Bron-onafhankelijk: Race + Heist + CC samen kunnen dezelfde route niet
+      // alsnog overspoelen. Dit was bij /information.php de ontbrekende bescherming.
       const routeKey=String(wanted||'');
       let rt=globalRouteAttempts.get(routeKey);
       if(!rt || now-rt.windowStart>NAV_BURST_WINDOW_MS) rt={windowStart:now,count:0,blockedUntil:0};
       if(rt.blockedUntil>now){ globalRouteAttempts.set(routeKey,rt); return false; }
       rt.count+=1;
       if(rt.count>NAV_BURST_MAX){
-        rt.blockedUntil=now+GLOBAL_ROUTE_COOLDOWN_MS; globalRouteAttempts.set(routeKey,rt);
-        try { console.warn('[MRB Gold 5.8.56] global route circuit open',wanted); } catch(_) {}
-        try { unsafeWindow.mrbFlightRecorder?.add?.('GLOBAL_ROUTE_CIRCUIT',{target:wanted,until:rt.blockedUntil}); } catch(_) {}
+        rt.blockedUntil=now+GLOBAL_ROUTE_COOLDOWN_MS;
+        globalRouteAttempts.set(routeKey,rt);
+        try{console.warn('[MRB Unified TEST10] global route circuit open',wanted);}catch(_){}
+        try{unsafeWindow.mrbFlightRecorder?.add?.('GLOBAL_ROUTE_CIRCUIT',{target:wanted,until:rt.blockedUntil});}catch(_){}
         return false;
       }
       globalRouteAttempts.set(routeKey,rt);
       return true;
     }
 
+    // Vang 403's van Omerta/jQuery SPA-loads af. De background fetch meldt 403
+    // hieronder apart via dezelfde backoff-API.
     let ajaxWatchInstalled=false;
     const installAjax403Watch=()=>{
       if(ajaxWatchInstalled) return true;
@@ -781,7 +848,7 @@
       }catch(_){return false;}
     };
     installAjax403Watch();
-    setInterval(()=>{ if(!ajaxWatchInstalled) installAjax403Watch(); },5000);
+    mrbSetInterval(()=>{ if(!ajaxWatchInstalled) installAjax403Watch(); },5000);
 
     const clean = value => String(value || '').trim();
     function canonical(raw){
@@ -892,29 +959,26 @@
       const now = Date.now();
       const source = clean(meta?.source || meta?.owner || 'onbekend');
       const crimesCarsPriority = source.toLowerCase().includes('crimes-cars');
+      const yieldNavigation = meta?.yield === true && /information\.php/i.test(String(target||''));
       const wanted = canonical(target);
       const current = currentCanonical();
 
-      if (!meta?.manualPauseBypass && serverBackoffActive()) return true;
-      if (!meta?.force && !navCircuitAllows(source,wanted)) return true;
+      // TEST10: na een server-403 geen automatische requeststorm. De bestaande
+      // modulecallbacks mogen blijven leven, maar krijgen tijdelijk geen navigatie.
+      if (!meta?.serverBackoffBypass && serverBackoffActive()) return true;
 
       // Tijdens handmatige bediening blijven timers actief, maar geen enkele
       // gewone module mag de door de speler gekozen pagina vervangen.
       if (!meta?.manualPauseBypass && unsafeWindow.mrbManualControl?.isPaused?.()) return true;
 
-      // 5.8.53: transaction ownership tussen Race en Crimes/Cars.
-      // Crimes/Cars houdt de hoogste prioriteit VOORDAT Race werkelijk start.
-      // Zodra Race echter in een echte transactie-fase zit, mag een nieuwe
-      // Crimes/Cars-cyclus de Race-pagina niet meer vervangen. Anders ontstaat
-      // Race -> Crimes -> Race-pingpong en kan Leider nooit de invite afronden.
+      // TEST5: Race bezit de pagina uitsluitend tijdens de korte eigen klikstap.
+      // Crimes/Cars mag nooit door een stale Race-state worden tegengehouden.
       let raceOwnsTransaction = false;
       try { raceOwnsTransaction = !!unsafeWindow.mrbRaceTransaction?.active?.(); } catch(_) {}
-      if (raceOwnsTransaction && crimesCarsPriority) return true;
 
-      // Een reeds lopende Crimes/Cars-cyclus blijft atomair zolang Race nog
-      // niet gestart is. Tijdens een actieve Race-transactie mag een eventuele
-      // late/stale CC-busy vlag Race zelf niet blokkeren.
-      if (!crimesCarsPriority && !(raceOwnsTransaction && source.toLowerCase()==='race')) {
+      // Een reeds lopende Crimes/Cars-cyclus blijft atomair. Andere modules
+      // wachten tot die cyclus is afgerond; Race-wachtstatus is hiervoor irrelevant.
+      if (!yieldNavigation && !crimesCarsPriority) {
         try {
           const st = unsafeWindow.mrbV9CrimesCars?.state?.();
           const ccOwnsPage = !!st?.running && (!!st.busy || !!st.confirmPendingKind || !!st.forcedRetryKind);
@@ -925,24 +989,29 @@
       // URL en zichtbare module worden beide gecontroleerd. Bij een SPA-wissel
       // loopt de URL soms voor op de DOM; opnieuw laden veroorzaakt dan de witte/raw pagina.
       if (targetAlreadyVisible(wanted)) return true;
+      // TEST19F: sommige SPA-resultaatpagina's houden exact dezelfde route terwijl
+      // het eigenlijke formulier/module-DOM verdwenen is. Alleen een expliciete
+      // sameRouteRecovery mag in dat geval dezelfde route opnieuw claimen.
+      const sameRouteRecovery = meta?.sameRouteRecovery === true;
       // Voor Crimes/Cars is de zichtbare DOM hierboven leidend. Een oude URL
       // kan na een SPA-onderbreking nog Crimes/Cars tonen terwijl Heist, Spot,
       // Race of een handmatige pagina daadwerkelijk in de container staat.
-      if (!crimesCarsPriority && wanted && current && (wanted === current || current.endsWith(wanted) || wanted.endsWith(current))) return true;
+      if (!sameRouteRecovery && !crimesCarsPriority && wanted && current && (wanted === current || current.endsWith(wanted) || wanted.endsWith(current))) return true;
       if (gateVisible() || captchaVisible()) return true;
       if (!meta?.force && cooldownBlocks(source, wanted)) return true;
 
 
       // Laat nooit twee verschillende modules tegelijk de SPA-container vervangen.
-      if (!meta?.force && now < activeUntil && activeSource && activeSource !== source) {
+      if (!meta?.force && !yieldNavigation && now < activeUntil && activeSource && activeSource !== source) {
         if (!source.includes('crimes-cars')) return true;
       }
-      if (!meta?.force && navigationLoading() && !source.includes('crimes-cars')) return true;
+      if (!meta?.force && !yieldNavigation && navigationLoading() && !source.includes('crimes-cars')) return true;
       // Een onderbroken Crimes/Cars-actie moet dezelfde doelpagina opnieuw
       // kunnen openen. De zichtbaarheidstest hierboven voorkomt dubbel laden
       // wanneer de juiste module al werkelijk in de container staat.
-      if (!meta?.force && !crimesCarsPriority && wanted === lastTarget && now - lastTargetAt < SAME_TARGET_GAP_MS) return true;
+      if (!meta?.force && !sameRouteRecovery && !crimesCarsPriority && wanted === lastTarget && now - lastTargetAt < SAME_TARGET_GAP_MS) return true;
       if (!meta?.force && !crimesCarsPriority && now - lastNavigationAt < NAV_MIN_GAP_MS) return true;
+      if (!meta?.force && !navCircuitAllows(source,wanted)) return true;
 
       lastNavigationAt = now;
       lastTarget = wanted;
@@ -957,7 +1026,7 @@
 
     unsafeWindow.mrbNavigationGate = {
       version:'4.10',
-      state:()=>({lastNavigationAt,lastTarget,lastTargetAt,activeSource,activeUntil,serverBackoffUntil,serverBackoffReason}),
+      state:()=>({lastNavigationAt,lastTarget,lastTargetAt,activeSource,activeUntil,serverBackoff:unsafeWindow.mrbServerBackoff?.state?.()||null}),
       reset:()=>{lastNavigationAt=0;lastTarget='';lastTargetAt=0;activeSource='';activeUntil=0;}
     };
   })();
@@ -968,14 +1037,16 @@
   // navigatie de Cloudflare-pagina niet blijven belasten.
   function mrbEarlyCloudflareVisible(){
     try {
-      const t = String(document.body?.innerText || '').replace(/\s+/g, ' ').trim();
-      if (/Beveiliging wordt geverifieerd|Verifying you are human|Verify you are human|beveiligingsservice om zich te beschermen tegen schadelijke bots|security of your connection|Dit kan enkele seconden duren|This may take a few seconds/i.test(t)) return true;
-      return !!(
+      const selectorHit=!!(
         document.querySelector('form[action*="cdn-cgi"]') ||
         document.querySelector('script[src*="cdn-cgi/challenge-platform"]') ||
         document.querySelector('[data-cf-beacon], .cf-browser-verification, #cf-challenge-running, #challenge-running, #challenge-form') ||
         document.querySelector('iframe[src*="challenges.cloudflare.com"]')
       );
+      if (selectorHit) return true;
+      if (document.querySelector('#game_container')) return false;
+      const t = String(document.body?.textContent || '').replace(/\s+/g, ' ').trim();
+      return /Beveiliging wordt geverifieerd|Verifying you are human|Verify you are human|beveiligingsservice om zich te beschermen tegen schadelijke bots|security of your connection|Dit kan enkele seconden duren|This may take a few seconds/i.test(t);
     } catch(e) {
       return false;
     }
@@ -1027,10 +1098,10 @@
       triggered = true;
       try { unsafeWindow.__mrbCloudflareRecovery = true; } catch(e) {}
       try { document.getElementById('mrbGoldMenu')?.remove(); } catch(e) {}
-      setTimeout(() => {
+      mrbSetTimeout(() => {
         try { location.reload(); } catch(e) {}
       }, 500);
-    }, 750);
+    }, 1000);
   })();
 
 
@@ -1193,7 +1264,7 @@ return false;
     wrap.innerHTML = `
       <div class="gm-header">
         <div class="gm-drag-handle" title="Sleep mij">❖</div>
-        <div class="gm-title">MRB Gold Edition</div>
+        <div class="gm-title">MRB Gold Edition · UNIFIED TEST</div>
         <div class="gm-actions">
           <button id="gmCollapseAll" class="gm-icon" title="Alles minimaliseren">↧</button>
           <button id="gmExpandAll" class="gm-icon" title="Alles uitklappen">↥</button>
@@ -1927,7 +1998,7 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
     startCount: P + 'start_count', lastAction: P + 'last_action', driverName: P + 'driver_name',
     lastReadyCheck: P + 'last_ready_check', driverAcceptedAt: P + 'driver_accepted_at',
     startClickedAt: P + 'start_clicked_at', secondPass: P + 'second_pass', spotOpenedAt: P + 'spot_opened_at',
-    driverLastVerify: P + 'driver_last_verify'
+    driverLastVerify: P + 'driver_last_verify', driverProbeAt: P + 'driver_probe_at'
   };
 
   const DRIVER_SETTING_KEYS = ['race_partner_name', 'driver_name', 'mrb_driver_name', 'partner_name'];
@@ -1944,16 +2015,22 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
   const START_FINALIZE_WAIT = 9000;
   const DRIVER_REINVITE_RECHECK = 8000;
   const SPOT_PAGE_SETTLE = 8000;
+  const DRIVER_INVITE_PROBE_MS = 22000;
 
   let panel, statusEl, detailEl, familyLabel, toggleBtn, roleLeader, roleDriver;
   let busy = false;
   let loopTimer = null;
+  // TEST23D: live voorraad moet binnen DEZE marktcyclus bevestigd zijn voordat
+  // Travel-prijzen een koop/verkoopstad mogen bepalen. Niet persistent: na reload
+  // is opnieuw controleren veiliger dan een oude voorraadstatus vertrouwen.
+  let marketInventoryValidatedAt = 0;
+  const MARKET_INVENTORY_VALID_MS = 45_000;
 
-  function clearLoop() { if (loopTimer) { clearTimeout(loopTimer); loopTimer = null; } }
+  function clearLoop() { if (loopTimer) { mrbClearTimeout(loopTimer); loopTimer = null; } }
   function schedule(ms) {
     clearLoop();
     if (!enabled()) return;
-    loopTimer = setTimeout(() => tick(), Math.max(250, Number(ms) || PAGE_RECHECK));
+    loopTimer = mrbSetTimeout(() => tick(), Math.max(250, Number(ms) || PAGE_RECHECK));
   }
   function nextDelay() {
     // Absolute GroupCrimes-prioriteit: een gereed Spot-detail met zichtbare
@@ -1998,20 +2075,10 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
   function markAction() { set(K.lastAction, Date.now()); }
   function canNavigate() { return !unsafeWindow.mrbManualControl?.isPaused?.() && Date.now() - Number(get(K.lastNav, 0) || 0) >= NAV_GUARD; }
   function markNav() { set(K.lastNav, Date.now()); }
-  function crimesCarsOwnPriority(){
-    try {
-      const st = unsafeWindow.mrbV9CrimesCars?.state?.();
-      if (!st?.running) return false;
-      const now = Date.now();
-      return !!st.busy || !!st.confirmPendingKind || !!st.forcedRetryKind
-        || (!!st.doCrimes && Number(st.crimesNext || 0) <= now + 1500)
-        || (!!st.doCars && Number(st.carsNext || 0) <= now + 1500);
-    } catch(e) { return false; }
-  }
 
   function resetFlow(keepTimer = true) {
     set(K.state, 'IDLE'); set(K.leaderGo, false); set(K.driverAccepted, false);
-    set(K.startCount, 0); set(K.lastAction, 0); set(K.lastNav, 0); set(K.lastReadyCheck, 0); set(K.driverAcceptedAt, 0); set(K.driverLastVerify, 0); set(K.startClickedAt, 0); set(K.secondPass, ''); set(K.spotOpenedAt, 0);
+    set(K.startCount, 0); set(K.lastAction, 0); set(K.lastNav, 0); set(K.lastReadyCheck, 0); set(K.driverAcceptedAt, 0); set(K.driverLastVerify, 0); set(K.startClickedAt, 0); set(K.secondPass, ''); set(K.spotOpenedAt, 0); set(K.driverProbeAt, 0);
     if (!keepTimer) { set(K.timerReady, false); set(K.timerAt, 0); }
   }
 
@@ -2030,6 +2097,7 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
       set(K.startClickedAt, 0);
       set(K.secondPass, '');
       set(K.spotOpenedAt, 0);
+      set(K.driverProbeAt, 0);
     }
   }
 
@@ -2083,6 +2151,38 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
   function clickOnce(el) { if (!visible(el) || !actionAllowed()) return false; markAction(); el.click(); return true; }
   function navigateToGroup() { if (isGroupPage()) return true; if (!canNavigate()) return false; const link = findGroupLink(); if (!link) return false; markNav(); link.click(); return true; }
   function openSpot() { if (!canNavigate()) return false; const link = findSpotEntry(); if (!link) return false; markNav(); set(K.spotOpenedAt, Date.now()); link.click(); return true; }
+  function spotDriverHeistPriority(){
+    try {
+      const h=unsafeWindow.mrbHeistCoreControl?.getState?.();
+      if(!h?.enabled || String(h.role||'').toLowerCase()!=='driver') return false;
+      const hp=String(h.phase||'').toUpperCase();
+      if(hp && !/^(?:IDLE|COOLDOWN)$/.test(hp)) return true;
+    } catch(_) {}
+    if (isInfoPage()) {
+      const t=pageText();
+      if(/(?:Volgende\s+heist|Next\s+heist)\s*[:?\-]?\s*(?:Nu|Now|Ready)\b/i.test(t)) return true;
+    }
+    if (isGroupPage()) {
+      const links=[...document.querySelectorAll('a,button,input[type="submit"],input[type="button"]')].filter(visible);
+      if(links.some(el=>{
+        const txt=norm(el.textContent||el.value||'');
+        const href=String(el.getAttribute?.('href')||'');
+        return /module=Heist/i.test(href) && /accept|accepteer|invitation|uitnodiging|reis|travel|heist/i.test(txt+' '+href);
+      })) return true;
+    }
+    return false;
+  }
+  function spotDriverProbeAllowed(){
+    const last=Math.max(0,Number(get(K.driverProbeAt,0)||0));
+    return !last || Date.now()-last>=DRIVER_INVITE_PROBE_MS;
+  }
+  function markSpotDriverProbe(){ set(K.driverProbeAt,Date.now()); }
+  function spotDriverYieldForHeist(where=''){
+    if(!spotDriverHeistPriority()) return false;
+    setStatus('DRIVER_YIELD_HEIST', `Spot Driver wacht: Heist heeft voorrang${where?' · '+where:''}.`);
+    if(!isInfoPage() && canNavigate()){ markNav(); try{ unsafeWindow.mrbNavigate?.('/information.php',{source:'spot-yield-heist'}); }catch(_){} }
+    return true;
+  }
   function spotPageSettling() {
     const openedAt = Number(get(K.spotOpenedAt, 0) || 0);
     if (!openedAt || Date.now() - openedAt >= SPOT_PAGE_SETTLE) return false;
@@ -2159,9 +2259,21 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
     return norm(m?.[1] || '');
   }
 
+  function spotOwnsSharedGroupPage() {
+    const st = String(state() || '').toUpperCase();
+    const activeState = /^(?:GO_GROUP|OPEN_SPOT|INVITE_SENT|WAIT_ACTIVE_DETAILS|WAIT_DRIVER_READY|RECHECK_DRIVER_READY|WAIT_START_CONTROL|WAIT_START_SETTLE|RECHECK_AFTER_START|WAIT_START_RECHECK_NAV|SECOND_PASS(?:_|$)|SPOT_FINALIZE(?:_|$)|DRIVER_GO_GROUP|DRIVER_OPEN_SPOT|DRIVER_ACCEPT_CLICKED|DRIVER_READY|DRIVER_RECHECK_INVITE|DRIVER_WAIT_SERVER)$/i.test(st);
+    const activeFlags = !!get(K.leaderGo, false)
+      || !!get(K.driverAccepted, false)
+      || Number(get(K.startCount, 0) || 0) > 0
+      || !!String(get(K.secondPass, '') || '')
+      || Number(get(K.spotOpenedAt, 0) || 0) > 0;
+    return activeState || activeFlags;
+  }
+
   function hardStopSpotCooldown(raw, source='server') {
     const wait = parseSpotDuration(raw);
     if (!(wait > 0)) return false;
+    const ownedSharedPage = isGroupPage() && spotOwnsSharedGroupPage();
     set(K.timerReady, false);
     set(K.timerAt, Date.now() + wait);
     set(K.state, 'COOLDOWN');
@@ -2176,8 +2288,10 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
     set(K.secondPass, '');
     set(K.spotOpenedAt, 0);
     setStatus('COOLDOWN', `Spot Overval cooldown (${source}): ${raw}. Actieve flow volledig gewist.`);
-    if (!isInfoPage() && canNavigate()) {
-      goInformationForFreshTimers('Spot-cooldown bevestigd op Groepsmisdaden; terug naar Mijn Account en volledig passief.');
+    // GroupCrimes is gedeeld met Heist. Een passieve/cooldown Spot mag die pagina
+    // alleen verlaten als de Spot-flow hem zelf aantoonbaar in bezit had.
+    if (!isInfoPage() && ownedSharedPage && canNavigate()) {
+      goInformationForFreshTimers('Spot-cooldown bevestigd tijdens actieve Spot-flow; terug naar Mijn Account en volledig passief.');
     }
     return true;
   }
@@ -2302,8 +2416,8 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
     markNav();
     set(K.leaderGo, false);
     set(K.lastReadyCheck, 0);
-    try { unsafeWindow.omerta?.GUI?.container?.loadPage?.('/information.php'); }
-    catch (_) { location.href = '/information.php'; }
+    const ok = unsafeWindow.mrbNavigate?.('/information.php',{source:'spot-finalize'}) === true;
+    if (!ok) return false;
     setStatus('REFRESH_ALL_TIMERS', reason || 'Spot is afgerond; Mijn Account openen zodat alle timers opnieuw worden gelezen.');
     return true;
   }
@@ -2336,9 +2450,7 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
     }
     if (!canNavigate()) return false;
     markNav();
-    try { unsafeWindow.omerta?.GUI?.container?.loadPage?.('/?module=GroupCrimes'); }
-    catch (_) { location.href = '/index.php#/?module=GroupCrimes'; }
-    return true;
+    return unsafeWindow.mrbNavigate?.('/?module=GroupCrimes',{source:'spot-second-pass'}) === true;
   }
 
   // De server toont na de eerste afronding soms nog één keer dezelfde Spot.
@@ -2456,7 +2568,19 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
     return true;
   }
 
-  function setStatus(s, d) { setState(s); if (statusEl) statusEl.textContent = s; if (detailEl) detailEl.textContent = d; if (familyLabel) familyLabel.textContent = `Eigen familie: ${family() || 'niet herkend'} (automatisch)`; renderMeta(); }
+  function setStatus(s, d) {
+    setState(s);
+    // TEST20B: één Spot-cyclus houdt group ownership vanaf de eerste echte
+    // invite/open/startfase tot COMPLETE/COOLDOWN/IDLE. Wacht/probe zonder
+    // aantoonbare opdracht claimt de owner niet.
+    try {
+      const st=String(s||'').toUpperCase();
+      const active=/^(?:GO_GROUP|OPEN_SPOT|WAIT_ACTIVE_DETAILS|INVITE_SENT|WAIT_DRIVER_READY|RECHECK_DRIVER_READY|WAIT_START_CONTROL|WAIT_START_SETTLE|RECHECK_AFTER_START|WAIT_START_RECHECK_NAV|WAIT_START_BACKGROUND|RECOVER_GROUP|SECOND_PASS_|SPOT_FINALIZE_|SPOT_PAGE_SETTLE|DRIVER_GO_GROUP|DRIVER_OPEN_SPOT|DRIVER_ACCEPT_CLICKED|DRIVER_READY|DRIVER_WAIT_LEADER|DRIVER_WAIT_SERVER|DRIVER_RECHECK_INVITE)/.test(st);
+      if(active) unsafeWindow.mrbGroupTransaction?.acquire?.('spot',st);
+      if(/^(?:IDLE|STOPPED|COOLDOWN|COMPLETE|COMPLETE_COOLDOWN|DRIVER_COOLDOWN|LOCAL_COOLDOWN|DRIVER_LOCAL_COOLDOWN)$/.test(st)) unsafeWindow.mrbGroupTransaction?.release?.('spot','spot '+st.toLowerCase());
+    } catch(_) {}
+    if (statusEl) statusEl.textContent = s; if (detailEl) detailEl.textContent = d; if (familyLabel) familyLabel.textContent = `Eigen familie: ${family() || 'niet herkend'} (automatisch)`; renderMeta();
+  }
   function renderMeta() {
     // Geen zichtbaar debugpaneel in de geïntegreerde MRB Gold-module.
   }
@@ -2492,13 +2616,6 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
       return;
     }
 
-    // Zodra het echte Leiderformulier zichtbaar is, vormt invullen + Go één
-    // korte atomaire stap. Crimes/Cars mag de pagina pas daarna overnemen.
-    if (!isSpotTargetPage() && crimesCarsOwnPriority()) {
-      setStatus('YIELD_PRIORITY_TIMERS', 'Crimes/Cars is gereed of bezig; Spot laat pagina en navigatie volledig vrij.');
-      return;
-    }
-
     if (isFinalResultPage()) {
       setStatus('COMPLETE', 'Definitieve Spot Overval-uitkomst zichtbaar. Terug naar Mijn Account; daarna volledig passief tijdens cooldown.');
       set(K.timerReady, false);
@@ -2508,8 +2625,7 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
       set(K.secondPass, '');
       if (canNavigate()) {
         markNav();
-        try { unsafeWindow.omerta?.GUI?.container?.loadPage?.('/information.php'); }
-        catch (_) { location.href = '/information.php'; }
+        unsafeWindow.mrbNavigate?.('/information.php',{source:'spot-result'});
       }
       return;
     }
@@ -2521,8 +2637,7 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
         if (elapsed >= DRIVER_READY_RECHECK && canNavigate()) {
           set(K.lastReadyCheck, Date.now());
           markNav();
-          try { unsafeWindow.omerta?.GUI?.container?.loadPage?.('/?module=GroupCrimes'); }
-          catch (_) { location.href = '/index.php#/?module=GroupCrimes'; }
+          unsafeWindow.mrbNavigate?.('/?module=GroupCrimes',{source:'spot-driver-recheck'});
           setStatus('RECHECK_DRIVER_READY', 'Driver of auto is nog niet gereed. Alleen de huidige Groepsmisdaden-status wordt ververst; Mijn Account blijft ongemoeid.');
           return;
         }
@@ -2549,8 +2664,15 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
       return;
     }
 
+    if (isSpotTargetPage() && !isDriverInvitePage() && !isDriverReadyPage()) {
+      setStatus('DRIVER_WAIT_INVITE', 'Spot-pagina gecontroleerd maar geen Driver-uitnodiging gevonden. Terug naar Mijn Account; geen herhaalde GroupCrimes-loop.');
+      set(K.spotOpenedAt,0);
+      if (canNavigate()){ markNav(); try{ unsafeWindow.mrbNavigate?.('/information.php',{source:'spot-driver-empty-probe'}); }catch(_){} }
+      return;
+    }
     if (isInfoPage()) {
       syncFamilyFromInfo();
+      if (spotDriverYieldForHeist('Mijn Account')) return;
       const timer = readSpotTimer();
       if (!timer.found) { setStatus('WAIT_TIMER_READ', 'Spot Overval-timer nog niet gevonden op Mijn Account.'); return; }
       syncSpotTimer(timer);
@@ -2561,14 +2683,8 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
         return;
       }
 
-      // Spot heeft zijn eigen timer nu veilig gelezen. Synchroniseer vervolgens
-      // Crimes, Cars en Race vanaf dezelfde Mijn Account-pagina. Als Crimes of
-      // Cars verlopen/bezig is, mag Spot niet alweer naar Groepsmisdaden gaan.
-      const priorityTaken = !!unsafeWindow.mrbResumePriorityTimers?.('spot-raid');
-      if (priorityTaken) {
-        setStatus('YIELD_PRIORITY_TIMERS', 'Crimes/Cars is gereed of bezig en krijgt eerst voorrang; Spot wacht op Mijn Account.');
-        return;
-      }
+      // Cross-module voorrang wordt uitsluitend door de Unified Dispatcher bepaald.
+      // Spot leest hier alleen zijn eigen server-timer en voert daarna zijn eigen flow uit.
 
       // FIX: de actuele timer is altijd de bron van waarheid. COOLDOWN wordt nooit blind hergebruikt.
       if (timer.ready) {
@@ -2715,15 +2831,35 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
       }
       if (timer.ready) {
         clearStaleCooldown(); set(K.timerReady, true);
-        if (navigateToGroup()) setStatus('DRIVER_GO_GROUP', 'Spot-timer staat op Nu; Driver controleert Groepsmisdaden op een echte uitnodiging.');
+        if (!spotDriverProbeAllowed()) {
+          const left=Math.max(1,Math.ceil((DRIVER_INVITE_PROBE_MS-(Date.now()-Number(get(K.driverProbeAt,0)||0)))/1000));
+          setStatus('DRIVER_WAIT_INVITE_PROBE', `Spot is Nu, maar vorige uitnodigingscontrole was leeg. Nieuwe controle over ongeveer ${left}s.`);
+          return;
+        }
+        markSpotDriverProbe();
+        if (navigateToGroup()) setStatus('DRIVER_GO_GROUP', 'Spot-timer staat op Nu; Driver doet één begrensde uitnodigingscontrole via Groepsmisdaden.');
         else setStatus('DRIVER_TIMER_READY', 'Spot-timer staat op Nu. Wachten tot navigatiebeveiliging vrij is.');
         return;
       }
       setStatus('DRIVER_COOLDOWN', `Geen actieve Driver-opdracht. Spot-timer: ${timer.raw || '-'}. Passief.`); return;
     }
-    if (isGroupPage()) { if (openSpot()) setStatus('DRIVER_OPEN_SPOT', 'Spot-link geopend om echte uitnodiging te controleren.'); else setStatus('DRIVER_WAIT_INVITE', 'Geen aantoonbare Spot-uitnodiging zichtbaar. Driver doet niets.'); return; }
+    if (isGroupPage()) {
+      if (spotDriverYieldForHeist('Groepsmisdaden')) return;
+      if (openSpot()) setStatus('DRIVER_OPEN_SPOT', 'Spot-link éénmalig geopend om een echte uitnodiging te controleren.');
+      else {
+        setStatus('DRIVER_WAIT_INVITE', 'Geen aantoonbare Spot-uitnodiging zichtbaar. Driver keert terug naar Mijn Account en wacht voor een nieuwe probe.');
+        if (canNavigate()){ markNav(); try{ unsafeWindow.mrbNavigate?.('/information.php',{source:'spot-driver-no-invite'}); }catch(_){} }
+      }
+      return;
+    }
     if (get(K.driverAccepted, false)) { setStatus('DRIVER_WAIT_LEADER', 'Auto is ingezet. Driver blijft passief wachten en navigeert niet opnieuw.'); return; }
-    if (timerReady()) { set(K.timerReady, true); if (navigateToGroup()) setStatus('DRIVER_GO_GROUP', 'Lokale Spot-timer staat op Nu; Driver controleert een mogelijke uitnodiging via Groepsmisdaden.'); }
+    if (timerReady()) {
+      set(K.timerReady, true);
+      if (spotDriverYieldForHeist('lokale Spot-wachtfase')) return;
+      if (!spotDriverProbeAllowed()) { setStatus('DRIVER_WAIT_INVITE_PROBE','Spot Driver wacht op volgende begrensde uitnodigingscontrole.'); return; }
+      markSpotDriverProbe();
+      if (navigateToGroup()) setStatus('DRIVER_GO_GROUP', 'Lokale Spot-timer staat op Nu; Driver doet één begrensde uitnodigingscontrole via Groepsmisdaden.');
+    }
     else if (timerAt() > Date.now()) setStatus('DRIVER_LOCAL_COOLDOWN', `Driver wacht passief; lokaal onthouden Spot-timer: ${localTimerText()}.`);
     else setStatus('DRIVER_PASSIVE', 'Driver wacht passief; eerst Mijn Account openen om timer te bevestigen.');
   }
@@ -2832,7 +2968,11 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
   unsafeWindow.mrbSpotRaidCoreV3 = {
     version: '5.8.26-com-style-exact-family-exclusion',
     step: () => false,
-    wake: () => { if (enabled()) { set(K.lastAction, 0); set(K.lastNav, 0); clearLoop(); schedule(150); } },
+    wake: () => {
+      if (!enabled()) return false;
+      try { if (unsafeWindow.mrbGroupTransaction?.blocked?.('spot')) return false; } catch(_) {}
+      set(K.lastAction, 0); set(K.lastNav, 0); clearLoop(); schedule(150); return true;
+    },
     setEnabled: on => unsafeWindow.mrbSpotSessionSetEnabled?.(on===true),
     getState: () => ({ enabled: enabled(), role: role(), state: state(), nextAt: timerAt() })
   };
@@ -2887,7 +3027,7 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
 
   let uiInjected = false;
 
-  const sleep = (ms)=>new Promise(r=>setTimeout(r,ms));
+  const sleep = (ms)=>new Promise(r=>mrbSetTimeout(r,ms));
 
   function waitForElement(selector, timeout = 10000) {
     return new Promise((resolve, reject) => {
@@ -3003,12 +3143,12 @@ Naam3"></textarea><br><br>
 
     input.value = target;
 
-    await new Promise(r=>setTimeout(r,500));                         // (1) oorspronkelijke 500ms
+    await new Promise(r=>mrbSetTimeout(r,500));                         // (1) oorspronkelijke 500ms
     form.querySelector('input[type="submit"]').click();
 
-    await new Promise(r=>setTimeout(r,1000));                        // (2) oorspronkelijke 1000ms
+    await new Promise(r=>mrbSetTimeout(r,1000));                        // (2) oorspronkelijke 1000ms
     await waitForElement('.jqi .jqiform').catch(()=>{});
-    await new Promise(r=>setTimeout(r,1000));                        // (3) oorspronkelijke 1000ms
+    await new Promise(r=>mrbSetTimeout(r,1000));                        // (3) oorspronkelijke 1000ms
 
     const rows = document.querySelectorAll('.jqi .jqiform table tbody tr');
     for (let i=0;i<rows.length;i++){
@@ -3026,19 +3166,19 @@ Naam3"></textarea><br><br>
         det.value=0;
       }
 
-      await new Promise(r=>setTimeout(r,300));                       // (4) oorspronkelijke 300ms per rij
+      await new Promise(r=>mrbSetTimeout(r,300));                       // (4) oorspronkelijke 300ms per rij
     }
 
     const hireBtn=document.querySelector('.jqi .jqiform button[name="jqi_form_buttonHire"]');
     if (hireBtn) hireBtn.click(); else return;
 
     await waitForElement('.jqi .jqistate[data-jqi-name="Hired"]').catch(()=>{});
-    await new Promise(r=>setTimeout(r,1000));                        // (5) oorspronkelijke 1000ms
+    await new Promise(r=>mrbSetTimeout(r,1000));                        // (5) oorspronkelijke 1000ms
 
     const okBtn=document.querySelector('.jqi .jqistate[data-jqi-name="Hired"] button[name="jqi_Hired_buttonOK"]');
     if (okBtn) okBtn.click();
 
-    await new Promise(r=>setTimeout(r,1000));                        // (6) oorspronkelijke 1000ms
+    await new Promise(r=>mrbSetTimeout(r,1000));                        // (6) oorspronkelijke 1000ms
   }
 
   // persistente (re)injectie zoals origineel bedoeld, maar zonder herlaad nodig
@@ -3047,7 +3187,7 @@ Naam3"></textarea><br><br>
   const scheduleInject = () => {
     if (injectScheduled) return;
     injectScheduled = true;
-    setTimeout(() => { injectScheduled = false; injectUI(); }, 250);
+    mrbSetTimeout(() => { injectScheduled = false; injectUI(); }, 250);
   };
   const mo = new MutationObserver(mutations=>{
     for (const m of mutations) {
@@ -3308,17 +3448,17 @@ Naam3"></textarea><br><br>
   let prefillTimer = 0;
   function schedulePrefill(){
     if (!(onPageRaces() || onPageOC())) return;
-    clearTimeout(prefillTimer);
-    prefillTimer = setTimeout(prefillOnce, 250);
+    mrbClearTimeout(prefillTimer);
+    prefillTimer = mrbSetTimeout(prefillOnce, 250);
   }
   const mo = new MutationObserver(schedulePrefill);
   const prefillRoot = document.querySelector('#game_container') || document.body;
   if (prefillRoot) mo.observe(prefillRoot, { childList:true, subtree:true });
   window.addEventListener('hashchange', schedulePrefill, true);
   window.addEventListener('popstate', schedulePrefill, true);
-  setTimeout(prefillOnce, 300);
-  setTimeout(prefillOnce, 1000);
-  setTimeout(prefillOnce, 2000);
+  mrbSetTimeout(prefillOnce, 300);
+  mrbSetTimeout(prefillOnce, 1000);
+  mrbSetTimeout(prefillOnce, 2000);
 })();
 
 // =====================================================================
@@ -3411,6 +3551,7 @@ Naam3"></textarea><br><br>
   const K_PRIORITY='mrb_bg_trainer_priority_v1';
   const K_NEEDS_WORK='mrb_bg_trainer_needs_work_v1';
   const K_NEXT_CHECK='mrb_bg_trainer_next_check_v1';
+  const K_DETRAIN_PENDING='mrb_bg_trainer_detrain_pending_v1';
 
   const ALL=['Lee','Vic','Ike','Joe','Lex','Ray'];
   const META={
@@ -3437,13 +3578,13 @@ Naam3"></textarea><br><br>
   let mode=String(GM_Get(K_MODE,'full_att')||'full_att');
   let autoEquip=!!GM_Get(K_EQUIP,true);
   let busy=false;
-  let plannerManaged=false;
   let priorityMode=String(GM_Get(K_PRIORITY,'normal')||'normal');
   if(!/^(normal|strict)$/.test(priorityMode)) priorityMode='normal';
   let localCooldownUntil=0;
   let needsWork=GM_Get(K_NEEDS_WORK,null);
   needsWork=needsWork===null ? true : !!needsWork;
   let nextCheckAt=Math.max(0,Number(GM_Get(K_NEXT_CHECK,0))||0);
+  let detrainPending=!!GM_Get(K_DETRAIN_PENDING,false);
   let lastStatus='Gereed';
   let lastRouteHref=String(location.href);
   let lastRouteChangeAt=Date.now();
@@ -3468,7 +3609,7 @@ Naam3"></textarea><br><br>
   let custom=loadCustom();
   const clamp=n=>Math.max(0,Math.min(10,Math.floor(Number(n)||0)));
   const clean=s=>String(s||'').replace(/\s+/g,' ').trim();
-  const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+  const sleep=ms=>new Promise(r=>mrbSetTimeout(r,ms));
 
   const block=addBlock(`
     <h4>Bodyguard Trainer</h4>
@@ -3524,7 +3665,7 @@ Naam3"></textarea><br><br>
       });
     }
     GM_Set(K_MODE,mode); GM_Set(K_EQUIP,autoEquip); GM_Set(K_CUSTOM,JSON.stringify(custom)); GM_Set(K_PRIORITY,priorityMode);
-    setWorkState(true,Date.now()); lastStatus='Instellingen opgeslagen'; syncPlanner(); paint();
+    setWorkState(true,Date.now()); lastStatus='Instellingen opgeslagen'; paint();
   }
 
   function cfg(){
@@ -3538,9 +3679,7 @@ Naam3"></textarea><br><br>
   }
   function navigate(){
     const path='/?module=Bodyguards';
-    if(unsafeWindow.mrbNavigate?.(path,{source:'bodyguard-trainer'})) return true;
-    try { unsafeWindow.omerta?.GUI?.container?.loadPage?.(path); return true; } catch(e){}
-    location.hash='/?module=Bodyguards'; return true;
+    return unsafeWindow.mrbNavigate?.(path,{source:'bodyguard-trainer'}) === true;
   }
   function level(name,stat,pts){
     const x=STATS[name]; if(!x) return 0;
@@ -3604,8 +3743,30 @@ Naam3"></textarea><br><br>
       try{ page.confirmAction=oldConfirmAction; }catch(e){}
     }
   }
+  function statRowForm(id,stat,mode){
+    const wantedStat=stat==='defense'?'defense':'attack';
+    const rowWords=wantedStat==='defense' ? /\b(?:verdediging|defen[cs]e)\b/i : /\b(?:aanval|attack)\b/i;
+    const forms=[...document.querySelectorAll('form')].filter(f=>{
+      if(f.querySelector('input[name="bgid"]')?.value!==String(id))return false;
+      const a=String(f.querySelector('input[name="action"]')?.value||'').toLowerCase();
+      if(mode==='untrain' && !a.startsWith('untrain_'))return false;
+      if(mode==='train' && !a.startsWith('train_'))return false;
+      const row=f.closest('tr');
+      return !!row && rowWords.test(clean(row.textContent));
+    });
+    return forms.find(f=>{
+      const b=f.querySelector('input[type="submit"],button[type="submit"]');
+      return !!b && !b.disabled && !f.querySelector('span[data-timecb="bodyguard"]');
+    }) || null;
+  }
   function clickAction(id,action){
-    const f=formAction(id,action),b=f?.querySelector('input[type="submit"],button[type="submit"]');
+    let f=formAction(id,action);
+    // TEST20D: Omerta's interne untrain action-naam is niet betrouwbaar gekoppeld
+    // aan het zichtbare statlabel. Kies daarom bij de-trainen de form uit de
+    // daadwerkelijke Attack/Defence-rij die de gebruiker ziet.
+    if(action==='untrain_attack') f=statRowForm(id,'attack','untrain') || f;
+    else if(action==='untrain_defense') f=statRowForm(id,'defense','untrain') || f;
+    const b=f?.querySelector('input[type="submit"],button[type="submit"]');
     if(!b||b.disabled||f.querySelector('span[data-timecb="bodyguard"]'))return false;
     return clickWithBgConfirm(b);
   }
@@ -3614,34 +3775,28 @@ Naam3"></textarea><br><br>
     const b=f?.querySelector('input[type="button"][value^="Huur"],input[type="button"][value^="Hire"],input[type="submit"],button');
     return clickWithBgConfirm(b);
   }
-  function nextAction(name,o,t){
+  function equipmentAction(name,o){
     const m=META[name];
     if(autoEquip&&m?.vest&&!o.vest)return ['buy_vest','vest kopen'];
     if(autoEquip&&m?.weapon&&!o.weapon)return ['buy_gun','wapen kopen'];
-
+    return null;
+  }
+  function statActions(name,o,t){
     const targetAttack=clamp(t.att);
     const targetDefense=clamp(t.def);
     const currentAttack=Math.max(0,Number(o.att)||0);
     const currentDefense=Math.max(0,Number(o.def)||0);
-
-    // Een enkel ingestelde richting is hard leidend. Hierdoor kan een BG met
-    // 0 Aanval / 5 Verdediging nooit per ongeluk Aanval trainen, en andersom.
-    if(targetAttack===0 && targetDefense>0){
-      return currentDefense<targetDefense
-        ? ['train_defense',`verdediging ${currentDefense}/${targetDefense}`]
-        : null;
-    }
-    if(targetDefense===0 && targetAttack>0){
-      return currentAttack<targetAttack
-        ? ['train_attack',`aanval ${currentAttack}/${targetAttack}`]
-        : null;
-    }
-
-    // Bij een gemengde instelling blijven Aanval en Verdediging afzonderlijke
-    // doelen. Eerst ontbrekende Aanval, daarna ontbrekende Verdediging.
-    if(currentAttack<targetAttack)return ['train_attack',`aanval ${currentAttack}/${targetAttack}`];
-    if(currentDefense<targetDefense)return ['train_defense',`verdediging ${currentDefense}/${targetDefense}`];
-    return null;
+    const detrain=[];
+    const train=[];
+    if(currentAttack>targetAttack)detrain.push(['untrain_attack',`aanval afbouwen ${currentAttack}/${targetAttack}`]);
+    if(currentDefense>targetDefense)detrain.push(['untrain_defense',`verdediging afbouwen ${currentDefense}/${targetDefense}`]);
+    if(currentAttack<targetAttack)train.push(['train_attack',`aanval ${currentAttack}/${targetAttack}`]);
+    if(currentDefense<targetDefense)train.push(['train_defense',`verdediging ${currentDefense}/${targetDefense}`]);
+    return {detrain,train};
+  }
+  function setDetrainPending(value){
+    detrainPending=!!value;
+    GM_Set(K_DETRAIN_PENDING,detrainPending);
   }
   function fmt(ms){ const s=Math.ceil(ms/1000),m=Math.floor(s/60); return m?`${m}m ${s%60}s`:`${s}s`; }
   function setWorkState(work,nextAt=0){
@@ -3652,27 +3807,25 @@ Naam3"></textarea><br><br>
   }
   function actionDue(){
     if(!on||!needsWork)return false;
-    const due=Math.max(nextCheckAt, cooldownEnd(), localCooldownUntil);
+    // De-trainen heeft geen servertrainingstimer. Als uit de laatste inspectie
+    // bekend is dat er surplus is, mag Bodyguard ook tijdens een train-cooldown
+    // terugkomen voor een untrain-actie.
+    const due=detrainPending
+      ? Math.max(nextCheckAt,localCooldownUntil)
+      : Math.max(nextCheckAt,cooldownEnd(),localCooldownUntil);
     return Date.now()>=due;
   }
-  function plannerPriority(){ return priorityMode==='strict'?99:74; }
   function nextDueAt(){
     if(!on) return Date.now()+15000;
     if(!needsWork) return Date.now()+15*60*1000;
-    const due=Math.max(nextCheckAt, cooldownEnd(), localCooldownUntil);
+    const due=detrainPending
+      ? Math.max(nextCheckAt,localCooldownUntil)
+      : Math.max(nextCheckAt,cooldownEnd(),localCooldownUntil);
     return due>Date.now() ? due : Date.now()+250;
-  }
-  function syncPlanner(){
-    try {
-      unsafeWindow.mrbV9Planner?.updateTask?.('v10-bodyguard-trainer',{
-        enabled:!!on, priority:plannerPriority(), nextAt:nextDueAt(),
-        status:priorityMode==='strict'?'BG prioriteit: stipt':'BG prioriteit: normaal'
-      });
-    } catch(e) {}
   }
   function paint(){
     block.querySelector('#mrbBgToggle').textContent=on?'Stop':'Start';
-    block.querySelector('#mrbBgStatus').innerHTML=on?`<span class="ok">✅ Actief${plannerManaged?' — 🧭 Planner':''}</span>`:'<span class="bad">⛔ Uit</span>';
+    block.querySelector('#mrbBgStatus').innerHTML=on?'<span class="ok">✅ Actief</span>':'<span class="bad">⛔ Uit</span>';
     const pr=block.querySelector('#mrbBgPriority');
     if(pr){
       pr.textContent=priorityMode==='strict'?'Prioriteit: STIPT':'Prioriteit: Normaal';
@@ -3681,7 +3834,7 @@ Naam3"></textarea><br><br>
     const wait=remaining();
     const ptxt=priorityMode==='strict'?'stipt':'normaal';
     const planState=!needsWork?'doelen bereikt':(actionDue()?'actie gereed':`gepland over ${fmt(Math.max(0,nextDueAt()-Date.now()))}`);
-    block.querySelector('#mrbBgInfo').textContent=(wait?`${lastStatus} • volgende actie over ${fmt(wait)}`:lastStatus)+` • ${planState} • prioriteit: ${ptxt} • ontbrekende BGs: automatisch kopen • ontslaan: uit`;
+    block.querySelector('#mrbBgInfo').textContent=(wait?`${lastStatus} • volgende actie over ${fmt(wait)}`:lastStatus)+` • ${planState} • prioriteit: ${ptxt} • omtrainen: exact doel • ontbrekende BGs: automatisch kopen • ontslaan: uit`;
   }
 
   async function tick(force=false){
@@ -3704,76 +3857,108 @@ Naam3"></textarea><br><br>
       }
       lastStatus='Navigeren naar Bodyguards voor gereedstaande actie';paint();navigate();return;
     }
-    const wait=remaining();
-    if(wait>0){
-      setWorkState(true,Date.now()+wait);
-      lastStatus='Wachten op trainingstimer';paint();return;
-    }
-    const c=cfg(); if(!c.lineup.length){setWorkState(false,0);lastStatus='Geen bodyguards geselecteerd';paint();return;}
+    const c=cfg(); if(!c.lineup.length){setDetrainPending(false);setWorkState(false,0);lastStatus='Geen bodyguards geselecteerd';paint();return;}
     busy=true;
     try{
       const owned=readOwned(),avail=available();
+
+      // Eerst ontbrekende bodyguards afhandelen zoals voorheen.
       for(const name of c.lineup){
-        if(!owned[name]){
-          if(avail.includes(name)&&hire(name)){
-            lastStatus=`${name} wordt aangenomen`; GM_Set(K_LAST,Date.now()); localCooldownUntil=Date.now()+7000; setWorkState(true,localCooldownUntil); paint(); return;
-          }
-          lastStatus=`${name} ontbreekt, maar koopknop niet gevonden`; setWorkState(true,Date.now()+60000); paint(); continue;
+        if(owned[name])continue;
+        if(avail.includes(name)&&hire(name)){
+          lastStatus=`${name} wordt aangenomen`; GM_Set(K_LAST,Date.now()); localCooldownUntil=Date.now()+7000; setWorkState(true,localCooldownUntil); paint(); return;
         }
-        const n=nextAction(name,owned[name],c.targets[name]);
-        if(!n)continue;
-        if(clickAction(owned[name].id,n[0])){
-          lastStatus=`${name}: ${n[1]}`; GM_Set(K_LAST,Date.now()); localCooldownUntil=Date.now()+65000; setWorkState(true,localCooldownUntil); paint(); return;
-        }
-        lastStatus=`${name}: wacht op knop voor ${n[1]}`; setWorkState(true,Date.now()+15000); paint(); return;
+        lastStatus=`${name} ontbreekt, maar koopknop niet gevonden`; setWorkState(true,Date.now()+60000); paint(); return;
       }
+
+      const detrainJobs=[];
+      const trainJobs=[];
+      const equipJobs=[];
+      for(const name of c.lineup){
+        const o=owned[name]; if(!o)continue;
+        const eq=equipmentAction(name,o);
+        if(eq)equipJobs.push({name,id:o.id,action:eq});
+        const stats=statActions(name,o,c.targets[name]);
+        for(const a of stats.detrain)detrainJobs.push({name,id:o.id,action:a});
+        for(const a of stats.train)trainJobs.push({name,id:o.id,action:a});
+      }
+      setDetrainPending(detrainJobs.length>0);
+
+      const trainingWait=Math.max(0,cooldownEnd()-Date.now());
+      const settledWait=Math.max(0,localCooldownUntil-Date.now());
+      if(settledWait>0){
+        setWorkState(true,localCooldownUntil);
+        lastStatus=`Korte server-settle (${fmt(settledWait)})`; paint(); return;
+      }
+
+      // TEST20E: zodra de 1-minuut train-timer vrij is, benutten we dat slot
+      // eerst voor exact een benodigde TRAIN-actie. Tijdens de daarna lopende
+      // timer mogen UNTRAIN-acties gewoon doorgaan.
+      if(trainingWait<=0 && trainJobs.length){
+        const j=trainJobs[0],n=j.action;
+        if(clickAction(j.id,n[0])){
+          lastStatus=`${j.name}: ${n[1]}`; GM_Set(K_LAST,Date.now());
+          localCooldownUntil=Date.now()+1800;
+          setWorkState(true,localCooldownUntil); paint(); return;
+        }
+      }
+
+      if(detrainJobs.length){
+        const j=detrainJobs[0],n=j.action;
+        if(clickAction(j.id,n[0])){
+          lastStatus=`${j.name}: ${n[1]}`; GM_Set(K_LAST,Date.now());
+          // Untrain heeft geen minuut-cooldown; alleen kort wachten op DOM/server-settle.
+          localCooldownUntil=Date.now()+1200;
+          setWorkState(true,localCooldownUntil); paint(); return;
+        }
+        lastStatus=`${j.name}: wacht op knop voor ${n[1]}`; setWorkState(true,Date.now()+4000); paint(); return;
+      }
+
+      // Equipmentgedrag blijft behouden, maar pas wanneer er geen stat-surplus
+      // meer direct afgebouwd hoeft te worden.
+      if(equipJobs.length){
+        const j=equipJobs[0],n=j.action;
+        if(clickAction(j.id,n[0])){
+          lastStatus=`${j.name}: ${n[1]}`; GM_Set(K_LAST,Date.now()); localCooldownUntil=Date.now()+7000; setWorkState(true,localCooldownUntil); paint(); return;
+        }
+        lastStatus=`${j.name}: wacht op knop voor ${n[1]}`; setWorkState(true,Date.now()+15000); paint(); return;
+      }
+
+      if(trainJobs.length && trainingWait>0){
+        setWorkState(true,Date.now()+trainingWait);
+        lastStatus=`Wachten op trainingstimer; geen de-trainwerk meer`; paint(); return;
+      }
+
+      setDetrainPending(false);
       setWorkState(false,0); lastStatus='Alle geselecteerde bodyguards hebben hun doel bereikt'; paint();
     } finally { await sleep(700); busy=false; }
   }
 
-  async function plannerStep(context){
-    if(!on){ try{ context?.releaseAction?.(); }catch(e){}; return {delayMs:15000,status:'Bodyguard Trainer staat uit'}; }
-    if(busy){ try{ context?.touchAction?.(90_000); }catch(e){}; return {delayMs:1500,status:'Bodyguard actie bezig'}; }
-
-    // Zolang geen echte BG-actie klaarstaat, blijft deze taak volledig passief.
-    // Daardoor kan hij Crimes/Cars/Race niet meer door alleen navigatie storen.
-    if(!onPage() && !actionDue()){
-      try{ context?.releaseAction?.(); }catch(e){}
-      return {nextAt:nextDueAt(),status:needsWork?'wacht op BG-timer':'geen BG-actie nodig'};
-    }
-
-    if(actionDue() && !context?.acquireAction?.(90_000)){
-      return {delayMs:1000,status:'wacht op centrale actielock'};
-    }
-
-    await tick(false);
-    const wait=remaining();
-    if(wait>0){ try{ context?.releaseAction?.(); }catch(e){}; return {nextAt:Math.max(nextCheckAt,Date.now()+wait),status:`volgende BG-actie over ${fmt(wait)}`}; }
-    if(!needsWork){ try{ context?.releaseAction?.(); }catch(e){}; return {nextAt:Date.now()+15*60*1000,status:'alle BG-doelen bereikt'}; }
-    const routeAge=noteRouteChange();
-    if(!onPage() && routeAge < ROUTE_GRACE_MS){
-      return {delayMs:Math.max(750,ROUTE_GRACE_MS-routeAge),status:'andere module krijgt navigatierust'};
-    }
-    return {nextAt:nextDueAt(),status:lastStatus};
-  }
 
   modeEl.addEventListener('change',()=>{mode=modeEl.value;renderCustom();save();});
   block.querySelector('#mrbBgPriority').addEventListener('click',()=>{
     priorityMode=priorityMode==='strict'?'normal':'strict';
     GM_Set(K_PRIORITY,priorityMode);
     lastStatus=priorityMode==='strict'?'Stipte prioriteit ingeschakeld':'Normale prioriteit ingeschakeld';
-    syncPlanner(); paint();
+    paint();
   });
   block.querySelector('#mrbBgSave').addEventListener('click',save);
   block.querySelector('#mrbBgToggle').addEventListener('click',()=>{
-    save(); on=!on; GM_Set(K_ON,on); if(on)setWorkState(true,Date.now()); lastStatus=on?'Trainer gestart':'Trainer gestopt'; syncPlanner(); paint(); if(on&&!plannerManaged)tick();
+    save(); on=!on; GM_Set(K_ON,on); if(on)setWorkState(true,Date.now()); lastStatus=on?'Trainer gestart':'Trainer gestopt'; paint();
   });
   block.querySelector('#mrbBgEquip').addEventListener('change',save);
-  paint();
-  mrbSetInterval(()=>{
+  async function bodyguardUnifiedTask(){
     paint();
-    if(on&&!plannerManaged) tick();
-  },3000);
+    if(on) await tick();
+  }
+
+  unsafeWindow.mrbV10BodyguardTrainer=Object.freeze({
+    state:()=>({on,busy,needsWork,nextAt:nextDueAt(),priorityMode,lastStatus})
+  });
+
+  paint();
+  // Enige runtime-aansturing: één task in de centrale Unified timerkernel.
+  mrbSetInterval(bodyguardUnifiedTask,3000);
 })();
 
 // =====================================================================
@@ -3792,6 +3977,7 @@ Naam3"></textarea><br><br>
   const K_NEXT_CHECK = 'mrb_dnd_next_price_check_ts';
   const K_PENDING_TARGET = 'mrb_dnd_pending_target_city';
   const K_PENDING_PHASE = 'mrb_dnd_pending_phase';
+  const K_PENDING_ARRIVED = 'mrb_dnd_pending_arrived_v1';
   const K_FLIGHT_NEXT = 'mrb_core_flight_next_ts';
   const K_FLIGHT_SYNC_AT = 'mrb_core_flight_sync_at';
   const K_FLIGHT_READY = 'mrb_core_flight_ready';
@@ -3800,7 +3986,7 @@ Naam3"></textarea><br><br>
   const K_HOUR_BUY_PENDING = 'mrb_dnd_hour_buy_pending_hour';
   const K_INVENTORY_SNAPSHOT = 'mrb_dnd_inventory_snapshot';
   const K_INVENTORY_SYNC_AT = 'mrb_dnd_inventory_sync_at';
-  const INVENTORY_SYNC_MAX_AGE = 10 * 60 * 1000;
+  const INVENTORY_SYNC_MAX_AGE = 45_000; // alleen korte overdracht Smokkelen -> Travel
   const FLIGHT_SYNC_MAX_AGE = 45_000;
 
   let on = !!GM_Get(K_ON, false);
@@ -3813,7 +3999,6 @@ Naam3"></textarea><br><br>
 
   let busy = false;
   let loopTimer = null;
-  let plannerManaged = false;
 
   // v11.4: gezamenlijke Boozen/Travel Core-state en centrale actielease.
   let coreStage = 'IDLE';
@@ -3831,15 +4016,15 @@ Naam3"></textarea><br><br>
     if (error) coreLastError = String(error);
   }
   function dndAcquireAction(context){
-    if (!plannerManaged) return true;
     if (context) dndActionContext = context;
+    if (!dndActionContext) return true;
     try {
       if (dndActionContext?.touchAction?.(DND_ACTION_TTL)) return true;
       return !!dndActionContext?.acquireAction?.(DND_ACTION_TTL);
     } catch(e) { return false; }
   }
   function dndTouchAction(){
-    if (!plannerManaged) return true;
+    if (!dndActionContext) return true;
     try { return !!dndActionContext?.touchAction?.(DND_ACTION_TTL); }
     catch(e) { return false; }
   }
@@ -3892,7 +4077,7 @@ Naam3"></textarea><br><br>
     </div>
   `, '03-dnd-trade');
 
-  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  const sleep = (ms) => new Promise(r => mrbSetTimeout(r, ms));
 
   function clean(s){ return String(s || '').replace(/\s+/g, ' ').trim(); }
 
@@ -3997,6 +4182,50 @@ Naam3"></textarea><br><br>
     return dndTravelWindowState().allowed;
   }
 
+  // TEST18E: reizen is een gedeelde, stad-afhankelijke resource. Zodra Race,
+  // Heist of Spot daadwerkelijk een transactie heeft gestart, mag D&D geen
+  // nieuwe stad meer kiezen of Travel openen totdat die transactie is afgerond.
+  // Veilige timer-/idle-/probe-fasen blokkeren D&D niet.
+  function dndBlockingGroupTransaction(){
+    try {
+      const groupOwner=String(unsafeWindow.mrbGroupTransaction?.owner?.()||'');
+      if(groupOwner) return {module:groupOwner==='race'?'Race':groupOwner==='heist'?'Heist':'Spot',phase:String(unsafeWindow.mrbGroupTransaction?.state?.().phase||'actief')};
+      if (unsafeWindow.mrbRaceTransaction?.active?.() === true) {
+        return { module:'Race', phase:String(unsafeWindow.mrbRaceTransaction?.phase?.() || 'actief') };
+      }
+    } catch(_) {}
+
+    try {
+      const h = unsafeWindow.mrbHeistCoreControl?.getState?.() || {};
+      const hp = String(h.phase || '').toLowerCase();
+      if (h.enabled && /^(?:leader_start_pending|driver_start_pending|inviting|waiting|started|driver|travel)$/.test(hp)) {
+        return { module:'Heist', phase:hp };
+      }
+    } catch(_) {}
+
+    try {
+      const st = unsafeWindow.mrbSpotRaidCoreV3?.getState?.() || {};
+      const sp = String(st.state || '').toUpperCase();
+      const spotActive = /^(?:GO_GROUP|OPEN_SPOT|INVITE_SENT|WAIT_DRIVER_READY|RECHECK_DRIVER_READY|WAIT_START_CONTROL|WAIT_START_SETTLE|RECHECK_AFTER_START|WAIT_START_RECHECK_NAV|WAIT_START_BACKGROUND|SECOND_PASS.*|SPOT_FINALIZE.*|COMPLETE|DRIVER_OPEN_SPOT|DRIVER_ACCEPT_CLICKED|DRIVER_READY|DRIVER_WAIT_LEADER|DRIVER_WAIT_SERVER|DRIVER_RECHECK_INVITE)$/.test(sp);
+      if (st.enabled && spotActive) return { module:'Spot', phase:sp };
+    } catch(_) {}
+
+    return null;
+  }
+
+  function parkForGroupTransaction(blocker, reason='lopende groepsactie'){
+    if (!blocker) return false;
+    const keepPhase = /^(buy|sell)$/.test(phase) ? phase : 'buy';
+    clearPendingAction();
+    phase = keepPhase;
+    GM_Set(K_PHASE, phase);
+    revokeTravelNavigation();
+    coreLastError = '';
+    setCoreStage('WAIT_GROUP_TRANSACTION', null);
+    ui(`${blocker.module} actief (${blocker.phase || 'transactie'}); D&D wacht met reizen tot afronding`);
+    return true;
+  }
+
   function nextHalfHourTs(from = Date.now()){
     const d = new Date(from);
     d.setSeconds(0, 0);
@@ -4091,12 +4320,7 @@ Naam3"></textarea><br><br>
       }
     }
     dndTouchAction();
-    if (unsafeWindow.mrbNavigate?.(path,{source:'dnd'})) return true;
-    try { unsafeWindow?.omerta?.GUI?.container?.loadPage?.(path); return true; } catch(e) {}
-    if (path.startsWith('#')) location.hash = path.slice(1);
-    else if (path.startsWith('/?')) location.href = '/index.php#' + path.slice(1);
-    else location.hash = path;
-    return true;
+    return unsafeWindow.mrbNavigate?.(path,{source:'dnd'}) === true;
   }
 
   function ui(msg=''){
@@ -4106,7 +4330,7 @@ Naam3"></textarea><br><br>
 
     if (btn) btn.textContent = on ? 'Stop' : 'Start';
     if (st) st.innerHTML = on
-      ? `<span class="ok">✅ Actief${plannerManaged ? ' — 🧭 V9 Planner' : ''}</span>`
+      ? `<span class="ok">✅ Actief</span>`
       : '<span class="bad">⛔</span>';
 
     if (info) {
@@ -4304,6 +4528,63 @@ Naam3"></textarea><br><br>
     return aliases[key] || key;
   }
 
+  function parkVisibleTravelCooldown(){
+    if (!onTravelPage()) return 0;
+    const visible = getVisibleFlightState();
+    if (!visible || visible.ready) return 0;
+
+    const wait = Math.max(1000, Number(visible.waitMs) || 60_000);
+    setRetryAfterFlight(wait, visible.reason || 'zichtbare Travel-cooldown loopt');
+    setCoreStage('WAIT_TRAVEL_TIMER', null);
+    coreLastError = '';
+    ui(`wacht op reistimer ~${Math.max(1, Math.ceil(wait/60000))}m; Travel wordt vrijgegeven tot serverdeadline`);
+
+    // Travel is nu aantoonbaar niet runnable. Houd de gedeelde pagina niet bezet
+    // en gebruik de opgeslagen serverdeadline als enige volgende D&D-wakegrens.
+    loadPage('/information.php');
+    return wait;
+  }
+
+  async function waitForTravelPriceMatrix(timeoutMs=8000){
+    const started = Date.now();
+    let sawTravel = false;
+    let lastSignature = '';
+    let stablePasses = 0;
+    while (Date.now() - started < Math.max(1000, Number(timeoutMs) || 8000)) {
+      if (onTravelPage()) {
+        sawTravel = true;
+        if (parkVisibleTravelCooldown() > 0) return null;
+        const matrix = readSmugglingPriceMatrix();
+
+        // TEST25B: de SPA bouwt de Travel-prijstabel rij voor rij op. Een matrix
+        // met slechts 1 of enkele steden is daarom GEEN geldige marktweergave;
+        // anders kan de huidige stad ten onrechte als goedkoopste/duurste winnen.
+        // Accepteer pas als ALLE bekende steden een geldige Cocaineprijs hebben
+        // en dezelfde volledige matrix twee opeenvolgende metingen stabiel blijft.
+        const complete = CITY_NAMES.every(city => Number(matrix?.[city]?.cocaine || 0) > 0);
+        if (complete) {
+          const signature = CITY_NAMES.map(city => `${city}:${Number(matrix[city].cocaine)}`).join('|');
+          if (signature === lastSignature) stablePasses += 1;
+          else { lastSignature = signature; stablePasses = 1; }
+          if (stablePasses >= 2) return matrix;
+        } else {
+          lastSignature = '';
+          stablePasses = 0;
+        }
+      } else {
+        // Zodra Travel aantoonbaar zichtbaar is geweest en een andere module de
+        // container overneemt, is dit een scheduler-yield en geen D&D-fout.
+        if (sawTravel) return null;
+        try {
+          const cc = unsafeWindow.mrbV9CrimesCars?.state?.();
+          if (cc?.running && (cc?.busy || cc?.confirmPendingKind || cc?.forcedRetryKind)) return null;
+        } catch(_) {}
+      }
+      await sleep(250);
+    }
+    return null;
+  }
+
   function readSmugglingPriceMatrix(){
     const root = document.querySelector('#game_container') || document.body;
     const matrix = {};
@@ -4365,6 +4646,11 @@ Naam3"></textarea><br><br>
     return snapshot;
   }
 
+  function marketInventoryValidated(){
+    return marketInventoryValidatedAt > 0 && Date.now() - marketInventoryValidatedAt <= MARKET_INVENTORY_VALID_MS;
+  }
+  function clearMarketInventoryValidation(){ marketInventoryValidatedAt = 0; }
+
   function chooseTarget(priceMatrix, inventorySnapshot=null){
     // De reisbestemming wordt uitsluitend bepaald door de Cocaineprijs.
     // Rum reist mee en wordt meegekocht/verkocht, maar heeft geen invloed
@@ -4393,18 +4679,29 @@ Naam3"></textarea><br><br>
     coreTargetCity = city || null;
     GM_Set(K_PENDING_TARGET, city || '');
     GM_Set(K_PENDING_PHASE, actionPhase || '');
+    // Een marktstad is nog GEEN bewezen aankomst. Alleen travelTo() mag dit
+    // na een geslaagde reis op true zetten. Zo kan een stale target nooit
+    // lokaal koop/verkoop afdwingen nadat prijzen intussen gewijzigd zijn.
+    GM_Set(K_PENDING_ARRIVED, false);
+  }
+
+  function markPendingArrival(city){
+    const pendingCity = String(GM_Get(K_PENDING_TARGET, '') || '');
+    if (city && pendingCity === city) GM_Set(K_PENDING_ARRIVED, true);
   }
 
   function clearPendingAction(){
     coreTargetCity = null;
     GM_Set(K_PENDING_TARGET, '');
     GM_Set(K_PENDING_PHASE, '');
+    GM_Set(K_PENDING_ARRIVED, false);
   }
 
   function getPendingAction(){
     const city = String(GM_Get(K_PENDING_TARGET, '') || '');
     const actionPhase = String(GM_Get(K_PENDING_PHASE, '') || '');
-    return city && /^(buy|sell)$/.test(actionPhase) ? { city, phase:actionPhase } : null;
+    const arrived = !!GM_Get(K_PENDING_ARRIVED, false);
+    return city && /^(buy|sell)$/.test(actionPhase) ? { city, phase:actionPhase, arrived } : null;
   }
 
   function readSmugglingInventory(){
@@ -4530,6 +4827,12 @@ Naam3"></textarea><br><br>
     setCoreStage('TRAVEL_TO_CITY', city);
     dndTouchAction();
     ui('reis naar ' + city);
+
+    const blocker = dndBlockingGroupTransaction();
+    if (blocker) {
+      parkForGroupTransaction(blocker, 'Travel geblokkeerd');
+      return false;
+    }
 
     if (!travelReady()) return false;
     authorizeTravelNavigation();
@@ -4781,7 +5084,8 @@ Naam3"></textarea><br><br>
 
   function findSmugglingSubmit(){
     const form = findSmugglingForm();
-    const root = form || document.querySelector('#game_container') || document.body;
+    if (!form || !onSmugglingPage()) return null;
+    const root = form;
     const controls = Array.from(root.querySelectorAll(
       'button, input[type="button"], input[type="submit"], input[type="image"], a[onclick], a.button, a.btn'
     )).filter(el => !el.disabled && el.getAttribute('aria-disabled') !== 'true');
@@ -4789,10 +5093,7 @@ Naam3"></textarea><br><br>
     // Eerst expliciete koop/verkoopknoppen, daarna de eerste echte submit in het smokkel-formulier.
     return controls.find(el => /koop\s*\/?\s*verkoop|buy\s*\/?\s*sell|\bkopen\b|\bverkopen\b/i.test(
       clean((el.value || '') + ' ' + (el.textContent || '') + ' ' + (el.title || '') + ' ' + (el.alt || '') + ' ' + (el.name || ''))
-    )) || controls.find(el => {
-      const type = String(el.type || '').toLowerCase();
-      return type === 'submit' || type === 'image';
-    }) || null;
+    )) || null;
   }
 
   function fireMouseSequence(el){
@@ -4872,20 +5173,23 @@ Naam3"></textarea><br><br>
 
   async function waitForSmugglingForm(timeoutMs = 12000){
     const started = Date.now();
-    let lastNavigate = 0;
+    let sawSmugglingRoute = false;
 
     while (Date.now() - started < timeoutMs){
       dndTouchAction();
 
-      if (onSmugglingPage() && findSmugglingForm()) return true;
-
-      // Barafranca NL laadt Smokkelen via een hash-route. Na een reis kan
-      // location.href al aangepast zijn terwijl het formulier nog niet bestaat.
-      if (Date.now() - lastNavigate > 2500){
-        lastNavigate = Date.now();
-        loadPage('/smuggling.php');
+      if (onSmugglingPage()) {
+        sawSmugglingRoute = true;
+        if (findSmugglingForm()) return true;
+      } else if (sawSmugglingRoute) {
+        // De Smokkelen-route was al zichtbaar en is daarna door een andere owner
+        // overgenomen. Niet opnieuw navigeren binnen dezelfde D&D-transactie.
+        return false;
       }
 
+      // TEST18G: deze helper wacht alleen op de reeds aangevraagde SPA-overgang.
+      // Hij mag nooit zelf opnieuw /smuggling.php aanvragen; dat veroorzaakte de
+      // requeststorm waarbij Travel en Smokkelen elkaar bleven verdringen.
       await sleep(400);
     }
 
@@ -4896,10 +5200,21 @@ Naam3"></textarea><br><br>
     setCoreStage(phase === 'buy' ? 'BUY' : 'SELL', coreTargetCity);
     dndTouchAction();
 
+    // TEST18G: precies één owner mag de overgang naar Smokkelen aanvragen.
+    // Daarna uitsluitend wachten op de SPA-opbouw; geen interne hernavigatie-loop.
+    if (!(onSmugglingPage() && findSmugglingForm())) {
+      if (!loadPage('/smuggling.php')) {
+        coreLastError = '';
+        setCoreStage('WAIT_PAGE_OWNER', coreTargetCity);
+        ui('Smokkelen-navigatie nog niet beschikbaar; D&D yield');
+        return false;
+      }
+    }
+
     if (!(await waitForSmugglingForm(15000))){
-      coreLastError = 'Smokkelen-formulier niet geladen na reis';
-      setCoreStage('ERROR', coreTargetCity, coreLastError);
-      ui('Smokkelen wordt opnieuw geprobeerd');
+      coreLastError = '';
+      setCoreStage('WAIT_PAGE_OWNER', coreTargetCity);
+      ui('Smokkelen-overgang onderbroken; volgende schedulerkans opnieuw');
       return false;
     }
 
@@ -4933,6 +5248,7 @@ Naam3"></textarea><br><br>
 
       await sleep(500);
       const beforeSig = inventorySignature(beforeInventory);
+      if(unsafeWindow.mrbManualControl?.isPaused?.() || unsafeWindow.mrbSessionSafeMode?.active?.()) return false;
       if (!clickSmugglingSubmit(attempt)) {
         coreLastError = 'Koop/Verkoop-knop kon niet worden geactiveerd';
         setCoreStage('ERROR', coreTargetCity, coreLastError);
@@ -4976,17 +5292,19 @@ Naam3"></textarea><br><br>
     if (completedPhase === 'buy') markHourlyBuySuccess();
     syncPhaseFromInventory('voorraad na volledige transactie');
 
-    if (completedPhase === 'sell' && hourlyBuyPending()) {
+    if (completedPhase === 'sell') {
+      // TEST18E: na verkopen niet wachten op een volgende prijscyclus. De huidige
+      // markt is al bekend; bepaal direct opnieuw de goedkoopste koopstad. Dit
+      // zorgt er ook voor dat een optimale lokale verkoop altijd VOOR een nieuwe
+      // reis wordt afgehandeld.
       nextCheckTs = 0;
       GM_Set(K_NEXT_CHECK, 0);
       phase = 'buy';
       GM_Set(K_PHASE, phase);
-      ui('volledig verkocht; uurkoop blijft open tot beide producten gekocht zijn');
+      ui('volledig verkocht; actuele goedkoopste koopstad opnieuw bepalen');
     } else {
       scheduleNextPriceCheck();
-      ui(completedPhase === 'buy'
-        ? 'Rum en Cocaine volledig gekocht; uurkoop bevestigd'
-        : 'Alle aanwezige drank en drugs volledig verkocht; wacht op volgende prijswissel');
+      ui('Rum en Cocaine volledig gekocht; wachten op volgende verkoopmogelijkheid');
     }
 
     setCoreStage('RETURN', coreTargetCity);
@@ -5005,10 +5323,11 @@ Naam3"></textarea><br><br>
       coreTargetCity = pending.city;
       const current = getCurrentCity();
 
-      // Een nieuwe vluchttimer ontstaat direct na aankomst. Die timer mag alleen
-      // een VOLGENDE reis blokkeren, nooit de koop/verkoop in de doelstad waar
-      // het account zojuist is aangekomen.
-      if (current && current === pending.city){
+      // Alleen een pending doelstad die door travelTo() als werkelijk AANGEKOMEN
+      // is gemarkeerd mag direct de koop/verkoop hervatten. Een oude marktkeuze
+      // die toevallig gelijk is aan de huidige stad wordt eerst ongeldig gemaakt
+      // en hieronder opnieuw via de actuele Travel-prijzen bepaald.
+      if (pending.arrived && current && current === pending.city){
         clearExpiredFlightRetry();
         setCoreStage('RESUME_TRANSACTION', pending.city);
         const actionOk = await doSmugglingAction();
@@ -5016,28 +5335,54 @@ Naam3"></textarea><br><br>
         return;
       }
 
-      // Als de headerstad tijdens een SPA-overgang tijdelijk leeg is, probeer
-      // eerst het Smokkelen-formulier. Is dat formulier aanwezig, dan bevinden
-      // we ons functioneel al in de aangekomen stad en mag de transactie door.
-      if (!current && onSmugglingPage() && findSmugglingForm()){
+      // Tijdens de SPA-overgang na een bewezen reis kan de headerstad kort leeg
+      // zijn. Ook dit pad is daarom alleen toegestaan met de arrival-marker.
+      if (pending.arrived && !current && onSmugglingPage() && findSmugglingForm()){
         clearExpiredFlightRetry();
         setCoreStage('RESUME_TRANSACTION', pending.city);
         const actionOk = await doSmugglingAction();
         if (actionOk) clearPendingAction();
+        return;
+      }
+
+      if (!pending.arrived && current && current === pending.city){
+        const pendingPhase = pending.phase;
+        clearPendingAction();
+        phase = pendingPhase;
+        GM_Set(K_PHASE, phase);
+        coreLastError = '';
+        setCoreStage('REVALIDATE_PRICES', null);
+        ui(`oude ${pendingPhase === 'sell' ? 'verkoop' : 'koop'}doelstad wordt opnieuw gevalideerd via actuele Travel-prijzen`);
+        // Niet returnen naar een lokale transactie; de normale prijsroute hieronder
+        // wordt in de volgende Unified kans schoon uitgevoerd.
         return;
       }
 
       const retryWait = flightRetryWaitMs();
       if (retryWait > 0) {
-        setCoreStage('WAIT_TRAVEL_TIMER', pending.city);
-        ui(`openstaande ${pending.phase === 'sell' ? 'verkoop' : 'koop'} wacht op reistimer ~${Math.max(1, Math.ceil(retryWait/60000))}m`);
+        // TEST18C: een markt-afhankelijke doelstad mag niet over een lopende
+        // vluchttimer heen worden bewaard. De koop/verkoopfase blijft leidend,
+        // maar de stad wordt vrijgegeven zodat na het vrijkomen van Travel eerst
+        // de actuele prijzen opnieuw worden gelezen.
+        const pendingPhase = pending.phase;
+        clearPendingAction();
+        phase = pendingPhase;
+        GM_Set(K_PHASE, phase);
+        setCoreStage('WAIT_TRAVEL_TIMER', null);
+        ui(`openstaande ${pendingPhase === 'sell' ? 'verkoop' : 'koop'} wacht op reistimer ~${Math.max(1, Math.ceil(retryWait/60000))}m; doelstad wordt daarna opnieuw bepaald`);
         return;
       }
       const windowState = dndTravelWindowState();
       if (!windowState.allowed) {
         revokeTravelNavigation();
-        setCoreStage('WAIT_TRAVEL_WINDOW', pending.city);
-        ui(`${windowState.label}; openstaande ${pending.phase === 'sell' ? 'verkoop' : 'koop'} blijft bewaard`);
+        // Ook over een gesloten prijs-/reisvenster mag geen oude marktstad
+        // worden meegedragen. Alleen de transactie-intentie blijft bestaan.
+        const pendingPhase = pending.phase;
+        clearPendingAction();
+        phase = pendingPhase;
+        GM_Set(K_PHASE, phase);
+        setCoreStage('WAIT_TRAVEL_WINDOW', null);
+        ui(`${windowState.label}; openstaande ${pendingPhase === 'sell' ? 'verkoop' : 'koop'} blijft bewaard, doelstad wordt opnieuw bepaald`);
         return;
       }
       setCoreStage('RESUME_TRAVEL', pending.city);
@@ -5065,15 +5410,16 @@ Naam3"></textarea><br><br>
     }
     authorizeTravelNavigation();
 
-    // Voordat een nieuwe stad wordt gekozen, moet de actuele VOLLEDIGE
-    // smokkelvoorraad bekend zijn. Dit vangt ook andere buit en items af.
-    // Een verouderde of ontbrekende snapshot mag nooit een koopreis starten.
+    // TEST23D: ELKE nieuwe marktbeslissing begint met live voorraadcontrole op
+    // Smokkelen. Een oude snapshot (zelfs als die technisch nog "vers" is) mag
+    // nooit bepalen of we naar de goedkoopste of duurste stad reizen. De snapshot
+    // is daarna alleen een korte overdracht naar Travel binnen dezelfde cyclus.
     let inventorySnapshot = getInventorySnapshot();
-    if (!inventorySnapshot){
+    if (!marketInventoryValidated()){
       revokeTravelNavigation();
       setCoreStage('CHECK_INVENTORY', null);
       if (!onSmugglingPage() || !findSmugglingForm()){
-        ui('eerst volledige smokkelvoorraad controleren');
+        ui('eerst actuele volledige smokkelvoorraad controleren');
         loadPage('/smuggling.php');
         return;
       }
@@ -5084,6 +5430,7 @@ Naam3"></textarea><br><br>
       }
       saveInventorySnapshot(liveInventory);
       inventorySnapshot = getInventorySnapshot();
+      marketInventoryValidatedAt = Date.now();
       const desiredPhase = Number(liveInventory.total || 0) > 0 ? 'sell' : 'buy';
       if (phase !== desiredPhase){
         phase = desiredPhase;
@@ -5091,8 +5438,17 @@ Naam3"></textarea><br><br>
       }
       nextCheckTs = 0;
       GM_Set(K_NEXT_CHECK, 0);
-      ui(Number(liveInventory.total || 0) > 0 ? 'voorraad gevonden: eerst alles verkopen' : 'geen voorraad: kooproute bepalen');
+      ui(Number(liveInventory.total || 0) > 0 ? 'actuele voorraad gevonden: eerst alles verkopen' : 'actueel geen voorraad: kooproute bepalen');
       loadPage('/?module=Travel');
+      return;
+    }
+
+    // Is de korte overdracht intussen verloren/te oud, dan opnieuw live meten.
+    if (!inventorySnapshot){
+      clearMarketInventoryValidation();
+      setCoreStage('CHECK_INVENTORY', null);
+      ui('voorraadbevestiging verlopen; opnieuw live controleren');
+      loadPage('/smuggling.php');
       return;
     }
 
@@ -5102,17 +5458,35 @@ Naam3"></textarea><br><br>
       phase = 'sell'; GM_Set(K_PHASE, phase);
     }
 
-    if (!onTravelPage()){
-      if (!loadPage('/?module=Travel')) return;
-      await sleep(2000);
+    // Vlak voordat D&D Travel nodig heeft voor marktprijzen/doelstad, controleert
+    // het opnieuw of een stad-afhankelijke groepsactie inmiddels actief is.
+    const blockerBeforeTravel = dndBlockingGroupTransaction();
+    if (blockerBeforeTravel) {
+      parkForGroupTransaction(blockerBeforeTravel, 'prijsroute wacht op groepsactie');
+      return;
     }
 
-    const priceMatrix = readSmugglingPriceMatrix();
-    if (!Object.keys(priceMatrix).length){
-      coreLastError = 'smokkelprijzen niet leesbaar';
-      setCoreStage('ERROR', null, coreLastError);
-      ui('kan smokkelprijzen niet lezen');
-      await sleep(5000);
+    if (!onTravelPage()){
+      if (!loadPage('/?module=Travel')) return;
+    }
+
+    // Navigatie-aanvraag is niet hetzelfde als pagina-eigendom. Crimes/Cars kan
+    // Travel terecht preempten. Lees prijzen daarom pas nadat Travel werkelijk
+    // zichtbaar en opgebouwd is. Wordt de pagina tussentijds overgenomen, yield
+    // dan schoon terug aan de Unified Scheduler in plaats van ERROR te zetten.
+    const priceMatrix = await waitForTravelPriceMatrix(8000);
+    if (!priceMatrix){
+      revokeTravelNavigation();
+      const flightWait = flightRetryWaitMs();
+      if (flightWait > 0) {
+        setCoreStage('WAIT_TRAVEL_TIMER', null);
+        coreLastError = '';
+        ui(`wacht op reistimer ~${Math.max(1, Math.ceil(flightWait/60000))}m; geen Travel-request voor serverdeadline`);
+        return;
+      }
+      setCoreStage('WAIT_PAGE_OWNER', coreTargetCity);
+      coreLastError = '';
+      ui('Travel onderbroken/overgenomen; D&D wacht op nieuwe schedulerkans');
       return;
     }
 
@@ -5126,23 +5500,46 @@ Naam3"></textarea><br><br>
       return;
     }
 
+    // De live voorraadbevestiging is nu verbruikt voor precies deze marktkeuze.
+    // Een volgende marktkeuze (na koop/verkoop of na stale-target herstel) moet
+    // opnieuw via Smokkelen lopen.
+    clearMarketInventoryValidation();
     setPendingAction(target.city, phase);
     const actionText = phase === 'buy' ? 'laagste Cocaineprijs' : 'hoogste Cocaineprijs';
     ui(`${actionText}: ${target.city} ($${Math.round(target.cocainePrice).toLocaleString('en-US')})`);
 
     const current = getCurrentCity();
 
+    // Als de huidige stad al optimaal is voor de actuele fase, handel hier eerst.
+    // Dus: hoogste Cocaineprijs + voorraad => lokaal verkopen; laagste Cocaineprijs
+    // + koopfase => lokaal kopen. Alleen wanneer de optimale stad elders ligt, reizen.
     if (current !== target.city){
+      const blocker = dndBlockingGroupTransaction();
+      if (blocker) {
+        parkForGroupTransaction(blocker, 'optimale doelstad ligt elders');
+        return;
+      }
       if (!travelReady()){
         const wait = syncedFlightWaitMs() || parseTimer(readTravelTimerText()) || 60_000;
         setRetryAfterFlight(wait, 'doelstad voor koop/verkoop nog niet bereikbaar');
-        setCoreStage('WAIT_TRAVEL_TIMER', target.city);
-        ui(`wacht op reistimer ~${Math.ceil(wait/60000)}m`);
+        // TEST18C: target is gebaseerd op de huidige marktprijzen. Als reizen nu
+        // niet kan, is die stad mogelijk verouderd tegen de tijd dat Travel vrij is.
+        // Bewaar daarom alleen buy/sell, niet de marktstad.
+        const deferredPhase = phase;
+        clearPendingAction();
+        phase = deferredPhase;
+        GM_Set(K_PHASE, phase);
+        setCoreStage('WAIT_TRAVEL_TIMER', null);
+        ui(`wacht op reistimer ~${Math.ceil(wait/60000)}m; prijzen en doelstad worden daarna opnieuw bepaald`);
         return;
       }
 
       const okTravel = await travelTo(target.city);
+      if (okTravel) markPendingArrival(target.city);
       if (!okTravel){
+        // WAIT_GROUP_TRANSACTION/WAIT_TRAVEL_TIMER zijn bewuste scheduler-yields,
+        // geen reisfout. De volgende geldige kans herberekent prijzen/doelstad.
+        if (/^(?:WAIT_GROUP_TRANSACTION|WAIT_TRAVEL_TIMER|WAIT_TRAVEL_WINDOW)$/.test(String(coreStage || ''))) return;
         coreLastError = 'reizen mislukt';
         setCoreStage('ERROR', target.city, coreLastError);
         ui('reizen mislukt, retry');
@@ -5180,6 +5577,20 @@ Naam3"></textarea><br><br>
         return;
       }
 
+      // TEST18D: een eerder op de Travel-pagina bevestigde vluchtcooldown is
+      // serverwaarheid. Zolang die deadline loopt, mag D&D Travel niet opnieuw
+      // openen. Staat D&D nog op Travel, geef die gedeelde pagina eenmalig vrij.
+      const parkedFlightWait = flightRetryWaitMs();
+      if (parkedFlightWait > 0) {
+        revokeTravelNavigation();
+        setCoreStage('WAIT_TRAVEL_TIMER', null);
+        coreLastError = '';
+        if (onTravelPage()) loadPage('/information.php');
+        ui(`wacht op reistimer ~${Math.max(1, Math.ceil(parkedFlightWait/60000))}m; geen Travel-polling`);
+        await sleep(Math.min(Math.max(parkedFlightWait, 5000), 60_000));
+        return;
+      }
+
       // Nieuwe logica:
       // Na succesvolle koop/verkoop wachten tot de volgende prijswissel (:00 of :30).
       // Tijdens wachten niet naar Smokkelen blijven navigeren.
@@ -5210,10 +5621,13 @@ Naam3"></textarea><br><br>
       await sleep(5000);
     } finally {
       busy = false;
-      if (on && !plannerManaged) {
-        clearTimeout(loopTimer);
-        const wait = priceCheckDue() ? 3000 : Math.min(Math.max(nextCheckTs - Date.now(), 5000), 60_000);
-        loopTimer = setTimeout(loop, wait);
+      if (on) {
+        mrbClearTimeout(loopTimer);
+        const parkedFlightWait = flightRetryWaitMs();
+        const wait = parkedFlightWait > 0
+          ? Math.min(Math.max(parkedFlightWait, 5000), 60_000)
+          : (priceCheckDue() ? 3000 : Math.min(Math.max(nextCheckTs - Date.now(), 5000), 60_000));
+        loopTimer = mrbSetTimeout(loop, wait);
       }
     }
   }
@@ -5230,17 +5644,13 @@ Naam3"></textarea><br><br>
     }
 
     ui('start');
-    if (plannerManaged) {
-      try { unsafeWindow.mrbV9Planner?.updateTask?.('v9-dnd', { nextAt:Date.now()+250, enabled:true, status:'start aangevraagd' }); } catch(e) {}
-    } else {
-      loop();
-    }
+    loop();
   }
 
   function stop(){
     on = false;
     GM_Set(K_ON, false);
-    clearTimeout(loopTimer);
+    mrbClearTimeout(loopTimer);
     retryAfterFlightTs = 0;
     GM_Set(K_RETRY_AFTER, 0);
     setCoreStage('IDLE', null);
@@ -5276,127 +5686,12 @@ Naam3"></textarea><br><br>
     });
   });
 
-  async function plannerStep(context){
-    // Ook tijdens een halfuur-wachtstand direct corrigeren als de gebruiker op
-    // Smokkelen staat en er nog handelsvoorraad aanwezig is.
-    syncPhaseFromInventory('voorraad herkend');
-    ensureHourlyBuyObligation();
-    applyHourlyPriorityFromInventory('uurkoopcontrole');
-    if (!on) {
-      setCoreStage('IDLE', null);
-      dndReleaseAction();
-      return { delayMs:15_000, status:'module staat uit' };
-    }
-    if (typeof gm_isGateVisible === 'function' && gm_isGateVisible()) {
-      setCoreStage('PAUSED_GATE', coreTargetCity);
-      dndReleaseAction();
-      ui('pauze gate/captcha');
-      return { delayMs:5000, status:'pauze gate/captcha' };
-    }
-
-    // De gesynchroniseerde vluchttimer is een harde poort. Zolang die loopt,
-    // mag D&D alleen een reeds aangekomen transactie in dezelfde stad afronden.
-    // Zonder zekere huidige stad wordt NIET naar Travel genavigeerd; zo kunnen
-    // Cars en andere modules gewoon blijven draaien.
-    const pendingTravel = getPendingAction();
-    const currentCityForWait = getCurrentCity();
-    const travelWindow = dndTravelWindowState();
-    const inventoryForPriority = onSmugglingPage() ? readSmugglingInventory() : getInventorySnapshot();
-    const hasTradeStock = Number(inventoryForPriority?.total || 0) > 0;
-    const mustFinishOpenTrade = !!pendingTravel || phase === 'sell' || hasTradeStock;
-    const needsNewTravel = !pendingTravel || !currentCityForWait || currentCityForWait !== pendingTravel.city;
-    if (!travelWindow.allowed && needsNewTravel && !mustFinishOpenTrade) {
-      revokeTravelNavigation();
-      setCoreStage('WAIT_TRAVEL_WINDOW', pendingTravel?.city || coreTargetCity);
-      dndReleaseAction();
-      ui(`${travelWindow.label}; nog geen openstaande D&D-transactie`);
-      return { nextAt:travelWindow.nextAt, status:`wacht op reisvenster (${formatWait(travelWindow.waitMs)})` };
-    }
-    const canFinishHere = !!(pendingTravel && currentCityForWait && currentCityForWait === pendingTravel.city);
-    const canFinishOnLoadedForm = !!(pendingTravel && !currentCityForWait && onSmugglingPage() && findSmugglingForm());
-    const retryWait = flightRetryWaitMs();
-    if (retryWait > 0 && !canFinishHere && !canFinishOnLoadedForm) {
-      revokeTravelNavigation();
-      setCoreStage('WAIT_TRAVEL_TIMER', pendingTravel?.city || coreTargetCity);
-      dndReleaseAction();
-      ui(`openstaande ${pendingTravel?.phase === 'sell' ? 'verkoop' : 'koop'} wacht op reistimer ~${Math.max(1, Math.ceil(retryWait/60000))}m`);
-      return { nextAt:retryAfterFlightTs, status:`pre-${pendingTravel?.phase === 'sell' ? 'sell' : 'buy'} wacht op reistimer ${formatWait(retryWait)}` };
-    }
-    const flightState = getFlightState();
-    if (!flightState.ready && !canFinishHere) {
-      revokeTravelNavigation();
-      setRetryAfterFlight(flightState.waitMs || syncedFlightWaitMs() || 60_000, flightState.reason);
-      setCoreStage(flightState.fresh ? 'WAIT_TRAVEL_TIMER' : 'WAIT_TIMER_SYNC', pendingTravel?.city || coreTargetCity);
-      dndReleaseAction();
-      if (flightState.fresh) {
-        ui(`wacht op reistimer ~${Math.max(1, Math.ceil(flightState.waitMs/60000))}m`);
-        return { nextAt:Date.now() + Math.min(Math.max(flightState.waitMs, 5000), 60_000), status:`reistimer nog ${formatWait(flightState.waitMs)}` };
-      }
-      ui('wacht op verse vluchttimer-sync');
-      try { unsafeWindow.mrbBackgroundTimerSync?.('dnd-needs-flight-state'); } catch(_) {}
-      return { delayMs:15_000, status:'wacht op verse vluchttimer-sync' };
-    }
-    if (!priceCheckDue() && !mustFinishOpenTrade) {
-      // Alleen buiten de toegestane vensters wacht een volledig nieuwe koopcyclus. Een openstaande
-      // verkoop, gedeeltelijke aankoop of reeds gekozen doelstad wordt direct hervat.
-      if (onSmugglingPage()) syncPhaseFromInventory('voorraad tijdens wachttijd');
-      setCoreStage('WAIT_PRICE_CHANGE', coreTargetCity);
-      dndReleaseAction();
-      ui('wachten op het volgende toegestane D&D-venster');
-      return { nextAt:nextCheckTs, status:'D&D wacht op reisvenster' };
-    }
-    if (busy) {
-      dndTouchAction();
-      return { delayMs:1000, status:`exclusief bezig: ${coreStage}` };
-    }
-    if (!dndAcquireAction(context)) {
-      return { delayMs:750, status:'wacht op centrale actielock' };
-    }
-
-    busy = true;
-    try {
-      await readPricesAndAct();
-    } catch(e) {
-      coreLastError = String(e?.message || e || 'onbekende fout').slice(0,120);
-      setCoreStage('ERROR', coreTargetCity, coreLastError);
-      try { console.warn('[MRB D&D planner]', e); } catch(_) {}
-      ui('fout, retry');
-      return { delayMs:10_000, status:'fout, retry' };
-    } finally {
-      busy = false;
-      dndReleaseAction();
-    }
-
-    setCoreStage(nextCheckTs && nextCheckTs > Date.now() ? 'WAIT_PRICE_CHANGE' : 'IDLE', coreTargetCity);
-    if (nextCheckTs && nextCheckTs > Date.now()) {
-      return { nextAt:Math.min(nextCheckTs, nextHourTs()), status:'wacht op prijswissel of nieuw klokuur' };
-    }
-    return { delayMs:5000, status:'D&D opnieuw controleren' };
-  }
-
+  // D&D heeft nog maar één runtimepad: de bestaande trade-loop.
+  // Alle timeouts lopen via mrbSetTimeout en daarmee via de Unified timerkernel.
   ensureHourlyBuyObligation();
 
-  unsafeWindow.mrbV9DnD = {
-    setPlannerManaged(value){
-      plannerManaged = !!value;
-      if (plannerManaged) clearTimeout(loopTimer);
-      ui();
-    },
-    isRunning:()=>!!on,
-    nextAt:()=> {
-      if (!on) return Date.now()+15_000;
-      const fs = getFlightState();
-      if (!fs.ready) return Date.now() + Math.min(Math.max(fs.waitMs || 15_000, 15_000), 60_000);
-      if (hourlyBuyPending()) return Date.now()+1000;
-      const candidates = [nextCheckTs || Infinity, nextHourTs()];
-      return Math.min(...candidates);
-    },
-    runStep:plannerStep,
-    state:()=>({ on, busy, phase, nextCheckTs, hourlyBuyPending:hourlyBuyPending(), lastBuyHour:String(GM_Get(K_LAST_BUY_HOUR,'')||''), coreStage, coreTargetCity, coreLastError, coreTransactions, inventory:readSmugglingInventory() })
-  };
-
   ui();
-  if (on && !plannerManaged) setTimeout(loop, 1500);
+  if (on) mrbSetTimeout(loop, 1500);
 })();
 
 // =====================================================================
@@ -5412,14 +5707,14 @@ Naam3"></textarea><br><br>
   const K_LOCK_UNTIL = 'cc.oneshot.lockUntil';
   const LOCK_MS = 90_000;
 
-  const sleep = (ms)=>new Promise(r=>setTimeout(r, ms));
+  const sleep = (ms)=>new Promise(r=>mrbSetTimeout(r, ms));
 
   const loadPage = (function(){
     const blocked=()=>{ try{return !!unsafeWindow.mrbSessionSafeMode?.active?.();}catch(_){return false;} };
     try{
       const gui = unsafeWindow?.omerta?.GUI?.container;
       if (unsafeWindow.mrbNavigate) return (p)=> blocked()?false:unsafeWindow.mrbNavigate(p,{source:'module'});
-      if (gui && typeof gui.loadPage === 'function') return (p)=> blocked()?false:gui.loadPage(p);
+      if (gui && typeof gui.loadPage === 'function') return (p)=> blocked()?false:unsafeWindow.mrbNavigate?.(p,{source:'module'}) ?? false;
     }catch{}
     return (p)=>{
       if (blocked()) return false;
@@ -5871,12 +6166,21 @@ try {
         role: raceRole
       });
     } catch(e) {}
+    // TEST20B: WAITING_DRIVER/DRIVER_READY horen nog bij dezelfde Race-transactie.
+    // Alleen echte idle/cooldown/checkfasen geven de centrale group-owner vrij.
+    try {
+      const p=String(raceCorePhase||'').toUpperCase();
+      const active=/^(?:STARTING|LEADER_OPEN|LEADER_INVITE|WAITING_DRIVER|RUNNING|DRIVER_OPEN|DRIVER_ACCEPT|DRIVER_CAR|DRIVER_READY|DRIVER_READY_INFO|DRIVER_WAIT_INVITE|TRAVEL|CANCEL_PENDING|CANCELLING)$/.test(p);
+      if(active) unsafeWindow.mrbGroupTransaction?.acquire?.('race',p);
+      else if(/^(?:IDLE|OFF|COOLDOWN|CHECK_TIMER|WAIT_RETRY|POST_RACE_HOME|DRIVER_POST_RACE_HOME|RECOVERY_WAIT)$/.test(p)) unsafeWindow.mrbGroupTransaction?.release?.('race','race '+p.toLowerCase());
+    } catch(_) {}
   }
 
   // 5.8.40: centrale vrijgave van een afgeronde/gepauzeerde Race-actie.
   // In 5.8.38/5.8.39 werd deze helper wel aangeroepen maar nergens gedefinieerd,
   // waardoor callbacks met een ReferenceError stopten voordat Mijn Account kon openen.
   function raceReleaseAction(detail='Race-actie vrijgegeven'){
+    try { unsafeWindow.mrbGroupTransaction?.release?.('race',detail); } catch(_) {}
     raceCorePhase = 'IDLE';
     raceCoreDetail = String(detail || 'Race-actie vrijgegeven');
     raceCoreUpdatedAt = Date.now();
@@ -5890,7 +6194,7 @@ try {
   }
 
   // Alleen echte transactie-fasen blokkeren Heist. Idle/cooldown/info-wacht nooit.
-  const RACE_ACTIVE_PHASE_RE = /^(?:STARTING|LEADER_OPEN|LEADER_INVITE|WAITING_DRIVER|RUNNING|DRIVER_OPEN|DRIVER_ACCEPT|DRIVER_CAR|TRAVEL|CANCEL_PENDING|CANCELLING)$/;
+  const RACE_ACTIVE_PHASE_RE = /^(?:STARTING|LEADER_OPEN|LEADER_INVITE|RUNNING|DRIVER_OPEN|DRIVER_ACCEPT|DRIVER_CAR|TRAVEL|CANCEL_PENDING|CANCELLING)$/; // TEST3: WAITING_DRIVER is een veilige yield-fase
   try {
     unsafeWindow.mrbRaceTransaction = Object.freeze({
       active:()=>RACE_ACTIVE_PHASE_RE.test(String(raceCorePhase||'').toUpperCase()),
@@ -5917,11 +6221,11 @@ try {
   // terug naar Mijn Account zolang de Driver nog op een Race-pagina staat.
   let driverReadyExitTimer = null;
   function clearDriverReadyExit(){
-    if (driverReadyExitTimer){ clearTimeout(driverReadyExitTimer); driverReadyExitTimer = null; }
+    if (driverReadyExitTimer){ mrbClearTimeout(driverReadyExitTimer); driverReadyExitTimer = null; }
   }
   function driverReadyHardExit(reason='Driver-race afgerond; terug naar Mijn Account'){
     clearDriverReadyExit();
-    driverReadyExitTimer = setTimeout(()=>{
+    driverReadyExitTimer = mrbSetTimeout(()=>{
       driverReadyExitTimer = null;
       if(!scriptAan || raceRole!=='slave' || isLoggedOut()) return;
       if (/information\.php/i.test(location.href)) {
@@ -5934,7 +6238,7 @@ try {
       clearRacePlan();
       raceReleaseAction(reason);
       guiLoad('/information.php');
-      setTimeout(()=>{
+      mrbSetTimeout(()=>{
         if(!scriptAan || raceRole!=='slave' || isLoggedOut()) return;
         if (/information\.php/i.test(location.href)) checkAvailability(true);
       }, randomDelay(2500,4500));
@@ -5942,12 +6246,12 @@ try {
   }
 
   const next = (fn, ms)=>{
-    if(loopTimer) clearTimeout(loopTimer);
-    loopTimer = setTimeout(fn, Math.max(0, ms || 0));
+    if(loopTimer) mrbClearTimeout(loopTimer);
+    loopTimer = mrbSetTimeout(fn, Math.max(0, ms || 0));
   };
   const clearAll = ()=>{
-    if(loopTimer) clearTimeout(loopTimer);
-    if(failsafeTimer) clearTimeout(failsafeTimer);
+    if(loopTimer) mrbClearTimeout(loopTimer);
+    if(failsafeTimer) mrbClearTimeout(failsafeTimer);
     clearDriverReadyExit();
   };
 
@@ -5977,7 +6281,9 @@ try {
 
   const $jq = ()=> (unsafeWindow.$ || unsafeWindow.jQuery || null);
 
-  // 5.8.56: Race mag maar een terugkeer naar Mijn Account tegelijk open hebben.
+  // TEST10: Race mag maar EEN terugkeer naar Mijn Account tegelijk open hebben.
+  // Een mislukte/trage SPA-load kan daardoor niet meer door goInfo, PriorityWake
+  // en checkAvailability tegelijk opnieuw worden aangevraagd.
   let raceInfoNavPendingUntil = 0;
   let raceInfoRecoveryUntil = 0;
   function raceInfoArrived(){
@@ -5986,26 +6292,31 @@ try {
     raceInfoRecoveryUntil=0;
     return true;
   }
+  function raceInfoNavSuppressed(){
+    raceInfoArrived();
+    const now=Date.now();
+    return now < raceInfoNavPendingUntil || now < raceInfoRecoveryUntil;
+  }
   function armRaceInfoSingleFlight(){
     const now=Date.now();
     if (raceInfoArrived()) return false;
     if (now < raceInfoRecoveryUntil || now < raceInfoNavPendingUntil) return false;
     raceInfoNavPendingUntil=now+10000;
     try { unsafeWindow.mrbFlightRecorder?.add?.('RACE_INFO_NAV_START',{pendingUntil:raceInfoNavPendingUntil}); } catch(_) {}
-    setTimeout(()=>{
+    mrbSetTimeout(()=>{
       if (raceInfoArrived()) return;
       if (Date.now() < raceInfoNavPendingUntil) return;
       raceInfoNavPendingUntil=0;
       raceInfoRecoveryUntil=Date.now()+45000;
       raceRegistryState('RECOVERY_WAIT','Mijn Account niet bevestigd; Race 45s in herstelrust');
       try { unsafeWindow.mrbFlightRecorder?.add?.('RACE_INFO_RECOVERY_WAIT',{until:raceInfoRecoveryUntil}); } catch(_) {}
+      try { unsafeWindow.mrbUnifiedDiagnostics?.add?.('RACE_INFO_RECOVERY_WAIT',{until:raceInfoRecoveryUntil,role:raceRole}); } catch(_) {}
     },10100);
     return true;
   }
 
   const guiLoad = (path)=>{
     if (unsafeWindow.mrbSessionSafeMode?.active?.()) return false;
-    if (unsafeWindow.mrbServerBackoff?.active?.()) return true;
     const toInfo=/information\.php/i.test(String(path||''));
     if (toInfo){
       if (raceInfoArrived()) return true;
@@ -6015,7 +6326,7 @@ try {
       }
     }
     if (unsafeWindow.mrbNavigate?.(path,{source:'race'})) return true;
-    try { unsafeWindow.omerta.GUI.container.loadPage(path); return true; }
+    try { return unsafeWindow.mrbNavigate?.(path,{source:'race'}) ?? false; }
     catch {
       // Gebruik voor Race altijd de normale pagina-URL; nooit een half geladen
       // fragment in de bestaande game-container laten staan.
@@ -6028,26 +6339,6 @@ try {
   function randomDelay(min,max){ return Math.floor(Math.random()*(max-min+1))+min; }
   function actionDelay(){ return (typeof unsafeWindow.mrbVarDelayMs === 'function') ? unsafeWindow.mrbVarDelayMs() : randomDelay(2000,5000); }
 
-
-  // 5.8.53: Crimes/Cars mag Race vóór de transactie nog voorgaan, maar niet er middenin.
-  function raceCrimesCarsOwnPriority(){
-    try {
-      const st = unsafeWindow.mrbV9CrimesCars?.state?.();
-      if (!st?.running) return false;
-      const now = Date.now();
-      return !!st.busy || !!st.confirmPendingKind || !!st.forcedRetryKind
-        || (!!st.doCrimes && Number(st.crimesNext || 0) <= now + 1500)
-        || (!!st.doCars && Number(st.carsNext || 0) <= now + 1500);
-    } catch(_) { return false; }
-  }
-  function raceYieldToCrimesCars(source='Race wacht op Crimes/Cars'){
-    try { unsafeWindow.mrbV9CrimesCars?.wake?.(); } catch(_) {}
-    raceRegistryState('WAIT_CRIMES_CARS', source);
-    clearRacePlan();
-    saveRacePlan({ type:'info', at:Date.now()+randomDelay(1800,2800), createdAt:Date.now() });
-    armStoredRacePlan();
-    return true;
-  }
 
   function parseTimer(txt){
     const value = String(txt || '').replace(/\s+/g,' ').trim();
@@ -6129,11 +6420,18 @@ try {
       if (latest.type === 'start'){
         clearRacePlan();
         if (isLoggedOut()) return pauseForGate('Geplande racestart tijdens gate');
-        // Tijdens de startspreiding kan Crimes/Cars alsnog op Nu komen. Start
-        // Race dan nog niet: laat CC eerst dezelfde atomaire actie afronden.
-        if (raceCrimesCarsOwnPriority()) return raceYieldToCrimesCars('Race-start uitgesteld voor Crimes/Cars');
+        // Unified Scheduler heeft de runnable-volgorde al bepaald vóór deze
+        // geplande Race-start. De module start hier alleen zijn eigen transactie.
         if (raceRole === 'leader') leader_startRace();
         else slave_startRace();
+        return;
+      }
+
+      if (latest.type === 'partner'){
+        clearRacePlan();
+        if (isLoggedOut()) return pauseForGate('Geplande Driver-hercontrole tijdens gate');
+        if (raceRole !== 'leader') return;
+        leader_checkPartner(Number(latest.retries || 0));
         return;
       }
 
@@ -6166,6 +6464,18 @@ try {
       role: raceRole
     });
 
+    armStoredRacePlan();
+  }
+
+  function planLeaderPartnerRecheck(waitMs, retries=0){
+    raceRegistryState('WAITING_DRIVER', 'wacht op Driver · hercontrole gepland');
+    saveRacePlan({
+      type: 'partner',
+      at: Date.now() + Math.max(0, waitMs),
+      createdAt: Date.now(),
+      role: 'leader',
+      retries: Number(retries || 0)
+    });
     armStoredRacePlan();
   }
 
@@ -6370,7 +6680,7 @@ try {
         return;
       }
       tries++;
-      setTimeout(poll, 250);
+      mrbSetTimeout(poll, 250);
     })();
   }
 
@@ -6665,8 +6975,8 @@ try {
     clearRacePlan();
     guiLoad('/races.php');
 
-    if(failsafeTimer) clearTimeout(failsafeTimer);
-    failsafeTimer = setTimeout(()=>{
+    if(failsafeTimer) mrbClearTimeout(failsafeTimer);
+    failsafeTimer = mrbSetTimeout(()=>{
       if(!scriptAan) return;
       goInfo();
     }, 60000);
@@ -6714,7 +7024,7 @@ try {
         racePrefillInviteName();
         raceSelectFirstAvailableCar();
         raceSafeClick(inviteBtn);
-        if(failsafeTimer) clearTimeout(failsafeTimer);
+        if(failsafeTimer) mrbClearTimeout(failsafeTimer);
         next(()=> leader_checkPartner(0), randomDelay(10000,15000));
       }, actionDelay());
       return;
@@ -6742,6 +7052,14 @@ try {
 
     guiLoad('/races.php');
     next(()=>{
+      // Crimes/Cars kan /races.php tijdens deze wachttijd terecht preempten.
+      // Interpreteer dan nooit de nieuwe pagina als Race-DOM; parkeer alleen de
+      // bestaande invite-hercontrole en laat de Unified Scheduler eerst afronden.
+      if (!/races\.php/i.test(location.href)) {
+        planLeaderPartnerRecheck(randomDelay(4000,7000), retries);
+        return;
+      }
+
       const body = document.body.innerText || '';
 
       if (raceRecoverStartedTravelBlock('Leider-wacht')) return;
@@ -6755,7 +7073,12 @@ try {
       }
 
       if (/invited|accepted|uitgenodigd|geaccepteerd|waiting|wachten/i.test(body)){
-        next(()=> leader_checkPartner(retries+1), randomDelay(10000,15000));
+        // WAITING_DRIVER bezit geen atomaire pagina, maar behoudt wel exact EEN
+        // persistente hercontrole. Daardoor kan een Unified wake de bestaande
+        // invite niet opnieuw als een verse Race-start openen.
+        raceRegistryState('WAITING_DRIVER', 'wacht op Driver · Mijn Account vrijgegeven');
+        unsafeWindow.mrbNavigate?.('/information.php',{source:'race',yield:true,force:true});
+        planLeaderPartnerRecheck(randomDelay(10000,15000), retries+1);
         return;
       }
 
@@ -6776,7 +7099,7 @@ try {
 
     if (btn){
       raceSafeClick(btn);
-      if(failsafeTimer) clearTimeout(failsafeTimer);
+      if(failsafeTimer) mrbClearTimeout(failsafeTimer);
       next(leader_checkDone, randomDelay(5000,8000));
     } else {
       next(()=>{
@@ -7025,6 +7348,11 @@ try {
       if (armStoredRacePlan()) return;
 
       if (fromInfoSync){
+        const now=Date.now();
+        if (now < raceInfoRecoveryUntil){
+          next(()=>checkAvailability(true), Math.max(3000,raceInfoRecoveryUntil-now+250));
+          return;
+        }
         guiLoad('/information.php');
         next(()=>checkAvailability(true), randomDelay(3000,6000));
         return;
@@ -7067,16 +7395,24 @@ try {
     const status = readRaceStatusByLabel();
 
     if (/^(Nu|NOW|Now)$/i.test(status)){
-      // Hoogste prioriteit blijft behouden: als Crimes/Cars werkelijk gereed of
-      // al bezig is, wordt nog GEEN Race-transactie geopend. Eerst CC afronden,
-      // daarna opnieuw vanaf Mijn Account de Race-timer lezen.
-      if (raceCrimesCarsOwnPriority()){
-        raceYieldToCrimesCars('Race Nu, maar Crimes/Cars eerst');
+      // Crimes/Cars-prioriteit wordt centraal door de Unified Dispatcher bepaald.
+      // Race plant hier alleen de eigen start nadat de centrale wake is ontvangen.
+
+      const existingPlan = loadRacePlan();
+      if (existingPlan && existingPlan.type === 'partner'){
+        armStoredRacePlan();
+        return;
+      }
+      if (existingPlan && existingPlan.type === 'start' && existingPlan.at > Date.now() + 250){
+        armStoredRacePlan();
         return;
       }
 
-      const existingPlan = loadRacePlan();
-      if (existingPlan && existingPlan.type === 'start' && existingPlan.at > Date.now() + 250){
+      // Driver heeft zijn auto al bevestigd. Zolang de server-Racetimer nog Nu
+      // toont is dit dezelfde lopende Race, geen nieuwe Driver-start.
+      if (raceRole === 'slave' && driverAcceptedWatch){
+        raceRegistryState('DRIVER_READY', 'auto bevestigd · wacht op Leider/resultaat');
+        saveRacePlan({ type:'info', at:Date.now()+randomDelay(10000,15000), createdAt:Date.now(), role:raceRole });
         armStoredRacePlan();
         return;
       }
@@ -7087,6 +7423,11 @@ try {
 
     const wait = parseTimer(status);
     if (wait > 0){
+      if (driverAcceptedWatch){
+        driverAcceptedWatch = false;
+        driverAcceptedMisses = 0;
+        clearDriverReadyExit();
+      }
       planInfoRecheck(wait + randomDelay(5000,15000));
       return;
     }
@@ -7095,21 +7436,76 @@ try {
     planInfoRecheck(10000);
   }
 
-  // Zelfstandige lokale Race-watcher.
-  let raceLocalWatchBusy = false;
-  mrbSetInterval(()=>{
-    if (!scriptAan || raceLocalWatchBusy) return;
-    if (isLoggedOut()) return;
-    if (!/information\.php/i.test(location.href)) return;
+  // TEST8: echte centrale Race-job bridge. In TEST7 werd mrbRacePriorityWake
+  // wel aangeroepen door de Unified Scheduler, maar nergens door Race geexporteerd.
+  // Daardoor kon vooral de Driver op een oud info-plan blijven slapen terwijl Race al Nu was.
+  unsafeWindow.mrbRacePriorityWake = function(source='unified'){
+    if (!scriptAan) {
+      try { unsafeWindow.mrbUnifiedDiagnostics?.add?.('RACE_WAKE_REJECT',{source,reason:'race-uit',role:raceRole}); } catch(_) {}
+      return false;
+    }
+    if (isLoggedOut()) {
+      try { unsafeWindow.mrbUnifiedDiagnostics?.add?.('RACE_WAKE_REJECT',{source,reason:'gate',role:raceRole}); } catch(_) {}
+      return false;
+    }
 
-    const existing = loadRacePlan();
-    if (existing && Number(existing.at) > Date.now() + 250) return;
+    // TEST10: als een Race->Mijn Account single-flight al loopt of in recovery
+    // staat, accepteert de bridge geen nieuwe navigatiejob.
+    if (!/information\.php/i.test(location.href) && raceInfoNavSuppressed()) {
+      try { unsafeWindow.mrbUnifiedDiagnostics?.add?.('RACE_WAKE_DEFER',{source,role:raceRole,phase:raceCorePhase,reason:'info-single-flight'}); } catch(_) {}
+      return false;
+    }
 
-    raceLocalWatchBusy = true;
-    try { checkAvailability(true); }
-    catch(e) { try { console.warn('[Race local watcher]', e); } catch(_) {} }
-    finally { setTimeout(()=>{ raceLocalWatchBusy = false; }, 1500); }
-  }, 2000);
+    // Een reeds lopende Leider-invite-wachtfase heeft precies een eigen
+    // hercontrole-owner. Een centrale wake mag die niet veranderen in een verse start.
+    const oldPlan = loadRacePlan();
+    if (oldPlan?.type === 'partner'){
+      armStoredRacePlan();
+      try { unsafeWindow.mrbUnifiedDiagnostics?.add?.('RACE_WAKE_DEFER',{source,role:raceRole,phase:raceCorePhase,reason:'partner-single-flight'}); } catch(_) {}
+      return false;
+    }
+    // Een Driver die zijn auto al heeft bevestigd wacht op dezelfde lopende Race.
+    // De info-recheck blijft eigenaar tot de server een echte cooldown toont.
+    if (raceRole === 'slave' && driverAcceptedWatch){
+      if (oldPlan?.type === 'info') armStoredRacePlan();
+      else {
+        saveRacePlan({ type:'info', at:Date.now()+randomDelay(10000,15000), createdAt:Date.now(), role:raceRole });
+        armStoredRacePlan();
+      }
+      try { unsafeWindow.mrbUnifiedDiagnostics?.add?.('RACE_WAKE_DEFER',{source,role:raceRole,phase:raceCorePhase,reason:'driver-ready-single-flight'}); } catch(_) {}
+      return false;
+    }
+
+    // Een centrale wake is leidend boven een oud cooldown/info-plan. De verse
+    // Mijn Account-timer wordt direct opnieuw gelezen door checkAvailability(true).
+    if (oldPlan?.type === 'info') clearRacePlan();
+
+    try {
+      unsafeWindow.mrbUnifiedDiagnostics?.add?.('RACE_WAKE_ACCEPT',{
+        source, role:raceRole, phase:raceCorePhase, oldPlan:oldPlan?.type||'',
+        oldPlanAt:Number(oldPlan?.at||0), onInfo:/information\.php/i.test(location.href)
+      });
+    } catch(_) {}
+
+    if (/information\.php/i.test(location.href)) {
+      checkAvailability(true);
+      return true;
+    }
+
+    // Alleen vanuit een niet-atomaire fase mag de centrale scheduler Race naar
+    // Mijn Account trekken. Een echte Race-actie blijft eerst atomair afronden.
+    if (RACE_ACTIVE_PHASE_RE.test(String(raceCorePhase||'').toUpperCase())) {
+      try { unsafeWindow.mrbUnifiedDiagnostics?.add?.('RACE_WAKE_DEFER',{source,role:raceRole,phase:raceCorePhase}); } catch(_) {}
+      return false;
+    }
+
+    guiLoad('/information.php');
+    next(()=>{
+      if (!scriptAan || isLoggedOut()) return;
+      checkAvailability(true);
+    }, randomDelay(1200,2200));
+    return true;
+  };
 
   // ------------------ UI handlers ------------------
   block.querySelectorAll('input[name="raceRole"]').forEach(r=>{
@@ -7180,7 +7576,7 @@ try {
     // Bij een harde refresh zijn Omerta GUI/jQuery soms nog een fractie te vroeg.
     // Hervat daarom vertraagd en laat een tijdelijke initfout nooit de opgeslagen
     // Race-schakelaar uitschakelen.
-    setTimeout(()=>{
+    mrbSetTimeout(()=>{
       if (!scriptAan) return;
       try {
         if (isLoggedOut()){
@@ -7196,7 +7592,7 @@ try {
           const st = block?.querySelector('#raceStatus');
           if (st) st.innerHTML = '<span class="warn">Actief - hervatten...</span>';
         } catch (_) {}
-        setTimeout(()=>{
+        mrbSetTimeout(()=>{
           if (!scriptAan || isLoggedOut()) return;
           try { bootstrapRaceIdle(); }
           catch (retryError) { try { console.warn('[Race refresh retry]', retryError); } catch (_) {} }
@@ -7283,6 +7679,60 @@ try {
 // =====================================================================
 // =====================================================================
 // =====================================================================
+// =====================================================================
+// SHARED JAIL BUYOUT CONTROLLER - TEST19B
+// Eén gedeelde jail-afhandeling voor modules buiten de Crimes/Cars-runner.
+// De bestaande Crimes/Cars instelling cc_buyout blijft de enige schakelaar.
+// =====================================================================
+;(function MRBSharedJailBuyoutController(){
+  if (unsafeWindow.mrbJailBuyoutControl) return;
+
+  const BUYOUT_KEY = 'cc_buyout';
+  let activePromise = null;
+
+  const sleep = (ms) => new Promise(r => mrbSetTimeout(r, ms));
+  const enabled = () => { try { return GM_Get(BUYOUT_KEY, false) === true; } catch(_) { return false; } };
+  const root = () => document.querySelector('#game_container') || document.body;
+  const button = () => root()?.querySelector('form[action="/iminjail.php"] input[type="submit"][name="buymeout"], input[type="submit"][name="buymeout"]') || null;
+  const jailed = () => {
+    const r = root();
+    if (!r) return false;
+    if (button()) return true;
+    const txt = String(r.innerText || r.textContent || '').replace(/\s+/g,' ').trim();
+    return /You are in jail for the next|Je zit in de gevangenis voor de komende|Koop jezelf uit|Buy yourself out/i.test(txt);
+  };
+
+  async function run(source='module'){
+    if (!enabled()) return {free:!jailed(), handled:false, reason:'buyout-disabled'};
+    if (!jailed()) return {free:true, handled:false, reason:'not-jailed'};
+
+    const started = Date.now();
+    let clicks = 0;
+    while (enabled() && jailed()) {
+      if (unsafeWindow.mrbSessionSafeMode?.active?.()) return {free:false, handled:true, clicks, reason:'safe-mode'};
+      const btn = button();
+      if (btn && !btn.disabled) {
+        try { btn.click(); clicks++; } catch(_) {}
+      }
+      // Wacht op de echte server/DOM-update. Alleen als jail nog zichtbaar is,
+      // mag dezelfde gedeelde controller opnieuw uitkopen.
+      await sleep(1200);
+      if (Date.now() - started > 60000) return {free:!jailed(), handled:true, clicks, reason:'timeout'};
+    }
+    return {free:!jailed(), handled:true, clicks, reason:'released'};
+  }
+
+  unsafeWindow.mrbJailBuyoutControl = Object.freeze({
+    enabled,
+    isJailed: jailed,
+    ensureFree(source='module'){
+      if (activePromise) return activePromise;
+      activePromise = run(source).finally(()=>{ activePromise = null; });
+      return activePromise;
+    }
+  });
+})();
+
 // 12) BOOZEN — Barafranca NL direct fix
 // =====================================================================
 (function CDBoozen(){
@@ -7294,32 +7744,9 @@ try {
   let on = GM_Get(K_ON, false);
   let forceSmuggling = !!GM_Get(K_FORCE, false);
   let busy = false;
-  let plannerManaged = false;
-  let plannerNextAt = Date.now() + 1500;
+  let formRecoveryPromise = null;
 
-  // v11.4: ook de losse Boozen-module gebruikt de centrale actielease.
-  let boozenCoreStage = 'IDLE';
-  let boozenLastError = '';
-  let boozenTransactions = Number(GM_Get('mrb_boozen_core_transactions', 0)) || 0;
-  let boozenActionContext = null;
-  const BOOZEN_ACTION_TTL = 90_000;
-  function boozenAcquireAction(context){
-    if (!plannerManaged) return true;
-    if (context) boozenActionContext = context;
-    try {
-      if (boozenActionContext?.touchAction?.(BOOZEN_ACTION_TTL)) return true;
-      return !!boozenActionContext?.acquireAction?.(BOOZEN_ACTION_TTL);
-    } catch(e) { return false; }
-  }
-  function boozenTouchAction(){
-    if (!plannerManaged) return true;
-    try { return !!boozenActionContext?.touchAction?.(BOOZEN_ACTION_TTL); }
-    catch(e) { return false; }
-  }
-  function boozenReleaseAction(){
-    try { boozenActionContext?.releaseAction?.(); } catch(e) {}
-    boozenActionContext = null;
-  }
+  // TEST19: een runtimepad; scheduling loopt uitsluitend via mrbSetTimeout.
 
   let rumAmount = Number(GM_Get(K_RUM, 40)) || 40;
   let cocaineAmount = Number(GM_Get(K_COKE, 13)) || 13;
@@ -7366,7 +7793,7 @@ try {
     if (btn) btn.textContent = on ? 'Stop' : 'Start';
     if (forceBox) forceBox.checked = !!forceSmuggling;
     if (st) st.innerHTML = on
-      ? `<span class="ok">✅ Actief${plannerManaged ? ' — 🧭 V9 Planner' : ''}</span>`
+      ? '<span class="ok">✅ Actief</span>'
       : '<span class="bad">⛔</span>';
 
     if (amountStatus) amountStatus.textContent = `${rumAmount}/${cocaineAmount}`;
@@ -7388,7 +7815,7 @@ try {
     ui();
   }
 
-  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  const sleep = (ms) => new Promise(r => mrbSetTimeout(r, ms));
 
   function onSmugglingPage(){
     const h = String(location.href || '');
@@ -7413,63 +7840,52 @@ try {
   }
 
   function goSmugglingPage(){
-    boozenCoreStage = 'OPEN_SMUGGLING';
-    boozenTouchAction();
-    try {
-      if (unsafeWindow?.omerta?.GUI?.container?.loadPage) {
-        unsafeWindow.mrbNavigate?.('/smuggling.php',{source:'boozen'}) || unsafeWindow.omerta.GUI.container.loadPage('/smuggling.php');
-        return;
-      }
-    } catch(e) {}
-
-    try {
-      location.hash = '/smuggling.php';
-    } catch(e) {}
+    return unsafeWindow.mrbNavigate?.('/smuggling.php',{source:'boozen'}) === true;
   }
 
-  let forceLastNav = 0;
-  let forceHashRetry = false;
+  // TEST19F: een buyout/transactieresultaat kan dezelfde /smuggling.php-route
+  // behouden terwijl het echte formulier ontbreekt. Geen omweg via Mijn Account:
+  // de centrale navigator krijgt voor precies deze situatie een expliciete
+  // same-route recovery en blijft daarmee de enige navigation owner.
+  async function ensureSmugglingForm(timeoutMs=6500){
+    if (hasSmugglingForm()) return true;
+    if (formRecoveryPromise) return formRecoveryPromise;
 
-  function forceSmugglingWatchdog(){
-    if (plannerManaged || !on || !forceSmuggling) return;
+    formRecoveryPromise = (async()=>{
+      if (unsafeWindow.mrbJailBuyoutControl?.isJailed?.()) return false;
 
-    const onSmug = onSmugglingPage();
-    const hasForm = hasSmugglingForm();
-
-    // Belangrijk:
-    // Na een mislukte smokkelactie blijf je soms op #/smuggling.php,
-    // maar zonder Rum/Cocaine formulier. Dan moet Smokkelen opnieuw geladen worden.
-    if (onSmug && hasForm) {
-      forceHashRetry = false;
-      return;
-    }
-
-    const now = Date.now();
-    if (now - forceLastNav < 1200) return;
-    forceLastNav = now;
-
-    try {
-      if (location.hash !== '#/smuggling.php') {
-        location.hash = '/smuggling.php';
-        forceHashRetry = true;
-        return;
+      const sameRoute = /smuggling\.php/i.test(String(location.href || ''));
+      if (sameRoute && !hasSmugglingForm()) {
+        try {
+          unsafeWindow.mrbNavigate?.('/smuggling.php',{
+            source:'boozen-result-recovery',
+            sameRouteRecovery:true
+          });
+        } catch(_) {}
+      } else {
+        goSmugglingPage();
       }
-    } catch(e) {}
 
-    try {
-      if (unsafeWindow?.omerta?.GUI?.container?.loadPage) {
-        unsafeWindow.mrbNavigate?.('/smuggling.php',{source:'boozen'}) || unsafeWindow.omerta.GUI.container.loadPage('/smuggling.php');
-        forceHashRetry = false;
-        return;
+      const started = Date.now();
+      while (Date.now() - started < timeoutMs) {
+        await sleep(200);
+        if (unsafeWindow.mrbSessionSafeMode?.active?.()) return false;
+        if (unsafeWindow.mrbJailBuyoutControl?.isJailed?.()) return false;
+        if (hasSmugglingForm()) return true;
+        // Een hogere-prioriteitsmodule mag de pagina overnemen. In dat geval
+        // stopt deze transactie schoon; de bestaande hoofdloop probeert later opnieuw.
+        if (!/smuggling\.php/i.test(String(location.href || '')) && !onSmugglingPage()) return false;
       }
-    } catch(e) {}
+      return false;
+    })().finally(()=>{ formRecoveryPromise = null; });
 
-    // Laatste fallback: forceer dezelfde hash opnieuw via lege hash.
-    try {
-      location.hash = '';
-      setTimeout(() => { location.hash = '/smuggling.php'; }, 100);
-    } catch(e) {}
+    return formRecoveryPromise;
   }
+
+  const shortSettle = () => 900 + Math.floor(Math.random()*501);
+  const shortInputDelay = () => 250 + Math.floor(Math.random()*201);
+
+  // TEST19: oude 1s force-watchdog verwijderd; de hoofdloop is de enige Boozen-runner.
 
   function getMaxFromHeader(type){
     const root = document.querySelector('#game_container') || document.body;
@@ -7505,24 +7921,92 @@ try {
         || null;
   }
 
-  function fillAmounts(){
+  function setTradeMode(name, value){
     const form = findForm();
     const root = form || document;
+    const radio = root.querySelector(`input[type="radio"][name="${name}"][value="${value}"]`);
+    if (!radio) return false;
+    if (!radio.checked) {
+      try { radio.click(); } catch { radio.checked = true; }
+      try { radio.dispatchEvent(new Event('change', { bubbles:true })); } catch {}
+    }
+    return !!radio.checked;
+  }
+
+  function readPocketInventory(){
+    const form = findForm();
+    const root = form || document;
+    const rows = Array.from(root.querySelectorAll('tr'));
+    const items = [];
+
+    for (const row of rows) {
+      const input = row.querySelector('input[type="text"][name]');
+      if (!input) continue;
+      const tds = row.querySelectorAll('td');
+      if (!tds || tds.length < 3) continue;
+      const unitTxt = String(tds[2].textContent || '').replace(/[^\d-]/g,'');
+      const unit = Number.parseInt(unitTxt || '0',10);
+      items.push({
+        name:String(input.name || '').toLowerCase(),
+        input,
+        unit:Number.isFinite(unit) ? Math.max(0,unit) : 0,
+        group: row.closest('.smuggling-booze') ? 'booze' : (row.closest('.smuggling-drugs') ? 'drugs' : '')
+      });
+    }
+    return items;
+  }
+
+  function targetInventorySatisfied(items){
+    if (!Array.isArray(items) || !items.length) return false;
+    let rum=0, coke=0, other=0;
+    for (const item of items) {
+      if (item.name === 'rum') rum += item.unit;
+      else if (item.name === 'cocaine') coke += item.unit;
+      else other += item.unit;
+    }
+    const maxRum = getMaxFromHeader('rum');
+    const maxCoke = getMaxFromHeader('cocaine');
+    const targetRum = Math.min(rumAmount, maxRum ?? rumAmount);
+    const targetCoke = Math.min(cocaineAmount, maxCoke ?? cocaineAmount);
+    return other === 0 && rum === targetRum && coke === targetCoke;
+  }
+
+  function prepareSellAll(items){
+    const form = findForm();
+    const root = form || document;
+    root.querySelectorAll('input[type="text"][name]').forEach(input => setValue(input,0));
+
+    let booze=false, drugs=false, total=0;
+    for (const item of items || []) {
+      if (!item?.input || item.unit <= 0) continue;
+      setValue(item.input,item.unit);
+      total += item.unit;
+      if (item.group === 'booze' || /rum|wine|cognac|whiskey|amaretto|beer|port/i.test(item.name)) booze=true;
+      if (item.group === 'drugs' || /morfine|morphine|heroine|opium|cocaine|marihuana|marijuana|tabak|tobacco|lijm|glue/i.test(item.name)) drugs=true;
+    }
+    if (booze) setTradeMode('typebooze','sellbooze');
+    if (drugs) setTradeMode('typedrugs','selldrugs');
+    return total > 0;
+  }
+
+  function prepareBuyTargets(){
+    const form = findForm();
+    const root = form || document;
+    root.querySelectorAll('input[type="text"][name]').forEach(input => setValue(input,0));
 
     const rum = root.querySelector('input[name="rum"]');
     const cocaine = root.querySelector('input[name="cocaine"]');
-
     if (!rum || !cocaine) return false;
 
     const maxRum = getMaxFromHeader('rum');
     const maxCoke = getMaxFromHeader('cocaine');
-
     const rumValue = Math.min(rumAmount, maxRum ?? rumAmount);
     const cokeValue = Math.min(cocaineAmount, maxCoke ?? cocaineAmount);
 
     const okRum = setValue(rum, rumValue);
     const okCoke = setValue(cocaine, cokeValue);
-
+    if (rumValue > 0) setTradeMode('typebooze','buybooze');
+    if (cokeValue > 0) setTradeMode('typedrugs','buydrugs');
     return okRum && okCoke;
   }
 
@@ -7539,11 +8023,11 @@ try {
   function clickKoopVerkoop(){
     if (unsafeWindow.mrbSessionSafeMode?.active?.()) return false;
     const form = findForm();
-    const root = form || document;
+    if (!form || !onSmugglingPage()) return false;
+    const root = form;
 
     const btn =
       root.querySelector('input[type="submit"][value="Koop/Verkoop"]') ||
-      root.querySelector('input[type="submit"]') ||
       Array.from(root.querySelectorAll('button, input[type="button"], input[type="submit"]'))
         .find(b => /Koop\/Verkoop|Buy\/Sell|Kopen|Verkopen/i.test(String(b.value || b.textContent || '')));
 
@@ -7571,50 +8055,55 @@ try {
     busy = true;
 
     try {
-      if (!onSmugglingPage()){
-        // Barafranca NL gebruikt hash-route: index.php#/smuggling.php
-        goSmugglingPage();
-
-        await sleep(3000);
-
-        if (!onSmugglingPage()) {
-          await sleep(1500);
-          return;
-        }
+      // Gedeelde jail-controller: pas verder wanneer de server echt vrij meldt.
+      if (unsafeWindow.mrbJailBuyoutControl?.isJailed?.()) {
+        const jr = await unsafeWindow.mrbJailBuyoutControl.ensureFree('boozen');
+        if (!jr?.free) return;
       }
 
-      if (!hasSmugglingForm()){
-        goSmugglingPage();
-        await sleep(2500);
-        return;
-      }
+      // Na jail/resultaat kan de URL nog smuggling zijn terwijl het formulier weg is.
+      // Een transactie bezit daarom precies een formulier-herstelpoging.
+      if (!await ensureSmugglingForm()) return;
 
-      const filled = fillAmounts();
+      let inventory = readPocketInventory();
 
-      if (!filled){
-        await sleep(1000);
-        return;
-      }
+      // Iedere actieve Boozen-cyclus verkoopt eerst alles wat nog op zak is.
+      // Daardoor ontstaat altijd genoeg pocketruimte voor de daaropvolgende koop.
+      if (inventory.some(item => item.unit > 0)) {
+        const preparedSell = prepareSellAll(inventory);
+        if (!preparedSell) return;
+        await sleep(shortInputDelay());
+        if(unsafeWindow.mrbManualControl?.isPaused?.() || unsafeWindow.mrbSessionSafeMode?.active?.()) return;
 
-      await sleep(400);
+        const beforeSellMoney = readDashboardMoney();
+        if (!clickKoopVerkoop()) return;
+        await sleep(shortSettle());
 
-      const beforeMoney = readDashboardMoney();
-      const clicked = clickKoopVerkoop();
-
-      await sleep(3500);
-
-      if (clicked) {
-        const afterMoney = readDashboardMoney();
-        if (beforeMoney != null && afterMoney != null) {
-          const diff = afterMoney - beforeMoney;
+        const afterSellMoney = readDashboardMoney();
+        if (beforeSellMoney != null && afterSellMoney != null) {
+          const diff = afterSellMoney - beforeSellMoney;
           if (diff > 0) {
             try { unsafeWindow.mrbDashMetrics?.recordBoozenProfit?.(diff); } catch(e) {}
           }
         }
+
+        if (!await ensureSmugglingForm()) return;
+        inventory = readPocketInventory();
+        if (inventory.some(item => item.unit > 0)) return; // alleen verder na serverbevestigde lege pocket
       }
+
+      // Pocket is nu leeg: koop de ingestelde Rum/Cocaine-doelvoorraad.
+      if (!prepareBuyTargets()) return;
+      await sleep(shortInputDelay());
+      if(unsafeWindow.mrbManualControl?.isPaused?.() || unsafeWindow.mrbSessionSafeMode?.active?.()) return;
+      if (!clickKoopVerkoop()) return;
+      await sleep(shortSettle());
+
+      // Geen 'doelvoorraad = klaar'-eindstatus meer. De volgende hoofdloop
+      // verkoopt deze voorraad weer en koopt opnieuw, zolang Boozen actief is.
     } finally {
       busy = false;
-      if (on && !plannerManaged) setTimeout(loop, 1200);
+      if (on) mrbSetTimeout(loop, 700);
     }
   }
 
@@ -7625,14 +8114,7 @@ try {
       on = !on;
       GM_Set(K_ON, on);
       ui();
-      if (on) {
-        if (plannerManaged) {
-          plannerNextAt = Date.now()+250;
-          try { unsafeWindow.mrbV9Planner?.updateTask?.('v9-boozen', { nextAt:plannerNextAt, enabled:true, status:'start aangevraagd' }); } catch(e) {}
-        } else {
-          loop();
-        }
-      }
+      if (on) loop();
     });
   }
 
@@ -7660,109 +8142,19 @@ try {
     inp.addEventListener('change', saveAmounts);
   });
 
-  mrbSetInterval(forceSmugglingWatchdog, 1000);
-  window.addEventListener('hashchange', () => setTimeout(forceSmugglingWatchdog, 50), true);
-  window.addEventListener('popstate', () => setTimeout(forceSmugglingWatchdog, 50), true);
-  document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) setTimeout(forceSmugglingWatchdog, 50);
-  }, true);
-
-  async function plannerStep(context){
-    if (!on) {
-      boozenCoreStage = 'IDLE';
-      boozenReleaseAction();
-      return { delayMs:15_000, status:'module staat uit' };
-    }
-    if (typeof gm_isGateVisible === 'function' && gm_isGateVisible()) {
-      boozenCoreStage = 'PAUSED_GATE';
-      boozenReleaseAction();
-      return { delayMs:5000, status:'pauze gate/captcha' };
-    }
-    if (busy) {
-      boozenTouchAction();
-      return { delayMs:1000, status:`exclusief bezig: ${boozenCoreStage}` };
-    }
-    if (!boozenAcquireAction(context)) {
-      return { delayMs:750, status:'wacht op centrale actielock' };
-    }
-
-    busy = true;
-    try {
-      if (!onSmugglingPage() || !hasSmugglingForm()) {
-        boozenCoreStage = 'OPEN_SMUGGLING';
-        goSmugglingPage();
-        plannerNextAt = Date.now()+5000;
-        return { nextAt:plannerNextAt, status:'Smokkelen openen' };
-      }
-
-      boozenCoreStage = 'FILL_AMOUNTS';
-      if (!fillAmounts()) {
-        plannerNextAt = Date.now()+5000;
-        return { nextAt:plannerNextAt, status:'wacht op invoervelden' };
-      }
-
-      await sleep(400);
-      boozenTouchAction();
-      boozenCoreStage = 'SUBMIT';
-      const beforeMoney = readDashboardMoney();
-      const clicked = clickKoopVerkoop();
-      if (!clicked) {
-        boozenLastError = 'Koop/Verkoop-knop niet gevonden';
-        plannerNextAt = Date.now()+10_000;
-        return { nextAt:plannerNextAt, status:boozenLastError };
-      }
-
-      boozenCoreStage = 'WAIT_RESULT';
-      await sleep(3500);
-      boozenTouchAction();
-      const afterMoney = readDashboardMoney();
-      if (beforeMoney != null && afterMoney != null) {
-        const diff = afterMoney - beforeMoney;
-        if (diff > 0) {
-          try { unsafeWindow.mrbDashMetrics?.recordBoozenProfit?.(diff); } catch(e) {}
-        }
-      }
-      boozenTransactions += 1;
-      GM_Set('mrb_boozen_core_transactions', boozenTransactions);
-      boozenLastError = '';
-      boozenCoreStage = 'IDLE';
-      plannerNextAt = Date.now()+30_000;
-      return { nextAt:plannerNextAt, status:`actie uitgevoerd; transacties ${boozenTransactions}` };
-    } catch(e) {
-      boozenLastError = String(e?.message || e || 'onbekende fout').slice(0,120);
-      boozenCoreStage = 'ERROR';
-      plannerNextAt = Date.now()+10_000;
-      try { console.warn('[Boozen planner]', e); } catch(_) {}
-      return { nextAt:plannerNextAt, status:'fout, retry' };
-    } finally {
-      busy = false;
-      boozenReleaseAction();
-    }
-  }
-
-  unsafeWindow.mrbV9Boozen = {
-    setPlannerManaged(value){
-      plannerManaged = !!value;
-      ui();
-    },
-    isRunning:()=>!!on,
-    nextAt:()=> on ? plannerNextAt : Date.now()+15_000,
-    runStep:plannerStep,
-    state:()=>({ on, busy, forceSmuggling, plannerNextAt, coreStage:boozenCoreStage, lastError:boozenLastError, transactions:boozenTransactions })
-  };
-
   ui();
-  if (on && !plannerManaged) {
+  if (on) {
     if (forceSmuggling && !onSmugglingPage()) goSmugglingPage();
-    setTimeout(loop, 1200);
+    mrbSetTimeout(loop, 1200);
   }
 })();
 
 
 // =====================================================================
-// MRB GOLD EDITION v9.7.0 — FASE 8
-// - OC idle/cooldown-wake-up gekoppeld aan de centrale V9 Planner.
-// - Bestaande OC rollen en uitbetalingen blijven intact.
+// MRB GOLD TEST22 — OC CLEANUP
+// - OC is nog PREP-only: geen pagina-acties totdat actuele HTML-selectors zijn gekoppeld.
+// - Oude V9 planner/task-wrapper en kunstmatige 60s polling zijn verwijderd.
+// - Toggle, rollen, requirements en state registry blijven de enige OC-bron.
 // =====================================================================
 
 // =====================================================================
@@ -7789,12 +8181,9 @@ try {
 ;(function MRBV11127OCPreparation(){
   'use strict';
 
-  const TASK_ID = 'v9-oc';
   const PREP_MODE = true;
   const K_ON = 'oc_scriptAan';
   const K_ROLE = 'oc_role';
-  const K_STATE = 'mrb_v117_oc_state';
-  const K_NEXT = 'mrb_v117_oc_next_at';
   const ROLE_KEYS = Object.freeze({ dr:'oc_dr', ee:'oc_ee', we:'oc_we' });
   const VALID_ROLES = Object.freeze(['leader','dr','ee','we']);
   const ROLE_LABELS = Object.freeze({
@@ -7816,7 +8205,6 @@ try {
   if (!VALID_ROLES.includes(role)) role = 'leader';
   let requestedEnabled = !!GM_Get(K_ON,false);
   let state = requestedEnabled ? 'PREP_WAIT_HTML' : 'IDLE';
-  let nextAt = Date.now() + 60_000;
 
   function names(){
     return {
@@ -7832,7 +8220,7 @@ try {
   function registry(){ return unsafeWindow.mrbModuleStateRegistry; }
   function publish(detail=''){
     registry()?.set?.('oc',{
-      state, detail, enabled:requestedEnabled, requestedEnabled, prepMode:true, role, nextAt,
+      state, detail, enabled:requestedEnabled, requestedEnabled, prepMode:true, role,
       participants:names(), requirements:ROLE_REQUIREMENTS, lastUpdate:Date.now()
     });
   }
@@ -7908,41 +8296,35 @@ try {
     requestedEnabled=!requestedEnabled;
     GM_Set(K_ON,requestedEnabled);
     state=requestedEnabled?'PREP_WAIT_HTML':'IDLE';
-    nextAt=requestedEnabled?Date.now()+60_000:0;
-    GM_Set(K_STATE,state);
-    GM_Set(K_NEXT,nextAt);
     publish(requestedEnabled?'OC actief; wacht op HTML-koppeling':'OC handmatig gestopt');
     paint();
     try{ unsafeWindow.__mrbRefreshCategories?.(); }catch(e){}
   });
-
-  async function runStep(context){
-    try{ context?.releaseAction?.(); }catch(e){}
-    if(!requestedEnabled){
-      state='IDLE'; nextAt=0; GM_Set(K_STATE,state); GM_Set(K_NEXT,nextAt); publish('OC staat uit');
-      return {nextAt:0,status:'OC uit',enabled:false};
-    }
-    state='PREP_WAIT_HTML';
-    nextAt=Date.now()+60_000;
-    GM_Set(K_STATE,state);
-    GM_Set(K_NEXT,nextAt);
-    publish('OC bewust geblokkeerd tot actuele HTML-selectors zijn gekoppeld');
-    return {nextAt,status:'OC voorbereiding: wacht op HTML',enabled:true};
-  }
 
   unsafeWindow.mrbOCPreparation = Object.freeze({
     version:'11.12.7', prepMode:PREP_MODE, roles:VALID_ROLES, labels:ROLE_LABELS,
     requirements:ROLE_REQUIREMENTS, flow:FLOW, names, validate:validatePreparation,
     payoutQueue:buildPayoutQueue, htmlAdapter
   });
+  // TEST22: kleine compatibele controller. Geen scheduler/planner-eigenaarschap meer;
+  // `isPlannerManaged()` blijft alleen als legacy read-only alias zodat oudere
+  // GroupCrimes-guards geen OC-acties uitvoeren terwijl de PREP-toggle aan staat.
   unsafeWindow.mrbOC2Control = Object.freeze({
-    version:'11.12.7-prep-toggle', isEnabled:()=>requestedEnabled, isPlannerManaged:()=>true,
-    role:()=>role, state:()=>state, prepMode:()=>true
+    version:'6.0.0-test22-oc-clean', isEnabled:()=>requestedEnabled, isPlannerManaged:()=>requestedEnabled,
+    ownsFlow:()=>requestedEnabled, role:()=>role, state:()=>state, prepMode:()=>true,
+    getState:()=>({enabled:requestedEnabled,requestedEnabled,prepMode:true,role,state,...validatePreparation()})
   });
-  unsafeWindow.mrbV9OC = {
-    version:'11.12.7-prep', setPlannerManaged(){}, nextAt:()=>nextAt,
-    runStep, wake(){ nextAt=Date.now(); unsafeWindow.mrbV9Planner?.updateTask?.(TASK_ID,{nextAt,status:'OC wacht op HTML'}); },
-    getState:()=>({enabled:requestedEnabled,requestedEnabled,prepMode:true,role,state,nextAt,...validatePreparation()})
+
+  unsafeWindow.cc_api = unsafeWindow.cc_api || {};
+  unsafeWindow.cc_api.ocSet = function(on, why='master'){
+    on=!!on;
+    if(on===requestedEnabled) return;
+    requestedEnabled=on;
+    GM_Set(K_ON,requestedEnabled);
+    state=requestedEnabled?'PREP_WAIT_HTML':'IDLE';
+    publish(requestedEnabled?`OC actief (${why}); wacht op HTML-koppeling`:`OC gestopt (${why})`);
+    paint();
+    try{ unsafeWindow.__mrbRefreshCategories?.(); }catch(e){}
   };
 
   paint();
@@ -7952,7 +8334,7 @@ try {
 // =====================================================================
 // =====================================================================
 // MRB GOLD EDITION v9.2.0 — FASE 3
-// - Crimes en Cars als eerste modules gekoppeld aan de centrale V9 Planner.
+// - Historische Crimes/Cars planner-migratie; runtime loopt nu uitsluitend via Unified Scheduler.
 // - De bestaande bewezen uitvoerflow blijft behouden.
 // - De losse 1-seconde interval wordt in planner-modus uitgeschakeld.
 // - Legacy D&D is uit dit Crimes/Cars-blok verwijderd; de aparte centrale D&D-module is exclusief.
@@ -7968,7 +8350,6 @@ try {
   const CARS_QS        = '/?module=Cars';
   const SMUGGLING_QS   = '/smuggling.php';
 
-  const TICK_MS = 1000;
   const CLICK_TIMEOUT_MS = 1500; // aangepast van 8000 naar 1500
 
   // Variabele vertraging voor Crimes / Cars acties (instelbaar via Timer-blok)
@@ -8004,13 +8385,38 @@ try {
   const K_DD_RETRY     = 'cc_dd_retry';
   const K_JAIL_UNTIL   = 'cc_jail_until';
 
+  // TEST8: korte lease op identieke Crimes/Cars-SPA navigatie.
+  // Dit voorkomt dat meerdere scheduler-wakes dezelfde modulepagina opnieuw
+  // aanvragen terwijl de eerste Omerta loadPage nog bezig is.
+  let ccNavLeaseTarget = '';
+  let ccNavLeaseUntil = 0;
+
   // ---- SPA loader
   const loadPage = (()=>{
     const blocked=()=>{ try{return !!unsafeWindow.mrbSessionSafeMode?.active?.();}catch(_){return false;} };
     try{
       const gui = unsafeWindow?.omerta?.GUI?.container;
-      if (unsafeWindow.mrbNavigate) return h=>blocked()?false:unsafeWindow.mrbNavigate(h,{source:'crimes-cars'});
-      if (gui && typeof gui.loadPage === 'function') return h=>blocked()?false:gui.loadPage(h);
+      if (unsafeWindow.mrbNavigate) return h=>{
+        if (blocked()) return false;
+        const now=Date.now();
+        if (h===ccNavLeaseTarget && now<ccNavLeaseUntil){
+          try { unsafeWindow.mrbUnifiedDiagnostics?.add?.('CC_NAV_SUPPRESS',{target:h,remaining:ccNavLeaseUntil-now}); } catch(_) {}
+          return true;
+        }
+        ccNavLeaseTarget=h; ccNavLeaseUntil=now+8000;
+        const ok=unsafeWindow.mrbNavigate(h,{source:'crimes-cars'});
+        if (!ok){ ccNavLeaseTarget=''; ccNavLeaseUntil=0; }
+        return ok;
+      };
+      if (gui && typeof gui.loadPage === 'function') return h=>{
+        if (blocked()) return false;
+        const now=Date.now();
+        if (h===ccNavLeaseTarget && now<ccNavLeaseUntil) return true;
+        ccNavLeaseTarget=h; ccNavLeaseUntil=now+8000;
+        const ok=unsafeWindow.mrbNavigate?.(h,{source:'crimes-cars'}) ?? false;
+        if (!ok){ ccNavLeaseTarget=''; ccNavLeaseUntil=0; }
+        return ok;
+      };
     }catch{}
     return h=>{
       if (blocked()) return false;
@@ -8076,7 +8482,78 @@ try {
     catch{ el.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,view:window})); }
   }
 
-  function sleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
+  // TEST12: BaraFranca kan na een afgeronde Race een Race-resultaattekst in de
+  // game-container laten staan terwijl de URL al naar Crimes/Cars is gewijzigd.
+  // Dat is geen geldige Crimes/Cars-pagina en mag dus nooit in een navigatieretrylus
+  // terechtkomen. We geven de CC-owner vrij, synchroniseren via Mijn Account en
+  // begrenzen volgende pogingen met een oplopende korte recovery-wacht.
+  let ccForeignRecoveryUntil = 0;
+  let ccForeignRecoveryStreak = 0;
+  let ccForeignRecoveryLastAt = 0;
+  function ccForeignResultNotice(){
+    const t = norm(gameContainer()?.innerText || document.body?.innerText || '');
+    return /(?:de\s+race\s+is\s+afgelopen|race\s+is\s+afgelopen).*?(?:postbus|resultat)|(?:the\s+race\s+(?:is|has)\s+(?:over|ended|finished)).*?(?:inbox|result)/i.test(t);
+  }
+  function recoverFromForeignResult(kind){
+    const now=Date.now();
+    if (now-ccForeignRecoveryLastAt > 60000) ccForeignRecoveryStreak=0;
+    ccForeignRecoveryLastAt=now;
+    ccForeignRecoveryStreak=Math.min(4,ccForeignRecoveryStreak+1);
+    const delay=[0,4000,8000,15000,25000][ccForeignRecoveryStreak] || 25000;
+    ccForeignRecoveryUntil=now+delay;
+    try{ unsafeWindow.mrbRaceTransaction?.release?.(); }catch(_){}
+    try{ unsafeWindow.mrbFlightRecorder?.add?.('CC_FOREIGN_RESULT',{kind,delay,href:String(location.href||''),streak:ccForeignRecoveryStreak}); }catch(_){}
+    try{ unsafeWindow.mrbUnifiedDiagnostics?.add?.('CC_FOREIGN_RESULT',{kind,delay,href:String(location.href||''),streak:ccForeignRecoveryStreak}); }catch(_){}
+    if(kind==='crimes'){ crimesServerReady=false; crimesServerSyncAt=0; }
+    if(kind==='cars'){ carsServerReady=false; carsServerSyncAt=0; }
+    busy=false; current=''; stopWaiters(); paint();
+    loadPage('/information.php');
+    mrbSetTimeout(()=>{
+      if(!running || pausedCaptcha || isLoggedOut()) return;
+      try{ resyncFromInfo(); }catch(_){}
+      try{ unsafeWindow.mrbUnifiedRunnableDispatcher?.dispatch?.(); }catch(_){}
+    }, Math.max(1200,delay));
+    return true;
+  }
+
+  // TEST9: een Crimes/Cars-actie mag nooit meer een knop op een willekeurige
+  // handmatig geopende pagina gebruiken. De scheduler mag de intentie bewaren,
+  // maar execute-permission bestaat alleen op de exacte modulepagina.
+  function onExactCrimesCarsPage(kind){
+    const href = String(location.href || '');
+    const gc = gameContainer();
+    const cls = String(gc?.className || '');
+    if (kind === 'crimes') {
+      const root = document.querySelector('#module_Crimes, #crime-choices');
+      return !!root && (/[?&#/]module=Crimes(?:\b|$)/i.test(href) || /module[_-]?Crimes|modulelegacy.*crime/i.test(cls) || !!document.querySelector('#crime-choices'));
+    }
+    if (kind === 'cars') {
+      const root = document.querySelector('#module_Cars, #nick-car-choices, #car-choices, #cars-choices, [id*="car"][id*="choices"]');
+      return !!root && (/[?&#/]module=Cars(?:\b|$)/i.test(href) || /module[_-]?Cars|modulelegacy.*car/i.test(cls) || !!document.querySelector('#nick-car-choices, #car-choices, #cars-choices'));
+    }
+    return false;
+  }
+
+  function ccClickBlocked(kind, reason, el){
+    try {
+      console.warn(`[MRB Unified TEST9] ${kind} CLICK BLOCKED: ${reason}`);
+      unsafeWindow.mrbFlightRecorder?.add?.('CC_CLICK_BLOCKED',{kind,reason,href:String(location.href||''),button:norm(el?.value||el?.textContent||'').slice(0,80)});
+      unsafeWindow.mrbUnifiedDiagnostics?.add?.('CC_CLICK_BLOCKED',{kind,reason,href:String(location.href||'')});
+    } catch(_) {}
+    return false;
+  }
+
+  function safeCrimesCarsActionClick(el, kind){
+    if (!el) return ccClickBlocked(kind,'geen element',el);
+    if (!running || pausedCaptcha || current !== kind) return ccClickBlocked(kind,'actie-owner niet meer geldig',el);
+    try { if (unsafeWindow.mrbManualControl?.isPaused?.()) return ccClickBlocked(kind,'handmatige bediening actief',el); } catch(_) {}
+    if (!onExactCrimesCarsPage(kind)) return ccClickBlocked(kind,'verkeerde modulepagina',el);
+    if (!el.isConnected || !isVisible(el) || el.disabled) return ccClickBlocked(kind,'knop niet meer geldig/zichtbaar',el);
+    safeClick(el);
+    return true;
+  }
+
+  function sleep(ms){ return new Promise(r=>mrbSetTimeout(r, ms)); }
 
   function crimeActionDelay(){
     if (typeof unsafeWindow.mrbVarDelayMs === 'function') return unsafeWindow.mrbVarDelayMs();
@@ -8170,7 +8647,7 @@ try {
     safeClick(btn);
     // De knop opent de echte Crimes/Cars-keuzepagina via de menu-handler.
     // Houd dezelfde actiecyclus en lease vast; start geen nieuwe navigatie.
-    setTimeout(()=>{
+    mrbSetTimeout(()=>{
       if (!running || pausedCaptcha || current !== kind) return;
       waitAndClick(kind);
     }, 700);
@@ -8191,6 +8668,15 @@ try {
 
   let crimesNext = Number(GM_Get(K_CR_NEXT, Date.now())) || Date.now();
   let carsNext   = Number(GM_Get(K_CA_NEXT, Date.now())) || Date.now();
+
+  // 6.0.0-test3: de Unified Scheduler mag Crimes/Cars alleen runnable maken
+  // wanneer Mijn Account (zichtbaar of via background sync) dit server-side bevestigt.
+  // Lokale afteldeadlines zijn uitsluitend UI/planning en nooit meer toestemming om te navigeren.
+  let crimesServerReady = false;
+  let carsServerReady = false;
+  let crimesServerSyncAt = 0;
+  let carsServerSyncAt = 0;
+  const SERVER_READY_FRESH_MS = 30_000;
   let crimesLastAttempt = Number(GM_Get(K_CR_ATTEMPT, 0)) || 0;
   let carsLastAttempt   = Number(GM_Get(K_CA_ATTEMPT, 0)) || 0;
   let ddRetryAt  = Number(GM_Get(K_DD_RETRY, 0)) || 0;
@@ -8199,8 +8685,6 @@ try {
   let ddBoozeReady = false;
   let ddDrugsReady = false;
 
-  let tickId = null;
-  let plannerMode = false;
   let captchaObserver = null;
   let pausedCaptcha = false;
   let beeped = false;
@@ -8259,15 +8743,29 @@ try {
   }
 
   function applyServerDeadline(kind, remaining, source='sync'){
-    if (!acceptServerDeadline(kind, remaining, source)) return false;
-    const next = Date.now() + Math.max(0, Number(remaining) || 0);
+    if (remaining === null || remaining === undefined) return false;
+    const now = Date.now();
+    const ms = Math.max(0, Number(remaining) || 0);
+    const next = now + ms;
+    const ready = ms <= 0;
+
+    // TEST3: serverinformatie is leidend, ook wanneer een lokale deadline al op Nu stond.
+    // Hiermee kan een driftende lokale timer nooit meer een vroege Crimes/Cars-run afdwingen.
     if (kind === 'crimes'){
       crimesNext = next;
+      crimesServerReady = ready;
+      crimesServerSyncAt = now;
       GM_Set(K_CR_NEXT, crimesNext);
     } else {
       carsNext = next;
+      carsServerReady = ready;
+      carsServerSyncAt = now;
       GM_Set(K_CA_NEXT, carsNext);
     }
+    try {
+      if (!ready && ms > 0) console.debug(`[MRB Unified TEST5] ${kind} niet runnable: server ${Math.ceil(ms/1000)}s`);
+      if (ready) console.log(`[MRB Unified TEST5] ${kind} runnable door serverbevestiging (${source})`);
+    } catch(_) {}
     return true;
   }
 
@@ -8306,8 +8804,7 @@ try {
     const jail = jailPauseActive() ? ` — ⏸️ Jail ${Math.ceil((jailUntil - Date.now())/1000)}s` : '';
     const early = forcedRetryActive() ? ` — ⏳ Retry ${forcedRetryKind} ${Math.ceil((forcedRetryUntil - Date.now())/1000)}s` : '';
     const conf = confirmPendingKind ? ` — 🔎 Confirm ${confirmPendingKind}` : '';
-    const plan = plannerMode ? ' — 🧭 V9 Planner' : '';
-    return `${r}${cap}${gate}${jail}${early}${conf}${plan}`;
+    return `${r}${cap}${gate}${jail}${early}${conf}`;
   }
 
   function paint(){
@@ -8347,14 +8844,14 @@ try {
 
   function stopWaiters(){
     if (obs){ try{obs.disconnect();}catch{} obs=null; }
-    if (clickTimeoutId){ clearTimeout(clickTimeoutId); clickTimeoutId=null; }
-    if (outcomeTimeoutId){ clearTimeout(outcomeTimeoutId); outcomeTimeoutId=null; }
-    if (crimeActionTimerId){ clearTimeout(crimeActionTimerId); crimeActionTimerId=null; }
+    if (clickTimeoutId){ mrbClearTimeout(clickTimeoutId); clickTimeoutId=null; }
+    if (outcomeTimeoutId){ mrbClearTimeout(outcomeTimeoutId); outcomeTimeoutId=null; }
+    if (crimeActionTimerId){ mrbClearTimeout(crimeActionTimerId); crimeActionTimerId=null; }
   }
 
   function clearForcedRetry(){
     if (forcedRetryTimerId){
-      clearTimeout(forcedRetryTimerId);
+      mrbClearTimeout(forcedRetryTimerId);
       forcedRetryTimerId = null;
     }
     forcedRetryKind = '';
@@ -8363,7 +8860,7 @@ try {
 
   function stopConfirmSync(){
     if (confirmObs){ try{ confirmObs.disconnect(); }catch{} confirmObs = null; }
-    if (confirmTimeoutId){ clearTimeout(confirmTimeoutId); confirmTimeoutId = null; }
+    if (confirmTimeoutId){ mrbClearTimeout(confirmTimeoutId); confirmTimeoutId = null; }
     confirmPendingKind = '';
   }
 
@@ -8413,9 +8910,11 @@ try {
 
     if (kind === 'crimes'){
       crimesNext = targetTs;
+      crimesServerReady = false;
       GM_Set(K_CR_NEXT, crimesNext);
     } else if (kind === 'cars'){
       carsNext = targetTs;
+      carsServerReady = false;
       GM_Set(K_CA_NEXT, carsNext);
     }
 
@@ -8481,7 +8980,7 @@ if (pausedCaptcha){
         resumeKind = '';
         resumePhase = '';
 
-        setTimeout(()=>{
+        mrbSetTimeout(()=>{
           if (!running) return;
           if (captchaActief()) return;
           if (jailPauseActive()) return;
@@ -8492,7 +8991,7 @@ if (pausedCaptcha){
             handleOutcome(k);
           } else {
             loadPage(kindToPage(k));
-            setTimeout(()=> waitAndClick(k), 500);
+            mrbSetTimeout(()=> waitAndClick(k), 500);
           }
         }, 600);
       }
@@ -8619,6 +9118,8 @@ if (pausedCaptcha){
 
   function syncAllFromInfoOnce(){
     if (!onInfoPage()) return false;
+    // Terug op Mijn Account = vorige Crimes/Cars navigatielease is afgerond.
+    ccNavLeaseTarget=''; ccNavLeaseUntil=0;
 
     const tables = document.querySelectorAll('.thinline');
     if (!tables?.[1]) return false;
@@ -8675,12 +9176,6 @@ if (pausedCaptcha){
       GM_Set('mrb_core_flight_next_ts', flightNext);
       GM_Set('mrb_core_flight_sync_at', now);
       GM_Set('mrb_core_flight_ready', flightMs <= 0);
-      try {
-        unsafeWindow.mrbV9Planner?.updateTask?.('v9-dnd', {
-          nextAt: flightMs > 0 ? now + Math.min(flightMs, 60_000) : now + 250,
-          status: flightMs > 0 ? 'wacht op reistimer' : 'reizen beschikbaar'
-        });
-      } catch(_) {}
     }
 
     const booze = !!parsed.ddBoozeReady;
@@ -8690,21 +9185,14 @@ if (pausedCaptcha){
     ddDrugsReady = drugs;
 
     if (changed){
-      try {
-        unsafeWindow.mrbV9Planner?.updateTask?.('v9-crimes-cars', {
-          nextAt: plannerNextAt(),
-          enabled: !!running,
-          status: `timers gesynchroniseerd (${source})`
-        });
-      } catch(_) {}
-      paint();
+paint();
     }
     return true;
   }
 
   async function backgroundSyncTimers(source='periodiek'){
     if (!running || backgroundSyncBusy || isLoggedOut() || captchaActief()) return false;
-    if (unsafeWindow.mrbServerBackoff?.active?.()) return false;
+    try { if (unsafeWindow.mrbServerBackoff?.active?.()) return false; } catch(_) {}
     if (busy || confirmPendingKind || forcedRetryActive() || jailPauseActive()) return false;
 
     const now = Date.now();
@@ -8720,7 +9208,9 @@ if (pausedCaptcha){
         headers:{'X-Requested-With':'XMLHttpRequest'}
       });
       if (!response.ok) {
-        if (response.status === 403) try { unsafeWindow.mrbServerBackoff?.trip?.('HTTP 403 background /information.php',120000); } catch(_) {}
+        if (response.status === 403) {
+          try { unsafeWindow.mrbServerBackoff?.trip?.('HTTP 403 background /information.php',120000); } catch(_) {}
+        }
         throw new Error(`HTTP ${response.status}`);
       }
       const html = await response.text();
@@ -8741,8 +9231,8 @@ if (pausedCaptcha){
 
   function scheduleBackgroundSync(source='handmatig', delay=900){
     if (!running) return;
-    clearTimeout(backgroundSyncTimer);
-    backgroundSyncTimer = setTimeout(()=>backgroundSyncTimers(source), delay);
+    mrbClearTimeout(backgroundSyncTimer);
+    backgroundSyncTimer = mrbSetTimeout(()=>backgroundSyncTimers(source), delay);
   }
 
   // Handmatige SPA-navigatie en browsernavigatie opnieuw synchroniseren.
@@ -8787,7 +9277,7 @@ if (pausedCaptcha){
     });
     confirmObs.observe(document.documentElement,{childList:true,subtree:true});
 
-    confirmTimeoutId = setTimeout(()=>{
+    confirmTimeoutId = mrbSetTimeout(()=>{
       stopConfirmSync();
       paint();
     }, INFO_CONFIRM_TIMEOUT_MS);
@@ -8915,128 +9405,75 @@ if (pausedCaptcha){
   }
 
   function getActionButtons(kind){
-    // Barafranca Cars gebruikt vier kaartjes. Alleen het actieve kaartje toont
-    // zijn actieknop als zichtbaar element. De oude generieke selector filterde
-    // daardoor eerst drie verborgen knoppen weg en zag alleen de standaard
-    // actieve (vaak laatste) kaart. Rangschik daarom eerst ALLE kaartjes op hun
-    // eigen headerpercentage, activeer de beste kaart en pak daarna de knop.
+    // TEST9: alleen de echte Crimes/Cars-module mag actieknoppen leveren.
+    // Geen #game_container fallback en geen generieke eerste submit/button meer.
+    if (!onExactCrimesCarsPage(kind)) return [];
+
     if (kind === 'cars') {
       const carsRoot = document.querySelector('#nick-car-choices, #car-choices, #cars-choices, [id*="car"][id*="choices"]');
-      if (carsRoot) {
-        const cards = Array.from(carsRoot.querySelectorAll(':scope > .popup-box-wrapper, .popup-box-wrapper'))
-          .filter((card, index, all) => all.indexOf(card) === index);
+      if (!carsRoot) return [];
 
-        const rankedCards = cards
-          .map((card, idx) => {
-            const head = card.querySelector(':scope > .popup-place-wrapper > .head, .popup-place-wrapper > .head, .head');
-            const chance = (() => {
-              const m = String(head?.textContent || '').match(/(\d{1,3}(?:[\.,]\d+)?)\s*%/);
-              return m ? Number(String(m[1]).replace(',', '.')) : -1;
-            })();
-            return { card, idx, chance };
-          })
-          .filter(x => Number.isFinite(x.chance) && x.chance >= 0 && x.chance <= 100)
-          .sort((a, b) => b.chance !== a.chance ? b.chance - a.chance : a.idx - b.idx);
+      const cards = Array.from(carsRoot.querySelectorAll(':scope > .popup-box-wrapper, .popup-box-wrapper'))
+        .filter((card, index, all) => all.indexOf(card) === index);
+      const rankedCards = cards
+        .map((card, idx) => {
+          const head = card.querySelector(':scope > .popup-place-wrapper > .head, .popup-place-wrapper > .head, .head');
+          const m = String(head?.textContent || '').match(/(\d{1,3}(?:[\.,]\d+)?)\s*%/);
+          const chance = m ? Number(String(m[1]).replace(',', '.')) : -1;
+          return {card,idx,chance};
+        })
+        .filter(x => Number.isFinite(x.chance) && x.chance >= 0 && x.chance <= 100)
+        .sort((a,b)=>b.chance!==a.chance ? b.chance-a.chance : a.idx-b.idx);
 
-        const best = rankedCards[0];
-        if (best) {
-          const place = best.card.querySelector('.popup-place-wrapper') || best.card;
-          if (!place.classList.contains('active')) {
-            try {
-              const clickTarget = best.card.querySelector('.head, .content-wrapper') || place;
-              clickTarget.dispatchEvent(new MouseEvent('mousedown', { bubbles:true, cancelable:true, view:window }));
-              clickTarget.dispatchEvent(new MouseEvent('mouseup', { bubbles:true, cancelable:true, view:window }));
-              clickTarget.click();
-            } catch(e) {}
-          }
-
-          const action = best.card.querySelector(
-            '.foot button, .foot input[type="submit"], .foot input[type="button"], ' +
-            'button, input[type="submit"], input[type="button"], a[data-value^="chance"]'
-          );
-          if (action && !action.disabled) {
-            try { console.log('[Crimes/Cars] Hoogste Cars-kaart gekozen:', best.chance + '%'); } catch(e) {}
-            return [action];
-          }
-        }
+      const best = rankedCards[0];
+      if (!best) return [];
+      const place = best.card.querySelector('.popup-place-wrapper') || best.card;
+      if (!place.classList.contains('active')) {
+        try {
+          const clickTarget = best.card.querySelector('.head, .content-wrapper') || place;
+          clickTarget.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true,view:window}));
+          clickTarget.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,cancelable:true,view:window}));
+          clickTarget.click();
+        } catch(_) {}
       }
+      const action = best.card.querySelector('.foot button, .foot input[type="submit"], .foot input[type="button"], button[data-value^="chance"], input[data-value^="chance"], a[data-value^="chance"]');
+      if (!action || action.disabled || !isVisible(action)) return [];
+      try { console.log('[Crimes/Cars] Hoogste Cars-kaart gekozen:', best.chance + '%'); } catch(_) {}
+      return [action];
     }
 
-    const rootSelectors = (kind === 'crimes')
-      ? ['#crime-choices', '#game_container']
-      : ['#nick-car-choices', '#car-choices', '#cars-choices', '[id*="car"][id*="choices"]', '#game_container'];
-
-    let root = null;
-    for (const sel of rootSelectors){
-      root = document.querySelector(sel);
-      if (root) break;
-    }
+    // Crimes: uitsluitend binnen de echte crime-keuzecontainer.
+    const root = document.querySelector('#crime-choices, #module_Crimes');
     if (!root) return [];
-
-    // NL/Gold layout kan afwijken: bij Cars zijn de knoppen niet altijd exact
-    // button.btn.btn-red.btn-bold.btn-big[data-name][data-value^="chance"].
-    const selectorList = [
-      'button.btn.btn-red.btn-bold.btn-big[data-name][data-value^="chance"]',
+    const selectors = [
       'button[data-value^="chance"]',
       'button[data-name][data-value]',
-      'button.btn.btn-red',
       'input[type="submit"][data-value^="chance"]',
       'input[type="button"][data-value^="chance"]',
       'a[data-value^="chance"]',
-      'button',
-      'input[type="submit"]',
-      'input[type="button"]'
+      '.popup-place-wrapper button',
+      '.popup-place-wrapper input[type="submit"]',
+      '.popup-place-wrapper input[type="button"]'
     ];
-
-    let buttons = [];
-    for (const sel of selectorList){
-      buttons = Array.from(root.querySelectorAll(sel)).filter(isVisible).filter(btn => !btn.disabled);
-      if (buttons.length) break;
+    let buttons=[];
+    for (const sel of selectors){
+      buttons=Array.from(root.querySelectorAll(sel)).filter(isVisible).filter(btn=>!btn.disabled);
+      if(buttons.length) break;
     }
+    if(!buttons.length) return [];
 
-    if (!buttons.length) return [];
-
-    // Vermijd algemene navigatie/annuleer-knoppen wanneer we vanuit #game_container fallbacken.
-    buttons = buttons.filter(btn => {
-      const t = norm(btn.value || btn.textContent || btn.getAttribute('title') || btn.getAttribute('alt') || '');
-      const hay = [
-        t,
-        btn.getAttribute('data-value') || '',
-        btn.getAttribute('data-name') || '',
-        btn.name || '',
-        btn.id || ''
-      ].join(' ');
-      if (/cancel|annuleer|back|terug|close|sluit/i.test(hay)) return false;
-
-      // Als percentage/chance zichtbaar is, is het zeker een actieknop.
-      if (/(chance|\d+\s*%)/i.test(hay)) return true;
-
-      // Fallback: in Cars/Crimes zijn de actieknoppen meestal rode grote buttons.
-      if (btn.matches && btn.matches('.btn-red, .btn-big, .btn-bold')) return true;
-
-      // Laat submit buttons toe als laatste fallback.
-      return /submit|button/i.test(btn.type || btn.tagName || '');
+    buttons=buttons.filter(btn=>{
+      const hay=[btn.value||'',btn.textContent||'',btn.getAttribute('data-value')||'',btn.getAttribute('data-name')||'',btn.id||'',btn.name||''].join(' ');
+      return !/cancel|annuleer|back|terug|close|sluit/i.test(hay);
     });
+    if(!buttons.length) return [];
 
-    if (!buttons.length) return [];
-
-    // Kies bij Crimes en Cars altijd de optie met de hoogste zichtbare/uitgelezen %-kans.
-    const ranked = buttons
-      .map((btn, idx) => ({ btn, idx, chance: readChancePercent(btn) }))
-      .sort((a, b) => {
-        if (b.chance !== a.chance) return b.chance - a.chance;
-        return a.idx - b.idx;
-      });
-
-    if (ranked[0] && ranked[0].chance >= 0){
-      try{ console.log('[Crimes/Cars/D&D] Hoogste kans gekozen:', kind, ranked[0].chance + '%'); }catch{}
-      return [ranked[0].btn];
-    }
-
-    const activeBtn = root.querySelector('.popup-place-wrapper.active button, .active button, .popup-place-wrapper.active input[type="submit"]');
-    if (activeBtn && isVisible(activeBtn) && !activeBtn.disabled) return [activeBtn];
-
-    return [buttons[0]];
+    const ranked=buttons.map((btn,idx)=>({btn,idx,chance:readChancePercent(btn)}))
+      .filter(x=>Number.isFinite(x.chance)&&x.chance>=0)
+      .sort((a,b)=>b.chance!==a.chance ? b.chance-a.chance : a.idx-b.idx);
+    if(!ranked.length) return []; // TEST9: nooit meer blind buttons[0] gebruiken.
+    try { console.log('[Crimes/Cars/D&D] Hoogste kans gekozen:', kind, ranked[0].chance + '%'); } catch(_) {}
+    return [ranked[0].btn];
   }
 
   // ===================================================================
@@ -9131,6 +9568,17 @@ if (pausedCaptcha){
       return false;
     }
 
+    // TEST19B: wanneer Uitkopen actief is, krijgt de gedeelde jail-controller
+    // voorrang op een oude jailPause. Zo blijft D&D gecontroleerd uitkopen
+    // totdat de server de speler werkelijk heeft vrijgegeven.
+    if (jailNowDetected() && buyOut && unsafeWindow.mrbJailBuyoutControl?.ensureFree) {
+      const jr = await unsafeWindow.mrbJailBuyoutControl.ensureFree('dnd');
+      if (!jr?.free) return false;
+      jailUntil = 0;
+      GM_Set(K_JAIL_UNTIL, 0);
+      await sleep(300);
+    }
+
     if (jailPauseActive()){
       parkOnInfoDuringJail();
       return false;
@@ -9145,13 +9593,7 @@ if (pausedCaptcha){
     }
 
     if (jailNowDetected()){
-      const buyBtn = jailBuyoutButton();
-      if (buyBtn && buyOut){
-        safeClick(buyBtn);
-        await sleep(900);
-        return true;
-      }
-
+      // Uitkopen-uit of controller kon niet vrijgeven: normale jail-pauze.
       enterJailPause(`jail during D&D${label ? ` (${label})` : ''}`);
       return false;
     }
@@ -9288,7 +9730,7 @@ if (pausedCaptcha){
   function gatePause(reason=''){
     if (!running) return;
     if (!gatePaused){
-      clearTimeout(backgroundSyncTimer);
+      mrbClearTimeout(backgroundSyncTimer);
       backgroundSyncTimer = null;
       clearForcedRetry();
       stopConfirmSync();
@@ -9301,19 +9743,6 @@ if (pausedCaptcha){
       paint();
       try{ console.warn('[Crimes/Cars/D&D] Pauze (gate):', reason || (typeof gm_gateReason==='function' ? gm_gateReason() : 'gate')); }catch{}
     }
-  }
-
-  function startLoop(){
-    if (tickId) mrbClearInterval(tickId);
-    tickId = null;
-    if (plannerMode) return;
-    tickId = mrbSetInterval(tick, TICK_MS);
-  }
-
-  function stopLoop(){
-    if (!tickId) return;
-    mrbClearInterval(tickId);
-    tickId = null;
   }
 
   function ddEligible(){
@@ -9330,30 +9759,35 @@ if (pausedCaptcha){
   function pickNextJob(){
     const now = Date.now();
 
-    const crDue = doCrimes ? crimesNext : Infinity;
-    const caDue = doCars   ? carsNext   : Infinity;
+    // TEST12: na een vreemde/interstitiële resultaatpagina niet opnieuw navigeren
+    // voordat de herstelwacht voorbij is. Mijn Account blijft de bron van waarheid.
+    if (now < ccForeignRecoveryUntil) return null;
 
-    if (now >= crDue || now >= caDue){
-      return (crDue <= caDue) ? 'crimes' : 'cars';
-    }
+    // TEST3: lokale deadlines geven GEEN execute-permission meer. Alleen een recente
+    // servermeting met exact Nu/Now (= 0 ms) mag een module runnable maken.
+    const crReady = !!doCrimes && crimesServerReady && (now - crimesServerSyncAt <= SERVER_READY_FRESH_MS);
+    const caReady = !!doCars && carsServerReady && (now - carsServerSyncAt <= SERVER_READY_FRESH_MS);
 
+    if (crReady && caReady) return crimesNext <= carsNext ? 'crimes' : 'cars';
+    if (crReady) return 'crimes';
+    if (caReady) return 'cars';
     return null;
   }
 
   function startForcedRetry(kind){
     if (!running) return;
-    if (pausedCaptcha || captchaActief()) return;
-    if (isLoggedOut()) return;
-    if (jailPauseActive()) return;
+    if (pausedCaptcha || captchaActief() || isLoggedOut() || jailPauseActive()) return;
 
-    busy = true;
-    current = kind;
+    // TEST3: een 'Too early' resultaat is bewijs dat onze lokale timer niet leidend mag zijn.
+    // Geen nieuwe modulepagina openen; eerst de server-timer opnieuw lezen.
     forcedRetryKind = '';
     forcedRetryUntil = 0;
     forcedRetryTimerId = null;
-
-    loadPage(kindToPage(kind));
-    waitAndClick(kind);
+    if (kind === 'crimes') crimesServerReady = false;
+    if (kind === 'cars') carsServerReady = false;
+    busy = false;
+    current = '';
+    scheduleBackgroundSync(`too-early-${kind}`, 300);
     paint();
   }
 
@@ -9378,12 +9812,13 @@ if (pausedCaptcha){
     busy = false;
     current = '';
 
-    forcedRetryKind = kind;
-    forcedRetryUntil = now + TOO_EARLY_RETRY_MS;
-
-    forcedRetryTimerId = setTimeout(()=>{
-      startForcedRetry(kind);
-    }, TOO_EARLY_RETRY_MS);
+    // TEST3: geen 1s navigatieretry meer. Markeer server-ready ongeldig en
+    // laat de background timer-sync bepalen wanneer deze actie werkelijk Nu is.
+    if (kind === 'crimes') crimesServerReady = false;
+    if (kind === 'cars') carsServerReady = false;
+    forcedRetryKind = '';
+    forcedRetryUntil = 0;
+    scheduleBackgroundSync(`too-early-${kind}`, 300);
 
     paint();
   }
@@ -9440,12 +9875,9 @@ if (pausedCaptcha){
 
     if (pausedCaptcha || busy || confirmPendingKind) { paint(); return; }
 
-    // 5.8.53: eenmaal gestarte Race is atomair. Crimes/Cars blijft hoogste
-    // prioriteit vóór Race-start, maar start geen nieuwe cyclus midden in een
-    // actieve Race-transactie. Na Race-release pakt de volgende tick de due timer.
-    try {
-      if (unsafeWindow.mrbRaceTransaction?.active?.()) { paint(); return; }
-    } catch(_) {}
+    // TEST6: Crimes/Cars is de hoogste globale prioriteit. Een Race-wachtfase
+    // mag de Crimes/Cars-runner nooit stilzetten; atomaire Race-klikken worden
+    // door de centrale yield-watchdog zelf begrensd.
 
     const job = pickNextJob();
     if (!job) { paint(); return; }
@@ -9468,6 +9900,14 @@ if (pausedCaptcha){
       if (jailPauseActive()){ parkOnInfoDuringJail(); return false; }
       if (forcedRetryActive() && forcedRetryKind !== kind){ return false; }
 
+      // TEST12: URL kan al Crimes/Cars zijn terwijl de zichtbare container nog het
+      // zojuist afgeronde Race-resultaat toont. Niet blijven herladen; eerst schoon
+      // via Mijn Account synchroniseren en daarna pas opnieuw proberen.
+      if (ccForeignResultNotice()) {
+        recoverFromForeignResult(kind);
+        return true;
+      }
+
       if (jailFreeDetected()){
         loadPage(kindToPage(kind));
         return true;
@@ -9477,7 +9917,7 @@ if (pausedCaptcha){
         const buyBtn = jailBuyoutButton();
         if (buyBtn && buyOut){
           safeClick(buyBtn);
-          setTimeout(()=>{ loadPage(kindToPage(kind)); }, 800);
+          mrbSetTimeout(()=>{ loadPage(kindToPage(kind)); }, 800);
           return true;
         }
 
@@ -9505,13 +9945,17 @@ if (pausedCaptcha){
         return true;
       }
 
+      // TEST9: een vertraagde/onderbroken SPA-load mag nooit een andere handmatige
+      // pagina als Crimes/Cars-pagina behandelen. Wacht op de echte module.
+      if (!onExactCrimesCarsPage(kind)) return false;
+
       const buttons = getActionButtons(kind);
       if (buttons.length){
         const chosen = (buttons.length === 1) ? buttons[0] : buttons[Math.floor(Math.random()*buttons.length)];
 
         // Crimes/Cars klikken pas na een random vertraging van 3-5 seconden.
         stopWaiters();
-        crimeActionTimerId = setTimeout(()=>{
+        crimeActionTimerId = mrbSetTimeout(()=>{
           crimeActionTimerId = null;
 
           if (!running || pausedCaptcha) return;
@@ -9524,7 +9968,7 @@ if (pausedCaptcha){
           // losgekoppelde element, maar herstel dezelfde actiecyclus.
           if (!chosen.isConnected || !isVisible(chosen)) {
             loadPage(kindToPage(kind));
-            clickTimeoutId = setTimeout(()=>{
+            clickTimeoutId = mrbSetTimeout(()=>{
               clickTimeoutId = null;
               if (!running || pausedCaptcha || current !== kind) return;
               waitAndClick(kind);
@@ -9532,10 +9976,19 @@ if (pausedCaptcha){
             return;
           }
 
+          // TEST9: vlak voor execute opnieuw module + owner + handmatige pauze valideren.
+          if (!safeCrimesCarsActionClick(chosen, kind)) {
+            busy = false;
+            current = null;
+            stopWaiters();
+            loadPage('/information.php');
+            mrbSetTimeout(()=>{ try{ resyncFromInfo(); wake(); }catch(_){} }, 1200);
+            paint();
+            return;
+          }
           markAttempt(kind, 'automatisch');
-          safeClick(chosen);
 
-          outcomeTimeoutId = setTimeout(()=>{
+          outcomeTimeoutId = mrbSetTimeout(()=>{
             outcomeTimeoutId = null;
             handleOutcome(kind);
           }, 900 + Math.floor(Math.random()*800));
@@ -9548,10 +10001,18 @@ if (pausedCaptcha){
 
     if (tryOnce()) return;
 
-    obs = new MutationObserver(()=>{ tryOnce(); });
+    // TEST15B: deze DOM-watcher is uitsluitend een wachtmechanisme voor DEZE
+    // actiecyclus. Zodra een mutatie daadwerkelijk een volgende stap claimt
+    // (popup-Now, jail/recovery of een geplande actie), moet de observer direct
+    // los. Anders kan dezelfde #popupButtonNow tijdens de SPA-opbouw meerdere
+    // keren worden aangeklikt en identieke GUI.loadPage-calls veroorzaken.
+    obs = new MutationObserver(()=>{
+      if (!tryOnce()) return;
+      if (obs){ try{ obs.disconnect(); }catch{} obs=null; }
+    });
     obs.observe(document.documentElement,{childList:true,subtree:true});
 
-    clickTimeoutId = setTimeout(()=>{
+    clickTimeoutId = mrbSetTimeout(()=>{
       clickTimeoutId = null;
       if (!running || pausedCaptcha || jailPauseActive()) return;
       if (forcedRetryActive()) return;
@@ -9561,7 +10022,7 @@ if (pausedCaptcha){
       // Eén geblokkeerde of onderbroken SPA-navigatie mag busy/current nooit
       // permanent laten staan. Blijf opnieuw armeren tot de echte actieknop
       // zichtbaar is of een geldige pauzestatus de cyclus overneemt.
-      clickTimeoutId = setTimeout(()=>{
+      clickTimeoutId = mrbSetTimeout(()=>{
         clickTimeoutId = null;
         if (!running || pausedCaptcha || current !== kind) return;
         if (isLoggedOut() || jailPauseActive() || forcedRetryActive()) return;
@@ -9648,10 +10109,12 @@ if (pausedCaptcha){
 
     if (kind === 'crimes'){
       crimesNext = now + FALLBACK_CRIMES_MS;
+      crimesServerReady = false;
       GM_Set(K_CR_NEXT, crimesNext);
       confirmJobOnInfo('crimes');
     } else if (kind === 'cars'){
       carsNext = now + FALLBACK_CARS_MS;
+      carsServerReady = false;
       GM_Set(K_CA_NEXT, carsNext);
       confirmJobOnInfo('cars');
     } else if (kind === 'dd'){
@@ -9664,46 +10127,41 @@ if (pausedCaptcha){
   }
 
   // ===================================================================
-  // V9 PLANNER BRIDGE
-  // Houdt de bestaande Crimes/Cars-flow intact, maar laat de centrale
-  // planner bepalen wanneer tick() wordt aangeroepen.
+  // UNIFIED SCHEDULER BRIDGE — TEST14 CC CLEAN
+  // Geen lokale 1s-loop en geen plannerMode meer. De centrale Unified
+  // Scheduler is de enige eigenaar van periodieke Crimes/Cars wake-ups.
+  // Deze bridge exposeert alleen state + expliciete wake/resync hooks.
+  // De legacy naam blijft tijdelijk behouden zodat de reeds bewezen
+  // Unified Dispatcher niet tegelijk hoeft te worden herschreven.
   // ===================================================================
-  function plannerNextAt(){
+  function schedulerNextAt(){
     const now = Date.now();
     if (!running) return now + 60_000;
+    if (now < ccForeignRecoveryUntil) return ccForeignRecoveryUntil;
     if (busy || confirmPendingKind || forcedRetryActive() || jailPauseActive()) return now + 1000;
-    const candidates = [];
-    if (doCrimes) candidates.push(Number(crimesNext || now));
-    if (doCars) candidates.push(Number(carsNext || now));
-    if (!candidates.length) return now + 15_000;
-    return Math.max(now, Math.min(...candidates));
-  }
 
-  function setPlannerMode(on){
-    plannerMode = !!on;
-    if (plannerMode) stopLoop();
-    else if (running) startLoop();
-    paint();
-    return plannerMode;
+    const crReady = !!doCrimes && crimesServerReady && (now - crimesServerSyncAt <= SERVER_READY_FRESH_MS);
+    const caReady = !!doCars && carsServerReady && (now - carsServerSyncAt <= SERVER_READY_FRESH_MS);
+    if (crReady || caReady) return now + 100;
+    return now + 5000;
   }
 
   unsafeWindow.mrbV9CrimesCars = {
-    version:'11.1.0',
-    setPlannerMode,
-    wake:()=>{ tick(); return plannerNextAt(); },
+    version:'11.1.0-test14-cc-clean',
+    wake:()=>{ tick(); return schedulerNextAt(); },
     resyncFromInfo:()=>{
       if (!onInfoPage()) return false;
       const ok = syncAllFromInfoOnce();
       if (ok) paint();
       return ok;
     },
-    nextAt:plannerNextAt,
+    nextAt:schedulerNextAt,
     isRunning:()=>running,
     isBusy:()=>busy,
     state:()=>({
-      running, plannerMode, busy, current, doCrimes, doCars, doDD:false,
-      crimesNext, carsNext, ddRetryAt, jailUntil, pausedCaptcha, gatePaused,
-      confirmPendingKind, forcedRetryKind
+      running, busy, current, doCrimes, doCars, doDD:false,
+      crimesNext, carsNext, crimesServerReady, carsServerReady, crimesServerSyncAt, carsServerSyncAt,
+      ddRetryAt, jailUntil, pausedCaptcha, gatePaused, confirmPendingKind, forcedRetryKind
     })
   };
 
@@ -9722,14 +10180,12 @@ if (pausedCaptcha){
     if (running){
       gatePaused = false;
       attachCaptchaObserver();
-      startLoop();
       if (onInfoPage()) syncAllFromInfoOnce();
       scheduleBackgroundSync('module gestart', 250);
     } else {
       clearForcedRetry();
       stopConfirmSync();
       stopWaiters();
-      stopLoop();
       detachCaptchaObserver();
       busy = false;
       current = '';
@@ -9763,7 +10219,6 @@ if (pausedCaptcha){
       gatePause('Gate bij init');
     } else {
       attachCaptchaObserver();
-      startLoop();
       if (onInfoPage()) syncAllFromInfoOnce();
       scheduleBackgroundSync('init', 500);
     }
@@ -9771,35 +10226,372 @@ if (pausedCaptcha){
 
 })();
 
-// Centrale overdracht na Heist/Spot, zonder extra planner of interval.
-// Retourneert true wanneer Crimes/Cars de pagina direct heeft overgenomen.
-unsafeWindow.mrbResumePriorityTimers = (function(){
-  let lastAt = 0;
-  return function(source='module'){
-    if (!/information\.php/i.test(location.href)) return false;
-    const now = Date.now();
-    if (now - lastAt < 500) return false;
-    lastAt = now;
+// =====================================================================
+// TEST6 UNIFIED RUNNABLE DISPATCHER + DEADLINE PREEMPTION
+// - Mijn Account blijft de bron van waarheid voor Nu/Now.
+// - De laatst door de server bevestigde Crimes/Cars-deadlines lopen lokaal af.
+// - Bereikt zo'n deadline 0 terwijl Race/Heist/Spot in een veilige WAIT-fase staat,
+//   dan preempt de Unified Scheduler naar Mijn Account voor verse serverbevestiging.
+// - Leider en Driver gebruiken exact dezelfde preemption-regels.
+// =====================================================================
+;(function installUnifiedRunnableDispatcherTest6(){
+  const wakeAt = new Map();
+  const WAKE_GAP = 1800;
+  const PREEMPT_RETRY_MS = 700;
+  let preemptPending = false;
+  let preemptStartedAt = 0;
+  let preemptReason = '';
 
-    try { unsafeWindow.mrbRacePriorityWake?.(source); } catch(e) {}
+  // TEST7 diagnostiek: verandert GEEN moduleflow. Alleen beslissingen/stalls loggen.
+  const DIAG_KEY='mrb_unified_diag_last_v1';
+  const diagSeen=new Map();
+  const runnableSince=new Map();
+  const anomalyDone=new Set();
+  const norm = v => String(v || '').replace(/\s+/g,' ').trim();
+  function diagContext(){
+    let cc={},spot={},heist={},race={};
+    try{ cc=unsafeWindow.mrbV9CrimesCars?.state?.()||{}; }catch(_){}
+    try{ spot=unsafeWindow.mrbSpotRaidCoreV3?.getState?.()||{}; }catch(_){}
+    try{ heist=unsafeWindow.mrbHeistCoreControl?.getState?.()||{}; }catch(_){}
+    try{ race=unsafeWindow.mrbModuleStateRegistry?.get?.('Race')||{}; }catch(_){}
+    return {
+      raceRole:String(GM_Get('race_role','leader')||'leader'),
+      racePhase:String(race.phase||race.state||unsafeWindow.mrbRaceTransaction?.phase?.()||''),
+      spotRole:String(spot.role||GM_Get('mrb_spot_complete_v1_role','leader')||'leader'),
+      spotState:String(spot.state||''),
+      heistRole:String(heist.role||GM_Get('mrb_heist_integrated_role','leader')||'leader'),
+      heistPhase:String(heist.phase||''),
+      ccBusy:!!cc.busy, ccCurrent:String(cc.current||''),
+      route:String((location.pathname||'')+(location.search||'')+(location.hash||''))
+    };
+  }
+  function diag(kind,detail={},key='',gap=1200){
+    try{
+      const now=Date.now();
+      const sig=key||kind+'|'+JSON.stringify(detail);
+      const last=diagSeen.get(sig)||0;
+      if(now-last<gap)return;
+      diagSeen.set(sig,now);
+      unsafeWindow.mrbFlightRecorder?.add?.('UNIFIED_'+kind,{...diagContext(),...detail});
+    }catch(_){}
+  }
+  function checkpoint(reason,detail={}){
+    try{
+      const payload={version:'6.0.0-test8',at:Date.now(),reason:String(reason||'anomaly'),detail:{...diagContext(),...detail},events:unsafeWindow.mrbFlightRecorder?.live?.().slice(-220)||[]};
+      GM_Set(DIAG_KEY,JSON.stringify(payload));
+      unsafeWindow.mrbFlightRecorder?.add?.('UNIFIED_CHECKPOINT',{reason,...diagContext(),...detail});
+      console.warn('[MRB Unified TEST7] diagnostisch checkpoint:',reason,detail);
+      return payload;
+    }catch(_){return null;}
+  }
+  function watchRunnable(name,isDue,detail={}){
+    const now=Date.now();
+    if(!isDue){ runnableSince.delete(name); anomalyDone.delete(name); return; }
+    if(!runnableSince.has(name)){ runnableSince.set(name,now); diag('RUNNABLE_SEEN',{module:name,...detail},'runnable:'+name,0); return; }
+    const age=now-(runnableSince.get(name)||now);
+    if(age>=20000&&!anomalyDone.has(name)){
+      anomalyDone.add(name);
+      checkpoint(name+'_runnable_stalled',{module:name,ageMs:age,...detail});
+    }
+  }
+  const nowish = v => /^(?:Nu|Now|Ready)$/i.test(norm(v));
+  function onInfo(){ return /information\.php/i.test(String(location.href||'')) || /\bMIJN ACCOUNT\b/i.test(norm(document.querySelector('#game_container')?.innerText||'')); }
+  function readDispatcherTimers(){
+    const out={crime:'',cars:'',race:'',heist:'',spot:''};
+    const rows=Array.from(document.querySelectorAll('tr'));
+    for(const row of rows){
+      const cells=Array.from(row.querySelectorAll(':scope > th,:scope > td'));
+      if(cells.length<2) continue;
+      const label=norm(cells[0]?.textContent||'').replace(/[:?]+$/,'');
+      const value=norm(cells[cells.length-1]?.textContent||cells[1]?.textContent||'');
+      if(!out.crime && /^(?:Volgende\s+misdaadpoging|Next\s+crime)/i.test(label)) out.crime=value;
+      else if(!out.cars && /^(?:Volgende\s+autojatpoging|Next\s+(?:car|gta))/i.test(label)) out.cars=value;
+      else if(!out.race && /^(?:Volgende\s+autorace|Next\s+.*race)/i.test(label)) out.race=value;
+      else if(!out.heist && /^(?:Volgende\s+heist|Next\s+heist)/i.test(label)) out.heist=value;
+      else if(!out.spot && /^(?:Volgende\s+spot\s+overval|Next\s+spot)/i.test(label)) out.spot=value;
+    }
+    return out;
+  }
+  function mayWake(key){
+    const n=Date.now(), last=wakeAt.get(key)||0;
+    if(n-last<WAKE_GAP) return false;
+    wakeAt.set(key,n);
+    return true;
+  }
+  function guardBlocked(){
+    try { if(unsafeWindow.mrbSessionSafeMode?.active?.()) return true; } catch(_) {}
+    try { if(unsafeWindow.mrbManualControl?.isPaused?.()) return true; } catch(_) {}
+    return false;
+  }
+  function raceYieldWatchdog(){
+    if(!/races\.php/i.test(String(location.href||''))) return false;
+    const body=norm(document.body?.innerText||'');
+    const hasStart=!!Array.from(document.querySelectorAll('input[type="submit"],button')).find(b=>/^(?:Race!!!|Race|Start Race)$/i.test(norm(b.value||b.textContent||'')));
+    const leaderWaiting=!hasStart && /\b(?:Invited|Uitgenodigd|Waiting|Wachten)\b/i.test(body);
+    const driverReady=/You're ready for the race|wait for the race to end|Je hebt een auto geselecteerd om mee te racen|Je bent klaar voor de race|wacht(?:en)? tot de race/i.test(body);
+    if(!leaderWaiting && !driverReady) return false;
+    try { unsafeWindow.mrbRaceTransaction?.release?.(); } catch(_) {}
+    try { unsafeWindow.mrbModuleStateRegistry?.set?.('Race',{phase:driverReady?'DRIVER_READY':'WAITING_DRIVER',state:driverReady?'DRIVER_READY':'WAITING_DRIVER',detail:'TEST6 veilige yield naar Mijn Account',updatedAt:Date.now(),running:!!GM_Get('race_scriptAan',false)}); } catch(_) {}
+    diag('RACE_YIELD',{driverReady,leaderWaiting},'race-yield:'+driverReady,2500);
+    return true;
+  }
+  function atomicFlowBlocksPreempt(){
+    // Race: alleen echte atomaire transactiefasen blokkeren. WAITING_DRIVER/DRIVER_READY
+    // zijn in TEST6 expliciet yield-fasen en geven de pagina vrij.
+    try { if(unsafeWindow.mrbRaceTransaction?.active?.()===true) return 'race-atomic'; } catch(_) {}
 
+    // Spot: alleen niet-wachtende fases op een Spot/GroupCrimes-pagina beschermen.
     try {
-      const cc = unsafeWindow.mrbV9CrimesCars;
-      cc?.resyncFromInfo?.();
-      const st = cc?.state?.();
-      if (!st?.running) return false;
-      const due = !!st.busy || !!st.confirmPendingKind || !!st.forcedRetryKind
-        || (!!st.doCrimes && Number(st.crimesNext || 0) <= now + 1500)
-        || (!!st.doCars && Number(st.carsNext || 0) <= now + 1500);
-      if (due) {
-        cc?.wake?.();
+      const s=unsafeWindow.mrbSpotRaidCoreV3?.getState?.();
+      const state=String(s?.state||'').toUpperCase();
+      const spotPage=/module=(?:GroupCrimes|Spots)|groupcrimes|spots/i.test(String(location.href||''));
+      const safe=/(?:^|_)(?:WAIT|IDLE|COOLDOWN|READY|PASSIVE|LOCAL_COOLDOWN|DRIVER_WAIT|LEADER_WAIT|WAIT_START_BACKGROUND)/.test(state);
+      if(s?.enabled && spotPage && state && !safe) return `spot-atomic:${state}`;
+    } catch(_) {}
+
+    // Heist idem. RESULT/WAIT is veilig; create/accept/start/travel blijft atomair.
+    try {
+      const h=unsafeWindow.mrbHeistCoreControl?.getState?.();
+      const phase=String(h?.phase||'').toUpperCase();
+      const heistPage=/module=(?:GroupCrimes|Heist)|groupcrimes|heist/i.test(String(location.href||''));
+      const safe=/(?:WAIT|IDLE|COOLDOWN|READY|PASSIVE|RESULT)/.test(phase);
+      if(h?.enabled && heistPage && phase && !safe) return `heist-atomic:${phase}`;
+    } catch(_) {}
+    return '';
+  }
+  // TEST13: centrale Idle Home Watchdog. Mijn Account is het rustpunt van de scheduler.
+  // Alleen bij echte inactiviteit; nooit midden in een atomaire moduleactie of handmatige bediening.
+  const IDLE_HOME_MS = 120000;
+  const IDLE_HOME_CHECK_MS = 5000;
+  let idleHomeLastActiveAt = Date.now();
+  let idleHomePendingUntil = 0;
+  function idleHomeTouch(reason='activity'){
+    idleHomeLastActiveAt = Date.now();
+    if (onInfo()) idleHomePendingUntil = 0;
+  }
+  function idleHomeTrustedActivity(ev){
+    if (!ev?.isTrusted) return;
+    try { if (ev.target?.closest?.('#mrbGoldMenu,#geneoSuperMenu,#mrbManualPauseControl')) return; } catch(_) {}
+    idleHomeTouch('user');
+  }
+  ['pointerdown','click','change','keydown','input'].forEach(type=>document.addEventListener(type,idleHomeTrustedActivity,true));
+  window.addEventListener('hashchange',()=>idleHomeTouch('hashchange'),true);
+  window.addEventListener('popstate',()=>idleHomeTouch('popstate'),true);
+
+  function idleHomeBusyReason(){
+    try { if (unsafeWindow.mrbSessionSafeMode?.active?.()) return 'session-safe-mode'; } catch(_) {}
+    try { if (unsafeWindow.mrbServerBackoff?.active?.()) return 'server-backoff'; } catch(_) {}
+    try { if (unsafeWindow.mrbManualControl?.isPaused?.()) return 'manual-control'; } catch(_) {}
+    const atomic=atomicFlowBlocksPreempt();
+    if (atomic) return atomic;
+    try {
+      const cc=unsafeWindow.mrbV9CrimesCars?.state?.();
+      if (cc?.busy || cc?.confirmPendingKind || cc?.forcedRetryKind) return 'crimes-cars-active';
+    } catch(_) {}
+    return '';
+  }
+  function idleHomeWatchdog(){
+    if (onInfo()){ idleHomeTouch('on-info'); return false; }
+    const blocker=idleHomeBusyReason();
+    if (blocker){ idleHomeTouch(blocker); return false; }
+    const now=Date.now();
+    if (now-idleHomeLastActiveAt < IDLE_HOME_MS) return false;
+    if (now < idleHomePendingUntil) return false;
+    idleHomePendingUntil=now+12000;
+    const href=String(location.href||'');
+    diag('IDLE_HOME_RETURN',{idleMs:now-idleHomeLastActiveAt,href},'idle-home-return',5000);
+    try { unsafeWindow.mrbFlightRecorder?.add?.('IDLE_HOME_RETURN',{idleMs:now-idleHomeLastActiveAt,href}); } catch(_) {}
+    let ok=false;
+    try { ok=unsafeWindow.mrbNavigate?.('/information.php',{source:'unified-idle-home',yield:true})===true; } catch(_) {}
+    if(!ok){
+      idleHomePendingUntil=now+15000;
+      diag('IDLE_HOME_NAV_DEFER',{href},'idle-home-defer',5000);
+      return false;
+    }
+    idleHomeLastActiveAt=now;
+    return true;
+  }
+
+  function ccDeadlineState(){
+    try {
+      const cc=unsafeWindow.mrbV9CrimesCars;
+      const st=cc?.state?.();
+      if(!st?.running) return null;
+      const now=Date.now();
+      const crimeDue=!!st.doCrimes && Number(st.crimesNext||0)>0 && Number(st.crimesNext||0)<=now;
+      const carsDue=!!st.doCars && Number(st.carsNext||0)>0 && Number(st.carsNext||0)<=now;
+      return {cc,st,crimeDue,carsDue,due:crimeDue||carsDue};
+    } catch(_) { return null; }
+  }
+  function requestInfoPreempt(reason){
+    if(onInfo()) return true;
+    if(preemptPending && Date.now()-preemptStartedAt < PREEMPT_RETRY_MS) return false;
+    const blocker=atomicFlowBlocksPreempt();
+    if(blocker){
+      diag('PREEMPT_BLOCKED',{reason,blocker},'preempt-blocked:'+blocker,2500);
+      if(preemptStartedAt&&Date.now()-preemptStartedAt>=15000&&!anomalyDone.has('preempt-blocked')){
+        anomalyDone.add('preempt-blocked');
+        checkpoint('cc_preempt_blocked_too_long',{reason,blocker,ageMs:Date.now()-preemptStartedAt});
+      }
+      return false;
+    }
+    raceYieldWatchdog();
+    preemptPending=true;
+    preemptStartedAt=Date.now();
+    preemptReason=reason;
+    diag('PREEMPT_REQUEST',{reason},'preempt-request:'+reason,1200);
+    let ok=false;
+    try { ok=unsafeWindow.mrbNavigate?.('/information.php',{source:'unified-cc-preempt',yield:true,force:true})===true; } catch(_) {}
+    if(ok){
+      diag('PREEMPT_NAV_OK',{reason},'preempt-ok:'+reason,1200);
+      try { console.log(`[MRB Unified TEST6] Crimes/Cars preempt -> Mijn Account | ${reason}`); } catch(_) {}
+    } else {
+      diag('PREEMPT_NAV_FAIL',{reason},'preempt-fail:'+reason,1200);
+    }
+    return ok;
+  }
+  function preemptDueCrimesCars(){
+    if(guardBlocked()) return false;
+    const x=ccDeadlineState();
+    if(!x?.due) return false;
+    if(x.st.busy || x.st.confirmPendingKind || x.st.forcedRetryKind) return false;
+
+    // Staat Mijn Account al open, dan meteen verse serverstatus lezen en uitvoeren.
+    if(onInfo()){
+      preemptPending=false;
+      try { x.cc?.resyncFromInfo?.(); } catch(_) {}
+      const fresh=x.cc?.state?.();
+      const serverReady=!!fresh?.running && ((!!fresh.doCrimes && !!fresh.crimesServerReady) || (!!fresh.doCars && !!fresh.carsServerReady));
+      if(serverReady && mayWake('cc-preempt')){
+        diag('CC_SERVER_CONFIRMED_WAKE',{crime:!!fresh?.crimesServerReady,cars:!!fresh?.carsServerReady},'cc-server-wake',1000);
+        try { console.log('[MRB Unified TEST6] Crimes/Cars serverbevestigd -> direct uitvoeren'); } catch(_) {}
+        x.cc?.wake?.();
         return true;
       }
-    } catch(e) {
-      try { console.warn('[Priority timer resume]', e); } catch(_) {}
+      diag('CC_SERVER_NOT_READY',{crime:!!fresh?.crimesServerReady,cars:!!fresh?.carsServerReady},'cc-not-ready',2500);
+      return false;
     }
-    return false;
-  };
+
+    // Deadline is lokaal verstreken, maar execute-permission komt pas na de verse
+    // Mijn Account-metingen. Hierdoor preempten we snel zonder blind te klikken.
+    const reason=`${x.crimeDue?'crime':''}${x.crimeDue&&x.carsDue?'+':''}${x.carsDue?'cars':''} deadline bereikt`;
+    return requestInfoPreempt(reason);
+  }
+  function dispatchInfo(){
+    if(!onInfo() || guardBlocked()) return;
+    preemptPending=false;
+
+    const timers=readDispatcherTimers();
+    const crimeRaw=timers.crime, carsRaw=timers.cars, raceRaw=timers.race, heistRaw=timers.heist, spotRaw=timers.spot;
+
+    let ccDiagState={};
+    try{ ccDiagState=unsafeWindow.mrbV9CrimesCars?.state?.()||{}; }catch(_){}
+    watchRunnable('crimes', nowish(crimeRaw)&&!!ccDiagState.running&&!!ccDiagState.doCrimes, {timer:crimeRaw});
+    watchRunnable('cars', nowish(carsRaw)&&!!ccDiagState.running&&!!ccDiagState.doCars, {timer:carsRaw});
+    watchRunnable('race', nowish(raceRaw)&&!!GM_Get('race_scriptAan',false), {timer:raceRaw});
+    watchRunnable('heist', nowish(heistRaw)&&!!GM_Get('mrb_heist_integrated_enabled',false), {timer:heistRaw});
+    watchRunnable('spot', nowish(spotRaw)&&!!GM_Get('mrb_spot_complete_v1_enabled',false), {timer:spotRaw});
+
+    // 1) Crimes/Cars absoluut eerst en altijd opnieuw serverbevestigd op Mijn Account.
+    try {
+      const cc=unsafeWindow.mrbV9CrimesCars;
+      cc?.resyncFromInfo?.();
+      const st=cc?.state?.();
+      const ccDue=!!st?.running && ((!!st.doCrimes && nowish(crimeRaw)) || (!!st.doCars && nowish(carsRaw)) || !!st.busy || !!st.confirmPendingKind || !!st.forcedRetryKind);
+      if(ccDue){ if(mayWake('cc')){ diag('CC_WAKE',{crimeTimer:crimeRaw,carsTimer:carsRaw},'cc-wake',1000); cc?.wake?.(); } return; }
+    } catch(e){ console.warn('[MRB Unified TEST8] CC dispatch',e); }
+
+    // 2) Centrale group-owner: een eenmaal gestarte Race/Heist/Spot wordt
+    // volledig afgemaakt voordat een andere groepsmodule mag starten.
+    // Crimes/Cars hierboven blijft de enige toegestane korte preemption.
+    let groupOwner='';
+    try { groupOwner=String(unsafeWindow.mrbGroupTransaction?.owner?.()||''); } catch(_) {}
+    if(groupOwner){
+      diag('GROUP_OWNER_HOLD',{owner:groupOwner,raceTimer:raceRaw,heistTimer:heistRaw,spotTimer:spotRaw},'group-owner:'+groupOwner,2500);
+      return;
+    }
+
+    // 3) Nieuwe groepsflow. Bestaande volgorde blijft behouden zolang er nog
+    // geen owner is; zodra de wake wordt geaccepteerd claimt die module de cyclus.
+    if(nowish(raceRaw) && GM_Get('race_scriptAan',false)){
+      try {
+        if(mayWake('race') && unsafeWindow.mrbGroupTransaction?.acquire?.('race','WAKE_PENDING')){
+          diag('RACE_WAKE',{timer:raceRaw},'race-wake',1200);
+          const accepted=unsafeWindow.mrbRacePriorityWake?.('unified-test20b');
+          if(accepted===false) unsafeWindow.mrbGroupTransaction?.release?.('race','race wake geweigerd');
+          else return;
+        }
+      } catch(_) {}
+    }
+    if(nowish(heistRaw) && GM_Get('mrb_heist_integrated_enabled',false)){
+      try {
+        if(mayWake('heist') && unsafeWindow.mrbGroupTransaction?.acquire?.('heist','WAKE_PENDING')){
+          diag('HEIST_WAKE',{timer:heistRaw},'heist-wake',1200);
+          const accepted=unsafeWindow.mrbHeistCoreControl?.wake?.();
+          if(accepted===false) unsafeWindow.mrbGroupTransaction?.release?.('heist','heist wake geweigerd');
+          else return;
+        }
+      } catch(_) {}
+    }
+    if(nowish(spotRaw) && GM_Get('mrb_spot_complete_v1_enabled',false)){
+      try {
+        if(mayWake('spot') && unsafeWindow.mrbGroupTransaction?.acquire?.('spot','WAKE_PENDING')){
+          diag('SPOT_WAKE',{timer:spotRaw},'spot-wake',1200);
+          const accepted=unsafeWindow.mrbSpotRaidCoreV3?.wake?.();
+          if(accepted===false) unsafeWindow.mrbGroupTransaction?.release?.('spot','spot wake geweigerd');
+        }
+      } catch(_) {}
+    }
+  }
+
+  // TEST25: geen permanente 250ms dispatcher-poll meer. Alleen vlak rond een
+  // echte Crimes/Cars-deadline of actieve CC-transactie gebruiken we 250ms;
+  // tijdens normale idle/Info-wacht loopt dezelfde owner op 1s.
+  let dispatcherTimer=null;
+  function dispatcherDelay(){
+    try{
+      const st=unsafeWindow.mrbV9CrimesCars?.state?.();
+      if(st?.busy || st?.confirmPendingKind || st?.forcedRetryKind) return 250;
+      const now=Date.now();
+      const due=[];
+      if(st?.running && st?.doCrimes && Number(st.crimesNext||0)>0) due.push(Number(st.crimesNext));
+      if(st?.running && st?.doCars && Number(st.carsNext||0)>0) due.push(Number(st.carsNext));
+      if(due.length){
+        const delta=Math.min(...due)-now;
+        if(delta<=2000) return 250;
+        if(delta<=10000) return 500;
+      }
+      if(unsafeWindow.mrbGroupTransaction?.active?.()) return 500;
+    }catch(_){}
+    return 1000;
+  }
+  function dispatcherLoop(){
+    dispatcherTimer=null;
+    raceYieldWatchdog();
+    if(!preemptDueCrimesCars()) dispatchInfo();
+    dispatcherTimer=mrbSetTimeout(dispatcherLoop,dispatcherDelay());
+  }
+  dispatcherTimer=mrbSetTimeout(dispatcherLoop,250);
+  // Draait binnen dezelfde centrale timerkernel; geen aparte native watcher.
+  mrbSetInterval(idleHomeWatchdog,IDLE_HOME_CHECK_MS);
+
+  try {
+    unsafeWindow.mrbUnifiedRunnableDispatcher={
+      version:'6.0.0-test25',
+      dispatch:dispatchInfo,
+      raceYield:raceYieldWatchdog,
+      preempt:preemptDueCrimesCars,
+      idleHome:idleHomeWatchdog,
+      state:()=>({preemptPending,preemptStartedAt,preemptReason,idleHomeLastActiveAt,idleHomePendingUntil,idleHomeMs:IDLE_HOME_MS})
+    };
+    unsafeWindow.mrbUnifiedDiagnostics=Object.freeze({
+      version:'6.0.0-test17b',
+      last:()=>{try{return JSON.parse(GM_Get(DIAG_KEY,'')||'null');}catch(_){return null;}},
+      report:()=>{const x=unsafeWindow.mrbUnifiedDiagnostics.last(); try{console.table(x?.events||[]);}catch(_){console.log(x);} return x;},
+      checkpoint:(reason='manual')=>checkpoint(reason,{manual:true}),
+      clear:()=>{GM_Set(DIAG_KEY,''); return true;}
+    });
+  } catch(_) {}
 })();
 
 
@@ -9834,11 +10626,14 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
   let sluggsHiredFlag = !!GM_Get(K_SLUGGS_ON, false);     // kan true zijn na hire
 
   // ---------- Runtime ----------
-  let loopPromise = null;
-  let stopFlag = false;
-  let plannerManaged = false;
-  let plannerBusy = false;
-  const K_PLANNER_NEXT = 'v9_bullets_next_at';
+  let taskBusy = false;
+  const K_NEXT_AT = 'mrb_bullets_next_at_v1';
+  const K_OLD_PLANNER_NEXT = 'v9_bullets_next_at';
+  const K_SLUGGS_FIRE_AT = 'mrb_bullets_sluggs_fire_at_v1';
+  if (!GM_Get(K_NEXT_AT, 0)) {
+    const legacyNext = Number(GM_Get(K_OLD_PLANNER_NEXT, 0)) || 0;
+    if (legacyNext) GM_Set(K_NEXT_AT, legacyNext);
+  }
 
   // ---------- UI ----------
   const block = addBlock(`
@@ -9867,7 +10662,7 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
 
   const q1 = (s,r=document)=> (r||document).querySelector(s);
   const qa = (s,r=document)=> Array.from((r||document).querySelectorAll(s));
-  const sleep = (ms)=>new Promise(r=>setTimeout(r, ms));
+  const sleep = (ms)=>new Promise(r=>mrbSetTimeout(r, ms));
   const rdelay = (min,max)=> Math.floor(min + Math.random()*(max-min+1));
   const toInt = (x)=> {
     const n = parseInt(String(x ?? '').replace(/[^\d]/g,''),10);
@@ -9893,8 +10688,7 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
   function setStatus(){
     const el = q1('#buStatus', block);
     if (!el) return;
-    const plan = plannerManaged ? ' — 🧭 V9 Planner' : '';
-    el.innerHTML = running ? `<span class="ok">✅ Actief${plan}</span>` : '<span class="bad">⛔</span>';
+    el.innerHTML = running ? '<span class="ok">✅ Actief</span>' : '<span class="bad">⛔</span>';
   }
 
   let infoCountdownTimer = null;
@@ -9962,15 +10756,10 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
   q1('#buToggle', block).addEventListener('click', ()=>{
     running = !running;
     GM_Set(K_RUN, running);
-    stopFlag = !running;
-
     ui();
 
     if (running){
-      stopFlag = false;
-      GM_Set(K_PLANNER_NEXT, Date.now());
-      setPlannerManaged(false);
-      if (!loopPromise) loopPromise = mainLoop().finally(()=>{ loopPromise=null; });
+      GM_Set(K_NEXT_AT, Date.now());
     }
   });
 
@@ -9979,9 +10768,7 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
   // ---------- Navigatie helper ----------
   function loadPage(target){
     if (unsafeWindow.mrbSessionSafeMode?.active?.()) return false;
-    if (unsafeWindow.mrbNavigate?.(target,{source:'bullets'})) return true;
-    try { const gui=unsafeWindow?.omerta?.GUI?.container; if (gui&&typeof gui.loadPage==='function'){ gui.loadPage(target); return; } } catch(e) {}
-    location.href=target;
+    return unsafeWindow.mrbNavigate?.(target,{source:'bullets'}) === true;
   }
 
   // =====================================================================
@@ -10176,30 +10963,6 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
     if(!m) return null;
     const hh = parseInt(m[1],10);
     return Number.isFinite(hh) ? hh : null;
-  }
-
-  // Wacht tot MIDNIGHT window (uur == 00)
-  async function waitUntilMidnightForFire(){
-    while(running){
-      await gateAndCaptchaSafe();
-      loadPage(URL_INFO);
-      await sleep(LOOP_TICK_IDLE);
-      await gateAndCaptchaSafe();
-
-      const hh = clockHour();
-      const today = infoBulletsBoughtToday();
-
-      if (hh === 0){
-        setStatus();
-        setInfo(`✅ 00:xx bereikt (today=${today ?? '—'}) → Fire Sluggs…`);
-        return true;
-      }
-
-      setStatus();
-      setInfo(`⏳ Sluggs actief — wachten tot 00:00 om te fire (now=${hh ?? '—'}h, today=${today ?? '—'})…`);
-      await waitWithGuards(CHECK_MS_RESET_WAIT);
-    }
-    return false;
   }
 
   // =====================================================================
@@ -10512,33 +11275,8 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
   }
 
   // =====================================================================
-  // Sluggs-pauze modus
-  // =====================================================================
-
-  async function pauseIfSluggsHiredThenFireAtMidnight(){
-    if (!useSluggs) return false;
-
-    if (isSluggsBulletsPage()){
-      sluggsHiredFlag = true;
-      GM_Set(K_SLUGGS_ON, true);
-    }
-
-    if (!sluggsHiredFlag) return false;
-
-    setStatus();
-    setInfo('⏳ Sluggs is hired — eigen bullets kopen pauzeert tot 00:00…');
-
-    const ok = await waitUntilMidnightForFire();
-    if (!ok) return true;
-
-    await sluggsFire();
-    return true;
-  }
-
-  // =====================================================================
-  // V9 PLANNER — eenmalige Bullet-cyclus
-  // Normale Bullets worden alleen rond :00 en :30 gecontroleerd.
-  // Sluggs blijft voorlopig op de bewezen legacy-flow draaien.
+  // UNIFIED BULLETS TASK
+  // Een enkele scheduler-task beheert prijscheck, aankopen en Sluggs.
   // =====================================================================
 
   function nextHalfHourAt(from=Date.now(), marginMs=5000){
@@ -10555,264 +11293,132 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
     return d.getTime();
   }
 
-  async function plannerStep(){
-    if (!running) return { delayMs:15_000, status:'module staat uit' };
-    if (plannerBusy) return { delayMs:2000, status:'vorige Bullet-actie loopt nog' };
+  function setNextAt(ts){
+    ts=Math.max(0,Number(ts)||0);
+    GM_Set(K_NEXT_AT,ts);
+    return ts;
+  }
 
-    // Sluggs heeft een eigen hire/fire-flow met middernacht-wachtlogica.
-    // Laat die voorlopig in de stabiele legacy-loop zodat fase 4 klein blijft.
-    if (useSluggs){
-      plannerManaged = false;
-      stopFlag = false;
-      if (!loopPromise) loopPromise = mainLoop().finally(()=>{ loopPromise=null; });
-      setStatus();
-      return { delayMs:60_000, status:'Sluggs gebruikt legacy-flow' };
-    }
+  function getNextAt(){ return Math.max(0,Number(GM_Get(K_NEXT_AT,0))||0); }
 
-    plannerBusy = true;
-    stopFlag = false;
+  function ensureSluggsFireAt(){
+    let at=Math.max(0,Number(GM_Get(K_SLUGGS_FIRE_AT,0))||0);
+    if(!at || at<Date.now()-60_000){ at=nextMidnightAt(); GM_Set(K_SLUGGS_FIRE_AT,at); }
+    return at;
+  }
+
+  async function bulletsUnifiedTask(){
+    if(!running || taskBusy) return;
+    const due=getNextAt();
+    if(due>Date.now()) return;
+    taskBusy=true;
     try{
-      if (typeof gm_isGateVisible === 'function' && gm_isGateVisible()) {
-        setInfo('⏸ Gate/captcha — planner wacht…');
-        return { delayMs:10_000, status:'wacht op gate/captcha' };
+      if(typeof gm_isGateVisible==='function' && gm_isGateVisible()){
+        setInfo('⏸ Gate/captcha — Bullets wacht…');
+        setNextAt(Date.now()+10_000);
+        return;
       }
 
-      setInfo('➡️ Centrale planner: Bullet-prijs controleren…');
+      // Sluggs is een toestand binnen dezelfde task, geen tweede loop.
+      if(useSluggs && sluggsHiredFlag){
+        const fireAt=ensureSluggsFireAt();
+        if(Date.now()<fireAt){
+          setNextAt(fireAt);
+          const when=new Date(fireAt).toLocaleTimeString('nl-NL',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+          setInfoCountdown(fireAt,remaining=>`⏳ Sluggs actief — fire om ${when} (nog ${fmtMs(remaining)}).`);
+          return;
+        }
+        await sluggsFire();
+        GM_Set(K_SLUGGS_FIRE_AT,0);
+        setNextAt(Date.now()+1500);
+        return;
+      }
+
+      setInfo('➡️ Bullet-controle gestart — naar kogelfabriek…');
       loadPage(URL_BULLETS);
       await sleep(LOOP_TICK_IDLE);
       await gateAndCaptchaSafe();
 
-      try{
-        await waitBulletsPageReady();
-      }catch(err){
-        const retryAt = Date.now() + 30_000;
-        GM_Set(K_PLANNER_NEXT, retryAt);
-        setInfo('⚠️ Bullets-pagina niet klaar — retry over 30s…');
-        return { nextAt:retryAt, status:'pagina niet geladen' };
+      try{ await waitBulletsPageReady(); }
+      catch(err){
+        setInfo('⚠️ Bullets pagina niet klaar — retry over 30s…');
+        setNextAt(Date.now()+30_000);
+        return;
       }
 
-      if (isDailyMaxReached()){
-        const nextAt = nextMidnightAt();
-        GM_Set(K_PLANNER_NEXT, nextAt);
-        setInfo('🚫 Daglimiet bereikt — wacht tot na middernacht.');
+      if(useSluggs && isSluggsBulletsPage()){
+        sluggsHiredFlag=true; GM_Set(K_SLUGGS_ON,true);
+        const fireAt=ensureSluggsFireAt();
+        setNextAt(fireAt);
+        setInfo('✅ Sluggs actief — eigen bullets wachten tot middernacht.');
+        return;
+      }
+
+      if(isDailyMaxReached()){
+        if(useSluggs){
+          await sluggsHire();
+          const fireAt=ensureSluggsFireAt();
+          setNextAt(fireAt);
+          return;
+        }
+        setInfo('🚫 Daglimiet bereikt — controle over 60s.');
         loadPage(URL_INFO);
-        return { nextAt, status:'daglimiet bereikt' };
+        setNextAt(Date.now()+CHECK_MS_RESET_WAIT);
+        return;
       }
 
-      const price = bulletsPrice();
-      if (price == null){
-        const retryAt = Date.now() + 30_000;
-        GM_Set(K_PLANNER_NEXT, retryAt);
+      const price=bulletsPrice();
+      if(price==null){
         setInfo('⚠️ Prijs niet gevonden — retry over 30s…');
         loadPage(URL_INFO);
-        return { nextAt:retryAt, status:'prijs niet gevonden' };
+        setNextAt(Date.now()+30_000);
+        return;
       }
 
-      if (price > maxPrice){
-        const nextAt = nextHalfHourAt();
-        GM_Set(K_PLANNER_NEXT, nextAt);
-        const refillTime = new Date(nextAt).toLocaleTimeString('nl-NL',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
-        setInfoCountdown(nextAt, remaining => `💸 Prijs $${price} > max $${maxPrice} — refill om ${refillTime} (nog ${fmtMs(remaining)}).`);
+      if(price>maxPrice){
+        const nextAt=nextHalfHourAt();
+        setNextAt(nextAt);
+        const refillTime=new Date(nextAt).toLocaleTimeString('nl-NL',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+        setInfoCountdown(nextAt,remaining=>`💸 Prijs $${price} > max $${maxPrice} — refill om ${refillTime} (nog ${fmtMs(remaining)}).`);
         loadPage(URL_INFO);
-        return { nextAt, status:`prijs te hoog ($${price})` };
+        return;
       }
 
       setInfo(`🛒 Prijs OK: $${price} — maximaal aantal kopen…`);
       await submitBuy();
-      await sleep(1500);
-
-      // Na een aankoop niet blind tot :00/:30 wachten. De fabriek kan direct
-      // nog een volgende aankoop toestaan. Laat de centrale planner daarom
-      // na vijf seconden opnieuw de echte Bullets-pagina controleren.
-      const nextAt = Date.now() + 5000;
-      GM_Set(K_PLANNER_NEXT, nextAt);
+      const nextAt=Date.now()+5000;
+      setNextAt(nextAt);
       loadPage(URL_INFO);
-      setInfoCountdown(nextAt, remaining => `✅ Gekocht — directe hercontrole over ${fmtMs(remaining)}.`);
-      return { nextAt, status:'gekocht; directe hercontrole' };
+      setInfoCountdown(nextAt,remaining=>`✅ Gekocht — directe hercontrole over ${fmtMs(remaining)}.`);
     }catch(e){
-      const retryAt = Date.now() + 30_000;
-      GM_Set(K_PLANNER_NEXT, retryAt);
-      setInfo(`⚠️ Planner-fout: ${String(e?.message || e)} — retry over 30s…`);
-      try { loadPage(URL_INFO); } catch(_) {}
-      return { nextAt:retryAt, status:'fout; retry' };
+      setInfo(`⚠️ Bullets-fout: ${String(e?.message||e)} — retry over 30s…`);
+      try{loadPage(URL_INFO);}catch(_){}
+      setNextAt(Date.now()+30_000);
     }finally{
-      plannerBusy = false;
+      taskBusy=false;
       setStatus();
     }
   }
 
-  function setPlannerManaged(on){
-    plannerManaged = !!on;
-    if (plannerManaged){
-      // Stop alleen de interne while-loop; de module blijft logisch ingeschakeld.
-      stopFlag = true;
-      const nextAt = Number(GM_Get(K_PLANNER_NEXT, Date.now())) || Date.now();
-      const when = new Date(nextAt).toLocaleTimeString('nl-NL',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
-      if (running) setInfoCountdown(nextAt, remaining => `🧭 Centrale planner actief — volgende controle om ${when} (nog ${fmtMs(remaining)}).`);
-    }else if (running && !useSluggs){
-      stopFlag = false;
-      if (!loopPromise) loopPromise = mainLoop().finally(()=>{ loopPromise=null; });
-    }
-    setStatus();
-  }
-
-  unsafeWindow.mrbV9Bullets = {
-    setPlannerManaged,
-    runStep:plannerStep,
-    isRunning:()=>!!running,
-    nextAt:()=>Number(GM_Get(K_PLANNER_NEXT, Date.now())) || Date.now(),
-    state:()=>({running, plannerManaged, plannerBusy, useSluggs, maxPrice})
-  };
-
-
-  // =====================================================================
-  // MAIN LOOP
-  // =====================================================================
-
-  async function mainLoop(){
-    try{
-      while(running && !stopFlag){
-        await gateAndCaptchaSafe();
-        setStatus();
-
-        if (await pauseIfSluggsHiredThenFireAtMidnight()){
-          continue;
-        }
-
-        // 1) Interne planning: niet meer afhankelijk van de tekst
-        // "Next bullet deal" / "Volgende kogeltransactie" op Information.
-        // De prijs verandert op :00 en :30, dus we bewaren zelf het
-        // eerstvolgende controlemoment.
-        let plannedAt = Number(GM_Get(K_PLANNER_NEXT, 0)) || 0;
-        if (!plannedAt) {
-          plannedAt = Date.now();
-          GM_Set(K_PLANNER_NEXT, plannedAt);
-        }
-
-        const waitMs = plannedAt - Date.now();
-        if (waitMs > 0){
-          const refillTime = new Date(plannedAt).toLocaleTimeString('nl-NL',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
-          setInfoCountdown(plannedAt, remaining => `⏳ Wachten op fabriek-refill om ${refillTime} (nog ${fmtMs(remaining)})…`);
-          await waitWithGuards(Math.min(waitMs, 60_000));
-          continue;
-        }
-
-        // 2) BULLETS: open bullets2 + wacht tot geladen
-        setInfo('➡️ Bullet-controle gestart — naar kogelfabriek…');
-        loadPage(URL_BULLETS);
-        await sleep(LOOP_TICK_IDLE);
-        await gateAndCaptchaSafe();
-        setStatus();
-
-        try{
-          await waitBulletsPageReady();
-        }catch(err){
-          console.warn('[Bullets] waitBulletsPageReady failed:', err);
-          setInfo('⚠️ Bullets pagina laadde niet goed — terug naar info, retry over 60s…');
-          loadPage(URL_INFO);
-          await waitWithGuards(FALLBACK_WAIT_MS);
-          continue;
-        }
-
-        await gateAndCaptchaSafe();
-        setStatus();
-
-        // 2b) Als bullets2 eigenlijk Sluggs pagina is → pause mode
-        if (useSluggs && isSluggsBulletsPage()){
-          sluggsHiredFlag = true;
-          GM_Set(K_SLUGGS_ON, true);
-          setInfo('✅ Sluggs pagina gedetecteerd (hired). Pauze tot 00:00…');
-          await pauseIfSluggsHiredThenFireAtMidnight();
-          continue;
-        }
-
-        // 3) Daglimiet?
-        if (isDailyMaxReached()){
-          setInfo('🚫 Daglimiet bereikt (kan niet meer kopen).');
-
-          if (useSluggs){
-            await sluggsHire();
-            await pauseIfSluggsHiredThenFireAtMidnight();
-            continue;
-          }
-
-          setInfo('⏳ Wachten op reset (geen Sluggs)…');
-          await waitWithGuards(CHECK_MS_RESET_WAIT);
-          continue;
-        }
-
-        // 4) Price check
-        const price = bulletsPrice();
-        if (price == null){
-          setInfo('⚠️ Prijs niet gevonden — retry over 60s…');
-          loadPage(URL_INFO);
-          await waitWithGuards(CHECK_MS_PRICE_HIGH);
-          continue;
-        }
-
-        if (price > maxPrice){
-          const nextAt = nextHalfHourAt();
-          GM_Set(K_PLANNER_NEXT, nextAt);
-          const refillTime = new Date(nextAt).toLocaleTimeString('nl-NL',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
-          setInfoCountdown(nextAt, remaining => `💸 Prijs $${price} > max $${maxPrice} — fabriek-refill om ${refillTime} (nog ${fmtMs(remaining)}).`);
-          loadPage(URL_INFO);
-          await waitWithGuards(Math.min(Math.max(nextAt - Date.now(), 1000), 60_000));
-          continue;
-        }
-
-        // 5) BUY
-        setInfo(`🛒 Prijs OK: $${price} (≤ $${maxPrice}) — buy…`);
-        await submitBuy();
-
-        // 6) Na aankoop snel opnieuw controleren. De site kan direct nog
-        // een volgende aankoop toestaan; pas bij een gesloten transactie of
-        // te hoge prijs wordt weer naar het normale controlemoment gepland.
-        const nextAt = Date.now() + 5000;
-        GM_Set(K_PLANNER_NEXT, nextAt);
-        await waitWithGuards(5000);
-        loadPage(URL_INFO);
-        setInfo(`✅ Gekocht — volgende controle om ${new Date(nextAt).toLocaleTimeString('nl-NL',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}.`);
-        await sleep(LOOP_TICK_IDLE);
-      }
-    } catch(e){
-      if (String(e?.message||'') === 'ABORT') return;
-      console.warn('[Bullets] Error:', e);
-      setStatus();
-      setInfo(`⚠️ Error: ${String(e?.message||e)}`);
-    } finally {
-      ui();
-    }
-  }
-
-  // ---------- Auto-start na refresh ----------
-  if (running){
-    stopFlag = false;
-    setPlannerManaged(false);
-    if (!loopPromise) loopPromise = mainLoop().finally(()=>{ loopPromise=null; });
-    ui();
-  }
+  // ---------- Auto-start + externe master toggle ----------
+  if(running && !getNextAt()) setNextAt(Date.now());
 
   unsafeWindow.cc_api = unsafeWindow.cc_api || {};
   unsafeWindow.cc_api.bulletsSet = function(on, why='master'){
-    on = !!on;
-
-    if (on){
-      if (running) return;
-      running = true;
-      stopFlag = false;
-      GM_Set(K_RUN, true);
-      ui();
-      GM_Set(K_PLANNER_NEXT, Date.now());
-      setPlannerManaged(false);
-      if (!loopPromise) loopPromise = mainLoop().finally(()=>{ loopPromise=null; });
-    } else {
-      if (!running) return;
-      running = false;
-      stopFlag = true;
-      GM_Set(K_RUN, false);
-      ui();
-    }
+    on=!!on;
+    if(on===running) return;
+    running=on;
+    GM_Set(K_RUN,running);
+    if(running) setNextAt(Date.now());
+    ui();
   };
+
+  unsafeWindow.mrbBullets = Object.freeze({
+    state:()=>({running,taskBusy,useSluggs,maxPrice,nextAt:getNextAt(),sluggsHired:sluggsHiredFlag})
+  });
+
+  // Enige runtime-aansturing: één task in de centrale Unified timerkernel.
+  mrbSetInterval(bulletsUnifiedTask,3000);
 
 })();
 // =====================================================================
@@ -10861,10 +11467,7 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
 
   function loadPage(path){
     if (unsafeWindow.mrbSessionSafeMode?.active?.()) return false;
-    try{if(unsafeWindow.mrbNavigate)return unsafeWindow.mrbNavigate(path,{source:'travel-roundtrip'});}catch(_){}
-    try{if(unsafeWindow?.omerta?.GUI?.container?.loadPage){unsafeWindow.omerta.GUI.container.loadPage(path);return true;}}catch(_){}
-    location.href=/^\/\?module=/i.test(path)?'/index.php#'+path:path;
-    return true;
+    try { return unsafeWindow.mrbNavigate?.(path,{source:'travel-roundtrip'}) === true; } catch(_) { return false; }
   }
   function onInfo(){return /information\.php/i.test(String(location.pathname||location.href));}
   function onTravel(){return /module=Travel/i.test(String(location.href||''));}
@@ -10960,7 +11563,7 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
     return document.querySelector(`a[onclick="onTravelData(${id});"]`)||document.querySelector(`a[onclick^="onTravelData(${id})"]`)||[...document.querySelectorAll('#game_container a,a')].find(a=>visible(a)&&new RegExp('^'+city.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'$','i').test(clean(a.textContent)));
   }
   function travelButton(){return document.querySelector('button[name="jqi_state0_buttonTravel"][value="true"]')||document.querySelector('.jqi .jqibuttons button[name="jqi_state0_buttonTravel"]')||[...document.querySelectorAll('button')].find(b=>visible(b)&&/^travel|reizen?$/i.test(clean(b.textContent)));}
-  async function sleep(ms){return new Promise(resolve=>setTimeout(resolve,ms));}
+  async function sleep(ms){return new Promise(resolve=>mrbSetTimeout(resolve,ms));}
 
   async function executeTravel(city,nextIndex){
     if(!onTravel()){loadPage(TRAVEL);nextCheck=Date.now()+1800;GM_Set(K_NEXT_CHECK,nextCheck);paint(`Travelpagina openen voor ${city}`);return;}
@@ -10977,7 +11580,7 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
     routeIndex=nextIndex;GM_Set(K_INDEX,routeIndex);
     nextCheck=Date.now()+3000;GM_Set(K_NEXT_CHECK,nextCheck);
     paint(`Reis naar ${city} bevestigd; routepositie opgeslagen`);
-    setTimeout(()=>{if(enabled)loadPage(INFO);},1500);
+    mrbSetTimeout(()=>{if(enabled)loadPage(INFO);},1500);
   }
 
   async function tick(){
@@ -11069,7 +11672,7 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
   }
 
   function clear(){
-    if (timer) clearTimeout(timer);
+    if (timer) mrbClearTimeout(timer);
     timer = null;
   }
 
@@ -11102,7 +11705,7 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
   function schedule(ms){
     clear();
     if (!on) return;
-    timer = setTimeout(tick, Math.max(500, ms || actionDelay()));
+    timer = mrbSetTimeout(tick, Math.max(500, ms || actionDelay()));
   }
 
   function tick(){
@@ -11182,8 +11785,6 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
   let fixedRefreshDue=Number(GM_Get(K_FIXED_DUE,0))||0;
   let fixedRefreshPendingSince=0;
   let nextTs=Number(GM_Get(K_NEXTTS,0))||0;
-  let plannerManaged=false;
-  let legacyTimer=null;
   let lastActivity=Date.now();
   let overlaySince=0;
   let lastOverlaySignature='';
@@ -11236,11 +11837,13 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
     'CHECK_TIMER','PAUSED_GATE','PREP_WAIT_HTML','DISABLED','READY','PLANNER_READY','LOCAL_MODE'
   ]);
   function plannerBusy(){
-    const p=unsafeWindow.mrbV9Planner;
     try{
-      // In deze clean/plannerless basis telt alleen een werkelijk actieve owner.
-      // Oude taak-nextAt waarden mogen de refresh niet meer op 0 seconden houden.
-      return !!(p?.currentTask?.()||p?.actionOwner?.()||p?.navigationOwner?.()||p?.continuationOwner?.());
+      const group=unsafeWindow.mrbGroupTransaction?.active?.();
+      const nav=unsafeWindow.mrbNavigationState||{};
+      const navBusy=!!(nav.source||nav.target) && Number(nav.until||0)>Date.now();
+      const cc=unsafeWindow.mrbV9CrimesCars?.state?.();
+      const ccBusy=!!(cc?.running && (cc?.busy||cc?.confirmPendingKind||cc?.forcedRetryKind));
+      return !!(group||navBusy||ccBusy);
     }catch(e){return false;}
   }
   function moduleFlowBusy(){
@@ -11319,14 +11922,14 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
     GM_Set(K_LAST_REFRESH,Date.now());
     try{sessionStorage.setItem('mrb_session_refresh_reason',String(reason||'veilig herstel'));}catch(e){}
     ui(`Veilige refresh: ${reason}`);
-    setTimeout(()=>{ try{location.reload();}catch(e){} },250);
+    mrbSetTimeout(()=>{ try{location.reload();}catch(e){} },250);
     return true;
   }
   function ui(message=''){
     block.querySelector('#rfToggle').textContent=active?'Stop':'Start';
     const gated=gateVisible();
     block.querySelector('#rfStatus').innerHTML=active
-      ? (gated ? '<span class="bad">⏸ Sessie/gate</span>' : `<span class="ok">✅ Actief${plannerManaged?' — 🧭 Core':''}</span>`)
+      ? (gated ? '<span class="bad">⏸ Sessie/gate</span>' : '<span class="ok">✅ Actief — Unified</span>')
       : '<span class="bad">⛔</span>';
     const info=block.querySelector('#rfInfo');
     if(info){
@@ -11338,16 +11941,8 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
         : '-');
     }
   }
-  function syncPlanner(status='gepland'){
-    try{unsafeWindow.mrbV9Planner?.updateTask?.('v11-refresh',{enabled:!!active,nextAt:active?nextTs:Date.now()+PERIOD_MS,status});}catch(e){}
-  }
-  function clearLegacy(){ if(legacyTimer){ clearTimeout(legacyTimer); legacyTimer=null; } }
-  function armLegacy(){
-    clearLegacy(); if(!active||plannerManaged)return; normalizeNext();
-    legacyTimer=setTimeout(async()=>{ await wake(); armLegacy(); },Math.max(250,nextTs-Date.now()));
-  }
-  function start(){ active=true; nextTs=Date.now()+1000; markActivity(); GM_Set(K_ACTIVE,true); GM_Set(K_NEXTTS,nextTs); syncPlanner('sessiecontrole gepland'); armLegacy(); ui(); }
-  function stop(){ active=false; nextTs=0; GM_Set(K_ACTIVE,false); GM_Set(K_NEXTTS,0); clearLegacy(); syncPlanner('module staat uit'); ui(); }
+  function start(){ active=true; nextTs=Date.now()+1000; markActivity(); GM_Set(K_ACTIVE,true); GM_Set(K_NEXTTS,nextTs); ui(); }
+  function stop(){ active=false; nextTs=0; GM_Set(K_ACTIVE,false); GM_Set(K_NEXTTS,0); ui(); }
   function save(){
     idleRefreshOn=!!block.querySelector('#rfIdleOn').checked;
     freezeRecoveryOn=!!block.querySelector('#rfFreezeOn').checked;
@@ -11370,9 +11965,6 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
       ui('Planner gepauzeerd zolang login/captcha zichtbaar is');
       return {nextAt:nextTs,status:'sessie/gate zichtbaar'};
     }
-
-    try { unsafeWindow.mrbBackgroundTimerSync?.request?.('session-manager'); } catch(e){}
-    try { unsafeWindow.mrbBackgroundTimerSync?.syncNow?.('session-manager'); } catch(e){}
 
     normalizeFixedDue();
     if(fixedRefreshOn && Date.now()>=fixedRefreshDue){
@@ -11433,11 +12025,15 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
   });
   block.querySelector('#rfSave').addEventListener('click',save);
   unsafeWindow.mrbV11Refresh={
-    setPlannerManaged(v){ plannerManaged=!!v; if(plannerManaged)clearLegacy(); else armLegacy(); ui(); },
     isRunning(){ return !!active; }, nextAt(){ normalizeNext(); return active?nextTs:Date.now()+PERIOD_MS; }, wake,
     safeToRefresh, markActivity
   };
-  normalizeNext(); normalizeFixedDue(); ui(); armLegacy(); mrbSetInterval(ui,1000);
+  async function sessionRefreshUnifiedTask(){
+    if(active) await wake();
+    ui();
+  }
+  normalizeNext(); normalizeFixedDue(); ui();
+  mrbSetInterval(sessionRefreshUnifiedTask,3000);
 })();
 // =====================================================================
 // =====================================================================
@@ -11449,7 +12045,7 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
   const PERIOD_MS=6*60*60*1000;
   let running=!!GM_Get(K_ON,false);
   let nextAt=Number(GM_Get(K_NEXT,0))||0;
-  let timer=null, busy=false;
+  let busy=false;
 
   const block=addBlock(`
     <h4>Fill lackey</h4>
@@ -11460,7 +12056,7 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
     <div class="gm-row" style="margin-top:6px;"><div id="flNext" style="font-size:12px;opacity:.9;"></div></div>
   `,'xx-fill-lackey');
 
-  const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+  const sleep=ms=>new Promise(r=>mrbSetTimeout(r,ms));
   const fmt=ts=>ts?new Date(ts).toLocaleString():'-';
   function paint(msg=''){
     const btn=block.querySelector('#flToggle'), st=block.querySelector('#flStatus'), nx=block.querySelector('#flNext');
@@ -11468,14 +12064,15 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
     if(st) st.innerHTML=msg || (running?'<span class="ok">✅ Actief</span>':'<span class="bad">⛔</span>');
     if(nx) nx.textContent=`Volgende run: ${running?fmt(nextAt):'-'}`;
   }
-  function clear(){ if(timer) clearTimeout(timer); timer=null; }
-  function plan(ts){ clear(); nextAt=ts; GM_Set(K_NEXT,nextAt); if(running) timer=setTimeout(runOnce,Math.max(250,nextAt-Date.now())); paint(); }
-  const RETRY_MS=15000;
+  function plan(ts){ nextAt=ts; GM_Set(K_NEXT,nextAt); paint(); }
+  const RETRY_MS=5*60*1000;
+  const RETRY_LIMIT=2;
+  const RETRY_COOLDOWN_MS=30*60*1000;
+  let consecutiveErrors=0;
   const PAGE_READY_TIMEOUT=30000;
   const FILL_COMPLETE_TIMEOUT=25000;
   function loadLackeys(){
-    try{ const gui=unsafeWindow?.omerta?.GUI?.container; if(gui?.loadPage){ gui.loadPage('/?module=Lackeys'); return; } }catch(e){}
-    location.href='/?module=Lackeys';
+    try { return unsafeWindow.mrbNavigate?.('/?module=Lackeys',{source:'fill-lackey'}) === true; } catch(_) { return false; }
   }
   function lackeysDomReady(){
     const text=String(document.querySelector('#game_container')?.innerText || document.body?.innerText || '');
@@ -11527,29 +12124,43 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
 
       const btn=await waitForFillButton();
       if(!btn) throw new Error('Fill all lackeys knop niet gevonden op geladen Lackeys-pagina.');
+      if(unsafeWindow.mrbManualControl?.isPaused?.()) throw new Error('Handmatige bediening actief; automatische Lackey-actie geannuleerd.');
+      if(unsafeWindow.mrbSessionSafeMode?.active?.()) throw new Error('Sessie niet actief; automatische Lackey-actie geannuleerd.');
 
       paint('<span class="ok">▶ Lackeys bijvullen…</span>');
       btn.click();
       const completed=await waitForFillComplete(btn);
       if(!completed) throw new Error('Fill all lackeys actie gaf geen bevestigde afronding.');
 
+      consecutiveErrors=0;
       plan(Date.now()+PERIOD_MS);
       paint('<span class="ok">✅ Lackeys bijgewerkt</span>');
     }catch(e){
       console.warn('[FillLackeyLean]',e);
-      // Een tijdelijke SPA-/paginalaadfout mag nooit een volledige 6-uurscyclus kosten.
-      // Kort opnieuw proberen; pas na een bevestigde vulactie begint de 6-uursperiode.
-      plan(Date.now()+RETRY_MS);
-      paint('<span class="bad">⛔ Tijdelijke fout — nieuwe poging over 15s</span>');
+      consecutiveErrors+=1;
+      const wait=consecutiveErrors>=RETRY_LIMIT?RETRY_COOLDOWN_MS:RETRY_MS;
+      if(consecutiveErrors>=RETRY_LIMIT) consecutiveErrors=0;
+      plan(Date.now()+wait);
+      paint(`<span class="bad">⛔ Lackey-run afgebroken — nieuwe poging over ${Math.round(wait/60000)} min</span>`);
     }finally{ busy=false; }
   }
   block.querySelector('#flToggle')?.addEventListener('click',()=>{
-    running=!running; GM_Set(K_ON,running); clear();
-    if(running){ nextAt=Date.now(); GM_Set(K_NEXT,nextAt); paint(); runOnce(); }
+    running=!running; GM_Set(K_ON,running);
+    if(running){ nextAt=Date.now(); GM_Set(K_NEXT,nextAt); paint(); }
     else paint();
   });
+  async function fillLackeyUnifiedTask(){
+    if(!running||busy)return;
+    if(!nextAt) plan(Date.now()+500);
+    if(Date.now()>=nextAt) await runOnce();
+  }
+  unsafeWindow.mrbFillLackey=Object.freeze({
+    state:()=>({running,busy,nextAt})
+  });
   paint();
-  if(running) plan(nextAt>Date.now()?nextAt:Date.now()+500);
+  if(running && (!nextAt || nextAt<Date.now())) plan(Date.now()+500);
+  // Enige runtime-aansturing: een task in de centrale Unified timerkernel.
+  mrbSetInterval(fillLackeyUnifiedTask,3000);
 })();
 
 // Lackeys knoppen "Fill all lackeys" + "Start lackeys"
@@ -11748,7 +12359,7 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
   let tObs = null;
   const mo = new MutationObserver(()=>{
     if (tObs) return;
-    tObs = setTimeout(()=>{
+    tObs = mrbSetTimeout(()=>{
       tObs = null;
       applyAll();
     }, 200);
@@ -11818,7 +12429,7 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
 
   const q1=(s,r=document)=>r.querySelector(s);
   const qAll=(s,r=document)=>Array.from(r.querySelectorAll(s));
-  const sleep = (ms)=>new Promise(r=>setTimeout(r,ms));
+  const sleep = (ms)=>new Promise(r=>mrbSetTimeout(r,ms));
 
   function setStatus(html){
     const st=q1('#snStatus',block);
@@ -12036,7 +12647,7 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
     nextCheckTs = 0; // meteen checken bij start
     if(timerId) mrbClearInterval(timerId);
     timerId = mrbSetInterval(tick, LOOP_MS);
-    setTimeout(tick, 50);
+    mrbSetTimeout(tick, 50);
   }
 
   function stop(){
@@ -12115,7 +12726,7 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
       g.gain.setValueAtTime(0.2, audioCtx.currentTime);
       o.connect(g); g.connect(audioCtx.destination);
       o.start();
-      setTimeout(()=>{ try{o.stop();}catch{}; try{g.disconnect();}catch{} }, 300);
+      mrbSetTimeout(()=>{ try{o.stop();}catch{}; try{g.disconnect();}catch{} }, 300);
     }catch{}
   }
 
@@ -12148,7 +12759,7 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
 
   function setPersist(v){ try{ if(typeof GM_setValue==='function') GM_setValue(K_ON,v);}catch{} }
 
-  const sleep = (ms)=>new Promise(r=>setTimeout(r,ms));
+  const sleep = (ms)=>new Promise(r=>mrbSetTimeout(r,ms));
   const q1=(s,r=document)=>r.querySelector(s);
   const qAll=(s,r=document)=>Array.from(r.querySelectorAll(s));
 
@@ -12273,7 +12884,7 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
       mo.observe(document.body, {childList:true, subtree:true, characterData:true});
     }catch{}
 
-    setTimeout(tick, 50);
+    mrbSetTimeout(tick, 50);
   }
 
   function stop(reason=''){
@@ -12325,7 +12936,7 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
     <div id="mcInfo" style="font-size:11px;margin-top:5px;opacity:.9;">-</div>
   `,'10-milestones');
 
-  const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+  const sleep=ms=>new Promise(r=>mrbSetTimeout(r,ms));
   const clean=s=>String(s||'').replace(/\s+/g,' ').trim();
   const visible=el=>!!(el && el.offsetParent !== null && !el.disabled);
   function q(sel,root=document){ return root?.querySelector?.(sel)||null; }
@@ -12451,7 +13062,7 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
       return false;
     }finally{
       busy=false;
-      setTimeout(release,1500);
+      mrbSetTimeout(release,1500);
     }
   }
   async function hardCheck(){
@@ -12470,14 +13081,14 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
       if(n===0||onMilestones()){ await sleep(500); loadPage('/information.php'); }
       return {delayMs:50*60*1000,status:n?`${n} opgehaald`:'niets beschikbaar'};
     }finally{
-      busy=false;setTimeout(release,1200);
+      busy=false;mrbSetTimeout(release,1200);
     }
   }
 
   const observer=new MutationObserver(()=>{
     if(!active||busy)return;
-    clearTimeout(unsafeWindow.__mrbMilestonePopupDebounce);
-    unsafeWindow.__mrbMilestonePopupDebounce=setTimeout(processPopup,350);
+    mrbClearTimeout(unsafeWindow.__mrbMilestonePopupDebounce);
+    unsafeWindow.__mrbMilestonePopupDebounce=mrbSetTimeout(processPopup,350);
   });
   const milestoneRoot=document.querySelector('#game_container');
   if(milestoneRoot) observer.observe(milestoneRoot,{childList:true,subtree:true});
@@ -12507,11 +13118,11 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
 
   q('#mcToggle',block)?.addEventListener('click',()=>{
     active=!active;GM_Set(K_ACTIVE,active);ui();
-    if(active){ localNextAt=Date.now()+250; GM_Set('mrb_milestones_local_next_at',localNextAt); setTimeout(processPopup,50); setTimeout(localMilestoneTick,300); }
+    if(active){ localNextAt=Date.now()+250; GM_Set('mrb_milestones_local_next_at',localNextAt); mrbSetTimeout(processPopup,50); mrbSetTimeout(localMilestoneTick,300); }
   });
 
   ui();saveCounters();
-  if(active){ if(!localNextAt || localNextAt<Date.now()) localNextAt=Date.now()+1000; setTimeout(processPopup,300); setTimeout(localMilestoneTick,1200); }
+  if(active){ if(!localNextAt || localNextAt<Date.now()) localNextAt=Date.now()+1000; mrbSetTimeout(processPopup,300); mrbSetTimeout(localMilestoneTick,1200); }
 })();
 
 
@@ -12553,7 +13164,7 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
   function loadPage(t){
     if (unsafeWindow.mrbSessionSafeMode?.active?.()) return false;
     if (unsafeWindow.mrbNavigate?.(t,{source:'module'})) return true;
-    try { const gui=unsafeWindow?.omerta?.GUI?.container; if(gui&&typeof gui.loadPage==='function'){ gui.loadPage(t); return; } } catch(e) {}
+    try { if(unsafeWindow.mrbNavigate){ unsafeWindow.mrbNavigate(t,{source:'module'}); return; } } catch(e) {}
     if (t.startsWith('?')) location.search=t; else location.href=t;
   }
 
@@ -12604,7 +13215,7 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
       link.click();
 
       // na klik: niet optellen in UI, maar later opnieuw lezen
-      setTimeout(()=>{ if(running) updCounts(); }, 650);
+      mrbSetTimeout(()=>{ if(running) updCounts(); }, 650);
       return true;
     }
     return false;
@@ -12618,20 +13229,20 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
 
     loadPage(URL8);
 
-    setTimeout(()=>{
+    mrbSetTimeout(()=>{
       if(!running) return;
       if (isLoggedOut()) return pauseForGate('Uitgelogd/Cloudflare gedetecteerd');
       clickKoop();
     }, RENDER_PAUSE);
 
-    clearTimeout(tA); clearTimeout(tB);
-    tA=setTimeout(()=>{
+    mrbClearTimeout(tA); mrbClearTimeout(tB);
+    tA=mrbSetTimeout(()=>{
       if(!running) return;
       if (isLoggedOut()) return pauseForGate('Uitgelogd/Cloudflare gedetecteerd');
 
       loadPage(URL0);
 
-      tB=setTimeout(()=>{
+      tB=mrbSetTimeout(()=>{
         if(!running) return;
         if (isLoggedOut()) return pauseForGate('Uitgelogd/Cloudflare gedetecteerd');
         cycle();
@@ -12660,11 +13271,11 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
   function pauseForGate(reason=''){
     if(!running) return;
     // pauze: stop huidige timers, maar laat running=true staan zodat hij vanzelf hervat
-    clearTimeout(tA); clearTimeout(tB);
-    if (gateTimer) clearTimeout(gateTimer);
+    mrbClearTimeout(tA); mrbClearTimeout(tB);
+    if (gateTimer) mrbClearTimeout(gateTimer);
     ui();
     try{ console.warn('[Molotov-Buyer] Pauze (gate):', reason || gm_gateReason()); }catch{}
-    gateTimer = setTimeout(()=>{
+    gateTimer = mrbSetTimeout(()=>{
       if(!running) return;
       if (isLoggedOut()) return pauseForGate(reason);
       gateTimer = null;
@@ -12677,7 +13288,7 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
     running=false;
     GM_Set('shop_running',false);
     ui();
-    clearTimeout(tA); clearTimeout(tB);
+    mrbClearTimeout(tA); mrbClearTimeout(tB);
     try{ console.log('[Molotov-Buyer] Gestopt:', reason, { qtyGrenade, qtyMolotov }); }catch{}
   }
 
@@ -12715,7 +13326,7 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
     'Mercedes-Benz W125',
   ]);
 
-  const sleep = (ms)=>new Promise(r=>setTimeout(r,ms));
+  const sleep = (ms)=>new Promise(r=>mrbSetTimeout(r,ms));
   function onLackeys(){ return /[?&]module=Lackeys\b/i.test(location.href); }
   function readInt(el){
     if(!el) return 0;
@@ -13147,7 +13758,7 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
   const GUI=()=>{
     try{ const g=unsafeWindow?.omerta?.GUI?.container;
       if(unsafeWindow.mrbNavigate) return (p)=>unsafeWindow.mrbNavigate(p,{source:'shortcuts'});
-      if(g&&typeof g.loadPage==='function') return (p)=>g.loadPage(p);
+      if(g&&typeof g.loadPage==='function') return (p)=>unsafeWindow.mrbNavigate?.(p,{source:'shortcuts'}) ?? false;
     }catch{}
     return (p)=>{ if(unsafeWindow.mrbNavigate) return unsafeWindow.mrbNavigate(p,{source:'fallback'}); if(p.startsWith('?')) location.search=p; else location.href=p; };
   };
@@ -13340,7 +13951,7 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
         // al voordat de nieuwe OC-core volledig aan unsafeWindow is gekoppeld.
         try {
             if (GM_Get('oc_scriptAan', false)) return true;
-            return !!unsafeWindow.mrbOC2Control?.isEnabled?.() && !!unsafeWindow.mrbOC2Control?.isPlannerManaged?.();
+            return !!unsafeWindow.mrbOC2Control?.ownsFlow?.() || !!unsafeWindow.mrbOC2Control?.isEnabled?.();
         } catch (e) {
             try { return !!GM_Get('oc_scriptAan', false); } catch (_) { return false; }
         }
@@ -13488,8 +14099,8 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
         new MutationObserver(() => {
             const href = String(location.href || '');
             if (!/module=(GroupCrimes|OrgCrime)/i.test(href)) return;
-            clearTimeout(prefillTimer);
-            prefillTimer = setTimeout(handlePages, 500);
+            mrbClearTimeout(prefillTimer);
+            prefillTimer = mrbSetTimeout(handlePages, 500);
         }).observe(target, { childList:true, subtree:true });
     }
 
@@ -13723,6 +14334,14 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
 // =====================================================================
 (function MRBHeistComArchitectureNL(){
   'use strict';
+  // TEST3: deze module staat buiten de hoofd-IIFE en kreeg in TEST2 daarom
+  // ReferenceError op mrbSetInterval/mrbSetTimeout. Gebruik expliciet de
+  // centraal geëxporteerde timerkernel.
+  const __ut=unsafeWindow.mrbUnifiedTimers;
+  const mrbSetInterval=(...a)=>__ut.setInterval(...a);
+  const mrbClearInterval=(...a)=>__ut.clearInterval(...a);
+  const mrbSetTimeout=(...a)=>__ut.setTimeout(...a);
+  const mrbClearTimeout=(...a)=>__ut.clearTimeout(...a);
 
   const K_ON='mrb_heist_integrated_enabled';
   const K_ROLE='mrb_heist_integrated_role';
@@ -13769,10 +14388,10 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
   let lastPageLoad=0;
   const MAX_ACCEPT_CHECKS=30;
 
-  function clearLoop(){ if(loopTimer){clearTimeout(loopTimer);loopTimer=null;} }
+  function clearLoop(){ if(loopTimer){mrbClearTimeout(loopTimer);loopTimer=null;} }
   function next(fn,ms){
     clearLoop();
-    loopTimer=setTimeout(()=>{
+    loopTimer=mrbSetTimeout(()=>{
       if(!enabled()) return;
       if(unsafeWindow.mrbSessionSafeMode?.active?.()){
         status('Uitgelogd · Heist gepauzeerd');
@@ -13794,7 +14413,7 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
     if (unsafeWindow.mrbSessionSafeMode?.active?.()) return false;
     if(Date.now()-lastPageLoad<900) return false;
     lastPageLoad=Date.now();
-    try{unsafeWindow?.omerta?.GUI?.container?.loadPage(path);}catch(_){location.href=path;}
+    try{unsafeWindow.mrbNavigate?.(path,{source:'heist'});}catch(_){}
   }
   function text(){return norm(document.body?.innerText||'');}
   function heistVisibleRoot(){return document.querySelector('#game_container, #game_container_wrapper, main')||document.body;}
@@ -13838,6 +14457,7 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
     const wait=parseTimer(raw);
     if(!(wait>0))return false;
     phase='cooldown';
+    try{unsafeWindow.mrbGroupTransaction?.release?.('heist','heist servercooldown');}catch(_){}
     acceptChecks=0;
     travelTarget='';
     heistLastGroupNavAt=0;
@@ -13946,48 +14566,46 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
 
   function goInfo(){
     if(!enabled())return;
+    phase='check_timer';
     if(heistRaceOwnPriority()){
+      phase='wait_race';
       status('Heisttimer wacht: actieve of geplande Race wordt eerst volledig afgerond');
       next(goInfo,3000);
       return;
     }
-    phase='idle';
     status('Heist: Mijn Account controleren');
     load('/information.php');
     next(()=>{
       checkAvailability();
-      // Heist heeft zijn eigen timer hierboven eerst gelezen. Daarna worden
-      // verlopen Crimes/Cars direct uitgevoerd en wordt Race meteen gewekt.
-      setTimeout(()=>unsafeWindow.mrbResumePriorityTimers?.('heist'),100);
     },rand(1400,2600));
   }
   function checkAvailability(){
     if(!enabled())return;
+    phase='check_timer';
     if(heistRaceOwnPriority()){
+      phase='wait_race';
       status('Heistcontrole wacht: Race heeft voorrang');
       next(checkAvailability,3000);
       return;
     }
     if(!onInfo()){goInfo();return;}
     const raw=readHeistTimer();
-    if(!raw){status('Heisttimer niet gevonden; over 15 sec opnieuw');next(checkAvailability,15000);return;}
+    if(!raw){phase='wait_timer';try{unsafeWindow.mrbGroupTransaction?.release?.('heist','heisttimer niet gevonden');}catch(_){}status('Heisttimer niet gevonden; over 15 sec opnieuw');next(checkAvailability,15000);return;}
     const wait=parseTimer(raw);
-    if(wait>0){setInvitePending(false);status(`Heist cooldown: ${raw}`);next(goInfo,wait+rand(5000,15000));return;}
-    if(!/^(Nu|Now|Ready)$/i.test(raw)){status(`Heiststatus: ${raw}`);next(checkAvailability,10000);return;}
-    if(role()==='leader'){status('Heist Nu · Leider start over enkele seconden');next(leaderStart,rand(4000,10000));}
-    else{status('Heist Nu · Driver zoekt uitnodiging');next(driverStart,rand(8000,14000));}
+    if(wait>0){phase='cooldown';try{unsafeWindow.mrbGroupTransaction?.release?.('heist','heist cooldown');}catch(_){}setInvitePending(false);status(`Heist cooldown: ${raw}`);next(goInfo,wait+rand(5000,15000));return;}
+    if(!/^(Nu|Now|Ready)$/i.test(raw)){phase='wait_timer';try{unsafeWindow.mrbGroupTransaction?.release?.('heist','heist niet runnable');}catch(_){}status(`Heiststatus: ${raw}`);next(checkAvailability,10000);return;}
+    try{unsafeWindow.mrbGroupTransaction?.acquire?.('heist','READY');}catch(_){}
+    if(role()==='leader'){
+      phase='leader_start_pending';
+      status('Heist Nu · Leider start over enkele seconden');
+      next(leaderStart,rand(4000,10000));
+    } else {
+      phase='driver_start_pending';
+      status('Heist Nu · Driver zoekt uitnodiging');
+      next(driverStart,rand(8000,14000));
+    }
   }
 
-  function heistCrimesCarsOwnPriority(){
-    try {
-      const st=unsafeWindow.mrbV9CrimesCars?.state?.();
-      if(!st?.running)return false;
-      const now=Date.now();
-      return !!st.busy||!!st.confirmPendingKind||!!st.forcedRetryKind
-        ||(!!st.doCrimes&&Number(st.crimesNext||0)<=now+1500)
-        ||(!!st.doCars&&Number(st.carsNext||0)<=now+1500);
-    }catch(_){return false;}
-  }
   function readRaceTimerForHeist(){
     if(!onInfo()) return '';
     for(const row of document.querySelectorAll('tr')){
@@ -14016,7 +14634,7 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
     try{
       const race=unsafeWindow.mrbModuleStateRegistry?.get?.('race');
       const phase=String(race?.phase||race?.state||'').toUpperCase();
-      if(/^(?:STARTING|LEADER_OPEN|LEADER_INVITE|WAITING_DRIVER|RUNNING|DRIVER_OPEN|DRIVER_ACCEPT|DRIVER_CAR|WAIT_CRIMES_CARS)$/.test(phase)){
+      if(/^(?:STARTING|LEADER_OPEN|LEADER_INVITE|WAITING_DRIVER|RUNNING|DRIVER_OPEN|DRIVER_ACCEPT|DRIVER_CAR)$/.test(phase)){
         unsafeWindow.mrbModuleStateRegistry?.set?.('Race',{phase:'IDLE',state:'IDLE',detail:`servercooldown bevestigd: ${raw}`,updatedAt:Date.now(),running:!!get('race_scriptAan',false)});
       }
     }catch(_){}
@@ -14024,24 +14642,13 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
   }
   function heistRaceOwnPriority(){
     try{
-      // 5.8.46: serverstatus wint van oude JavaScript-state. Dit is hetzelfde
-      // herstel dat een handmatige browserrefresh eerder toevallig veroorzaakte.
+      const owner=String(unsafeWindow.mrbGroupTransaction?.owner?.()||'');
+      // Als Heist zelf eigenaar is, mag geen oude Race-state de lopende Heist
+      // meer pauzeren. Is Race eigenaar, dan wacht Heist wel netjes.
+      if(owner==='heist') return false;
+      if(owner==='race') return true;
       releaseStaleRaceBeforeHeist();
-      if(unsafeWindow.mrbRaceTransaction?.active?.()===true)return true;
-
-      // De herstelde bewezen Race-module publiceert zijn actuele fase in het
-      // centrale register. Heist leest die fase alleen; Race zelf blijft exact
-      // gelijk aan de werkende versie van vóór Sprint 5.8.13.
-      const race=unsafeWindow.mrbModuleStateRegistry?.get?.('race');
-      const phase=String(race?.phase||race?.state||'').toUpperCase();
-      if(/^(?:STARTING|LEADER_OPEN|LEADER_INVITE|WAITING_DRIVER|STARTING|RUNNING|DRIVER_OPEN|DRIVER_ACCEPT|DRIVER_CAR|WAIT_CRIMES_CARS)$/.test(phase))return true;
-
-      // Ook de 3-30 seconden startspreiding is Race-tijd. Zonder deze check
-      // kon Heist Mijn Account openen nadat Race al op Nu was gepland, maar
-      // voordat Leider of Driver de Race-pagina had geopend.
-      const raw=get('race_idlePlan_v1','');
-      const plan=typeof raw==='string'&&raw?JSON.parse(raw):raw;
-      return !!(get('race_scriptAan',false)&&plan?.type==='start'&&Number(plan.at||0)>Date.now()-5000&&Number(plan.at||0)<Date.now()+60000);
+      return unsafeWindow.mrbRaceTransaction?.active?.()===true;
     }catch(_){return false;}
   }
   function waitForRaceBefore(fn,context='Heist-actie'){
@@ -14056,7 +14663,6 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
     return true;
   }
   function leaderStart(){
-    if(heistCrimesCarsOwnPriority()){status('Heist wacht: Crimes/Cars heeft voorrang');next(leaderStart,5000);return;}
     if(waitForRaceBefore(leaderStart,'Heist Leider'))return;
     // 5.8.41: een eerder geplande start mag nooit blind GroupCrimes openen.
     // Op Mijn Account is de actuele server-timer opnieuw de bron van waarheid.
@@ -14072,7 +14678,6 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
   }
   function inspectLeaderGroup(initial=false){
     if(!enabled()||role()!=='leader')return;
-    if(heistCrimesCarsOwnPriority()){status('Heist Leider-controle wacht: Crimes/Cars rondt eerst af');next(()=>inspectLeaderGroup(initial),3000);return;}
     if(waitForRaceBefore(()=>inspectLeaderGroup(initial),'Heist Leider-controle'))return;
     // 5.8.41: GroupCrimes zelf kan al aantonen dat de vorige Heist is afgerond.
     // Stop dan onmiddellijk de stale Leider-flow voordat enige hernavigatie plaatsvindt.
@@ -14160,13 +14765,11 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
   }
 
   function driverStart(){
-    if(heistCrimesCarsOwnPriority()){status('Heist Driver wacht: Crimes/Cars heeft voorrang');next(driverStart,5000);return;}
     if(waitForRaceBefore(driverStart,'Heist Driver'))return;
     phase='driver';load('/?module=GroupCrimes');next(driverAcceptLoop,rand(1500,3000));
   }
   function driverAcceptLoop(){
     if(!enabled()||role()!=='driver')return;
-    if(heistCrimesCarsOwnPriority()){status('Heist-uitnodiging wacht: Crimes/Cars rondt eerst af');next(driverAcceptLoop,3000);return;}
     if(waitForRaceBefore(driverAcceptLoop,'Heist-uitnodiging'))return;
     if(onHeist()){driverFinalize();return;}
     if(!onGroup()){load('/?module=GroupCrimes');next(driverAcceptLoop,rand(1500,3000));return;}
@@ -14189,7 +14792,6 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
   }
   function driverFinalize(){
     if(!enabled()||role()!=='driver')return;
-    if(heistCrimesCarsOwnPriority()){status('Heist Driver-auto/reis wacht: Crimes/Cars rondt eerst af');next(driverFinalize,3000);return;}
     if(waitForRaceBefore(driverFinalize,'Heist Driver-auto/reis'))return;
     if(!onHeist()){load('/?module=Heist&action=');next(driverFinalize,rand(1200,2400));return;}
 
@@ -14219,7 +14821,6 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
 
   function travelFlow(){
     if(!enabled()||!travelTarget)return;
-    if(heistCrimesCarsOwnPriority()){status('Heist-reis wacht: Crimes/Cars rondt eerst af');next(travelFlow,3000);return;}
     if(waitForRaceBefore(travelFlow,'Heist-reis'))return;
     if(role()==='leader'){
       const allowed=citySettings();
@@ -14246,7 +14847,7 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
     const old=document.getElementById('mrb-heist-integrated-block');
     if(old) old.remove();
     const root=document.querySelector('#mrbGoldMenu .gm-blocks');
-    if(!root){setTimeout(syncMenu,500);return;}
+    if(!root){mrbSetTimeout(syncMenu,500);return;}
     const block=document.createElement('div');block.className='gm-block';block.dataset.id='02-heist-rebuild';block.id='mrb-heist-integrated-block';
     const cs=citySettings();
     block.innerHTML=`<div class="gm-block-header"><div class="gm-block-title">Heist</div><div class="gm-block-tools"><button class="gm-min">↧</button></div></div><div class="gm-block-body"><div class="gm-row" style="align-items:center;gap:8px"><button data-heist-toggle class="gm-btn">Start</button><div data-heist-state class="gm-status" style="margin:0">Uit</div></div><div style="margin-top:6px"><label><input type="radio" name="mrb-heist-role" value="leader"> Leider</label> <label><input type="radio" name="mrb-heist-role" value="driver"> Driver</label></div><div style="margin-top:6px;font-size:11px"><b>Driver:</b> <span data-heist-driver>-</span></div><div data-heist-status style="margin-top:5px;font-size:11px;color:#d8c98f">Gestopt</div><div data-heist-cities-wrap style="margin-top:7px;border-top:1px solid rgba(255,214,102,.16);padding-top:6px"><b style="font-size:11px">Leider: steden gebruiken</b><div style="margin-top:3px">${CITIES.map(c=>`<label style="display:inline-flex;align-items:center;gap:4px;width:47%;margin:2px 0"><input type="checkbox" data-heist-city="${c}" ${cs[c]?'checked':''}> ${c}</label>`).join('')}</div></div></div>`;
@@ -14256,7 +14857,7 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
     function setEnabled(on){
       on=on===true;
       if(enabled()===on){render();return;}
-      set(K_ON,on);clearLoop();phase='idle';acceptChecks=0;if(!on)setInvitePending(false);status(on?'Heist gestart':'Gestopt');render();if(on&&sessionAllowsHeist())next(goInfo,300);
+      set(K_ON,on);clearLoop();phase='idle';acceptChecks=0;if(!on){setInvitePending(false);try{unsafeWindow.mrbGroupTransaction?.release?.('heist','heist uit');}catch(_){}}status(on?'Heist gestart':'Gestopt');render();if(on&&sessionAllowsHeist())next(goInfo,300);
     }
     unsafeWindow.mrbHeistSessionSetEnabled=setEnabled;
     block.querySelector('[data-heist-toggle]').onclick=()=>setEnabled(!enabled());
@@ -14274,14 +14875,26 @@ unsafeWindow.mrbResumePriorityTimers = (function(){
       }
       render();
     });
-    render();setInterval(render,1000);
-    try{window.__mrbAddManualOrderButtons?.(block);window.__mrbRefreshCategories?.();setTimeout(()=>window.__mrbRefreshCategories?.(),250);}catch(_){}
+    render();mrbSetInterval(render,1000);
+    try{window.__mrbAddManualOrderButtons?.(block);window.__mrbRefreshCategories?.();mrbSetTimeout(()=>window.__mrbRefreshCategories?.(),250);}catch(_){}
   }
 
   syncMenu();
+  function unifiedWake(){
+    if(!enabled()||!sessionAllowsHeist())return false;
+    const p=String(phase||'idle').toLowerCase();
+    // Unified Scheduler is de enige externe wake-owner. Zodra Heist zelf al een
+    // timercontrole, start, invite, Driver/Leider-actie of wachtfase bezit, mag een
+    // volgende 'Nu'-dispatch die interne callback niet annuleren/resetten.
+    if(!/^(?:idle|cooldown)$/.test(p))return false;
+    clearLoop();
+    phase='check_timer';
+    next(goInfo,150);
+    return true;
+  }
   unsafeWindow.mrbHeistCoreControl=Object.freeze({
     setEnabled:on=>unsafeWindow.mrbHeistSessionSetEnabled?.(on===true),
-    wake:()=>{if(enabled()&&sessionAllowsHeist()){clearLoop();next(goInfo,150);}},
+    wake:unifiedWake,
     getState:()=>({enabled:enabled(),role:role(),phase,status:String(get(K_STATUS,'')||'')})
   });
   if(enabled()) next(goInfo,600);
