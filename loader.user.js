@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MRB Gold Edition Loader
 // @namespace    https://barafranca.nl
-// @version      11.12.41
+// @version      11.12.42
 // @description  Laadt automatisch de nieuwste MRB Gold-versie vanaf GitHub met stille cache en rollback.
 // @author       Mrb
 // @match        http://barafranca.nl/*
@@ -25,18 +25,16 @@
 // @updateURL    https://raw.githubusercontent.com/mrbsko/Mrb-Gold-Script/main/loader.user.js
 // @downloadURL  https://raw.githubusercontent.com/mrbsko/Mrb-Gold-Script/main/loader.user.js
 // ==/UserScript==
-
 (function () {
     'use strict';
 
-    const LOADER_VERSION = '11.12.41';
+    const LOADER_VERSION = '11.12.42';
     const SCRIPT_URL = 'https://raw.githubusercontent.com/mrbsko/Mrb-Gold-Script/main/mrb-gold.js';
     const REQUEST_TIMEOUT = 30000;
     const MIN_SCRIPT_LENGTH = 50000;
     const RUN_GUARD = '__MRB_GOLD_LOADER_ACTIVE__';
     const SCRIPT_GUARD = '__MRB_GOLD_SCRIPT_STARTED__';
     const pageWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
-
     const KEY = Object.freeze({
         currentCode: 'mrb_loader_v4_current_code',
         currentHash: 'mrb_loader_v4_current_hash',
@@ -50,7 +48,6 @@
         lastError: 'mrb_loader_v4_last_error',
         lastSuccess: 'mrb_loader_v4_last_success'
     });
-
     if (pageWindow[RUN_GUARD]) {
         console.info('[MRB Loader] Tweede start geblokkeerd.');
         return;
@@ -64,7 +61,6 @@
     function warn(message, ...extra) {
         console.warn(`[MRB Loader ${LOADER_VERSION}] ${message}`, ...extra);
     }
-
     function extractVersion(code) {
         const match = String(code || '').match(/^\/\/\s*@version\s+([^\s]+)\s*$/im);
         return match ? match[1].trim() : 'onbekend';
@@ -79,17 +75,15 @@
         }
         return (`00000000${(hash >>> 0).toString(16)}`).slice(-8);
     }
-
     function isValidScript(code) {
         if (typeof code !== 'string') return false;
         const text = code.trim();
         return text.length >= MIN_SCRIPT_LENGTH &&
             text.includes('// ==UserScript==') &&
-            /MRB Gold (?:Edition|Recovery)|Mrb script NL/i.test(text.slice(0, 12000)) &&
+            /MRB Gold(?: Edition| Recovery)?|Mrb script NL/i.test(text.slice(0, 12000)) &&
             !/^\s*(?:<!doctype html|<html)/i.test(text) &&
             !/404:\s*Not Found|429:\s*Too Many Requests|503\s*Service Unavailable/i.test(text);
     }
-
     function exposeStatus(source, code, error = '') {
         const status = Object.freeze({
             loaderVersion: LOADER_VERSION,
@@ -106,14 +100,12 @@
             if (!error) GM_setValue(KEY.lastSuccess, status.loadedAt);
         } catch (_) {}
     }
-
     function executeScript(code, source) {
         if (!isValidScript(code)) throw new Error(`Ongeldige code uit ${source}`);
         if (pageWindow[SCRIPT_GUARD]) {
             log(`MRB draait al; tweede start via ${source} geblokkeerd.`);
             return true;
         }
-
         pageWindow[SCRIPT_GUARD] = true;
         try {
             // Directe eval draait in dezelfde Tampermonkey-sandbox als de loader.
@@ -129,7 +121,6 @@
             return false;
         }
     }
-
     function readSlot(prefix) {
         return {
             code: String(GM_getValue(KEY[`${prefix}Code`], '') || ''),
@@ -138,7 +129,6 @@
             time: Number(GM_getValue(KEY[`${prefix}Time`], 0)) || 0
         };
     }
-
     function storeDownload(code) {
         const newHash = simpleHash(code);
         const current = readSlot('current');
@@ -157,7 +147,6 @@
         GM_setValue(KEY.currentVersion, extractVersion(code));
         GM_setValue(KEY.currentTime, Date.now());
     }
-
     function migrateLegacyCache() {
         if (isValidScript(readSlot('current').code)) return;
         const legacyCode = String(GM_getValue('mrb_loader_v31_current_code', '') || '');
@@ -169,14 +158,12 @@
             log('Werkende cache uit Loader 3.x overgenomen.');
         }
     }
-
     function runFallback(reason) {
         warn(reason);
         const current = readSlot('current');
         if (isValidScript(current.code) && executeScript(current.code, 'cache')) return true;
         const previous = readSlot('previous');
         if (isValidScript(previous.code) && executeScript(previous.code, 'vorige-cache')) return true;
-
         const message = 'MRB kon niet worden geladen vanaf GitHub en er is geen werkende cache beschikbaar.';
         exposeStatus('geen', '', message);
         console.error(`[MRB Loader ${LOADER_VERSION}] ${message}`);
@@ -185,7 +172,6 @@
         } catch (_) {}
         return false;
     }
-
     function downloadLatest() {
         log('GitHub-versie ophalen.');
         GM_xmlhttpRequest({
@@ -211,7 +197,6 @@
             }
         });
     }
-
     try {
         migrateLegacyCache();
         downloadLatest();
