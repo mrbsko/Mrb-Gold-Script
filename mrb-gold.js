@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MRB Gold
-// @version      6.0.0
+// @version      6.0.1
 // @description  MRB Gold: centrale Unified Scheduler, navigatie-owner, retry-circuitbreaker en strikte actieguards.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -2428,6 +2428,18 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
     return (at > Date.now() + 1000 && get(K.timerReady, false) !== true) || /^(?:COOLDOWN|COMPLETE_COOLDOWN|DRIVER_COOLDOWN)$/.test(st);
   }
 
+  // 6.0.1: na de eerste echte Start/Update blijft de Spot-transactie eigenaar
+  // totdat de verplichte tweede doorgang is uitgevoerd. De server kan de nieuwe
+  // cooldown al tonen terwijl die tweede doorgang nog nodig is. Alleen een verse,
+  // aantoonbare second-pass (max. 2 minuten oud) mag die cooldown tijdelijk overrulen.
+  function activeSecondPassPending(){
+    if (Number(get(K.startCount, 0) || 0) !== 1) return false;
+    const pass = String(get(K.secondPass, '') || '');
+    if (!/^(?:need_group|need_spot|reopened)$/.test(pass)) return false;
+    const clickedAt = Number(get(K.startClickedAt, 0) || 0);
+    return clickedAt > 0 && (Date.now() - clickedAt) <= 120000;
+  }
+
   function clearStaleSecondPassForCooldown(reason='cooldown bekend'){
     set(K.leaderGo, false);
     set(K.driverAccepted, false);
@@ -2443,9 +2455,10 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
   }
 
   function loadGroupCrimesForSecondPass(){
-    // 5.8.45: een oude second-pass callback mag nooit een bekende cooldown doorbreken.
-    if (spotCooldownKnown()) {
-      clearStaleSecondPassForCooldown('bekende Spot-cooldown blokkeert GroupCrimes');
+    // 6.0.1: een verse verplichte second-pass mag de inmiddels zichtbare servercooldown
+    // tijdelijk overrulen. Een oude/stale callback blijft wel hard geblokkeerd.
+    if (spotCooldownKnown() && !activeSecondPassPending()) {
+      clearStaleSecondPassForCooldown('bekende Spot-cooldown blokkeert stale GroupCrimes second-pass');
       return false;
     }
     if (!canNavigate()) return false;
@@ -2459,10 +2472,10 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
   function handleExplicitSecondPass(){
     if (Number(get(K.startCount, 0) || 0) !== 1) return false;
 
-    // 5.8.44: second-pass is uitsluitend geldig binnen een aantoonbaar actieve Spot-cyclus.
-    // Een bekende cooldown is altijd sterker dan oude start/secondPass-state.
-    if (spotCooldownKnown()) {
-      clearStaleSecondPassForCooldown('cooldown was al bekend voordat second-pass kon starten');
+    // 6.0.1: een verse, aantoonbare second-pass is onderdeel van dezelfde Spot-transactie.
+    // De servercooldown mag die tweede verplichte doorgang daarom niet voortijdig wissen.
+    if (spotCooldownKnown() && !activeSecondPassPending()) {
+      clearStaleSecondPassForCooldown('cooldown blokkeert alleen een stale second-pass');
       return true;
     }
     let pass = String(get(K.secondPass, '') || 'need_group');
@@ -2586,20 +2599,21 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
   }
 
   async function leaderTick() {
-    // 5.8.44: servercooldown controleren VOOR enige second-pass/recovery-navigatie.
-    // Dit voorkomt precies de GroupCrimes -> Mijn Account -> GroupCrimes lus van een stale secondPass.
+    // 6.0.1: een verse verplichte second-pass hoort nog bij dezelfde Spot-transactie.
+    // De server kan na klik 1 al cooldown tonen; die mag klik 2 niet voortijdig annuleren.
+    const secondPassPending = activeSecondPassPending();
     if (isInfoPage()) {
       const freshTimer = readSpotTimer();
       if (freshTimer?.found) {
         syncSpotTimer(freshTimer);
-        if (!freshTimer.ready && hardStopSpotCooldown(freshTimer.raw, 'Mijn Account pre-second-pass')) return;
+        if (!freshTimer.ready && !secondPassPending && hardStopSpotCooldown(freshTimer.raw, 'Mijn Account pre-second-pass')) return;
       }
     }
     if (isGroupPage()) {
       const freshGroupCooldown = readGroupSpotCooldown();
-      if (freshGroupCooldown && hardStopSpotCooldown(freshGroupCooldown, 'Groepsmisdaden pre-second-pass')) return;
+      if (freshGroupCooldown && !secondPassPending && hardStopSpotCooldown(freshGroupCooldown, 'Groepsmisdaden pre-second-pass')) return;
     }
-    if (spotCooldownKnown()) {
+    if (spotCooldownKnown() && !secondPassPending) {
       clearStaleSecondPassForCooldown('lokale/servercooldown al bekend bij LeaderTick');
       return;
     }
