@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MRB Gold TEST - RACE DRIVER STALE READY FIX
-// @version      6.0.0-test27C-race-driver-stale-ready-fix
+// @version      6.0.0-test27D-sniper-kill-submit-fix
 // @description  MRB Gold: centrale Unified Scheduler, navigatie-owner, retry-circuitbreaker en strikte actieguards.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -12649,9 +12649,31 @@ paint();
 
   function clickKillIfPresent(){
     const kill = pickVisible(qAll('input[type="submit"]').filter(el => (el.value||'').trim()==='Kill'));
-    if(kill){
-      try{ kill.click(); return true; }catch{}
-    }
+    if(!kill) return false;
+
+    const form = kill.form || kill.closest('form');
+
+    // TEST27D: Detectives gebruikt een echt shoot-formulier. Alleen element.click()
+    // blijkt in deze layout niet altijd de submit/default-action uit te voeren.
+    // Gebruik daarom eerst requestSubmit met exact de zichtbare Kill-knop.
+    try{
+      if(form && typeof form.requestSubmit === 'function'){
+        form.requestSubmit(kill);
+        return true;
+      }
+    }catch{}
+
+    // Fallback: normale klik.
+    try{ kill.focus(); }catch{}
+    try{ kill.click(); return true; }catch{}
+
+    // Laatste fallback voor oudere layouts.
+    try{
+      if(form){
+        HTMLFormElement.prototype.submit.call(form);
+        return true;
+      }
+    }catch{}
     return false;
   }
 
