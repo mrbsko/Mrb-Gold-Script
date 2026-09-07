@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MRB Gold TEST - RACE DRIVER STALE READY FIX
-// @version      6.0.0-test27D-sniper-kill-submit-fix
+// @version      6.0.0-test27E-sniper-dutch-found-kill-fix
 // @description  MRB Gold: centrale Unified Scheduler, navigatie-owner, retry-circuitbreaker en strikte actieguards.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -12615,17 +12615,25 @@ paint();
     for(const tr of rows){
       const td = tr.querySelector('td');
       if(!td) continue;
-      const t = (td.textContent||'').toLowerCase();
-      if(!t.includes('detectives found')) continue;
+      const raw = String(td.textContent||'').replace(/\s+/g,' ').trim();
+      const low = raw.toLowerCase();
 
-      const bs = td.querySelectorAll('b');
-      if(bs && bs.length >= 2){
-        const name = (bs[1].textContent||'').trim();
-        if(name) return name;
-      }
+      // TEST27E: NL en EN Detectives-resultaten ondersteunen.
+      // NL voorbeeld: "22 detectives vonden Koek in Chicago."
+      // EN voorbeeld: "22 detectives found Koek in Chicago."
+      if(!/detectives\s+(?:found|vonden|hebben\s+.+?\s+gevonden)/i.test(raw)) continue;
 
-      const m = td.textContent.match(/detectives\s+found\s+([A-Za-z0-9_\-]+)\s+in/i);
+      // Eerst expliciet uit de zin halen; dit is betrouwbaarder dan de positie van <b>.
+      let m = raw.match(/detectives\s+found\s+([A-Za-z0-9_\-]+)\s+in\b/i);
+      if(!m) m = raw.match(/detectives\s+vonden\s+([A-Za-z0-9_\-]+)\s+in\b/i);
+      if(!m) m = raw.match(/detectives\s+hebben\s+([A-Za-z0-9_\-]+)\s+in\s+.+?\s+gevonden/i);
       if(m && m[1]) return m[1].trim();
+
+      // Fallback voor layouts waarin de targetnaam apart vetgedrukt staat.
+      const bs = [...td.querySelectorAll('b')].map(b=>String(b.textContent||'').trim()).filter(Boolean);
+      for(const name of bs){
+        if(!/^\d+$/.test(name) && !/detective/i.test(name)) return name;
+      }
     }
     return '';
   }
@@ -12648,14 +12656,18 @@ paint();
   }
 
   function clickKillIfPresent(){
-    const kill = pickVisible(qAll('input[type="submit"]').filter(el => (el.value||'').trim()==='Kill'));
+    // TEST27E: scope expliciet op het Detectives shoot-formulier uit de huidige NL-layout.
+    const shootForm = document.querySelector('form[data-action="shoot"], form[data-shot]');
+    const candidates = shootForm
+      ? [...shootForm.querySelectorAll('input[type="submit"], button[type="submit"]')]
+      : qAll('input[type="submit"], button[type="submit"]');
+    const kill = pickVisible(candidates.filter(el => String(el.value||el.textContent||'').trim().toLowerCase()==='kill'));
     if(!kill) return false;
 
-    const form = kill.form || kill.closest('form');
+    const form = kill.form || kill.closest('form') || shootForm;
+    try{ kill.focus(); }catch{}
 
-    // TEST27D: Detectives gebruikt een echt shoot-formulier. Alleen element.click()
-    // blijkt in deze layout niet altijd de submit/default-action uit te voeren.
-    // Gebruik daarom eerst requestSubmit met exact de zichtbare Kill-knop.
+    // Omerta's shoot-formulier eerst via de native submitter-route uitvoeren.
     try{
       if(form && typeof form.requestSubmit === 'function'){
         form.requestSubmit(kill);
@@ -12663,23 +12675,15 @@ paint();
       }
     }catch{}
 
-    // Fallback: normale klik.
-    try{ kill.focus(); }catch{}
     try{ kill.click(); return true; }catch{}
-
-    // Laatste fallback voor oudere layouts.
-    try{
-      if(form){
-        HTMLFormElement.prototype.submit.call(form);
-        return true;
-      }
-    }catch{}
+    try{ if(form){ HTMLFormElement.prototype.submit.call(form); return true; } }catch{}
     return false;
   }
 
   async function doKill(name){
-    const nameEl    = pickVisible(qAll('input[name="name"][type="text"], input[name="name"]'));
-    const bulletsEl = pickVisible(qAll('input[name="bullets"][type="text"], input[name="bullets"]'));
+    const shootForm = document.querySelector('form[data-action="shoot"], form[data-shot]') || document;
+    const nameEl    = pickVisible([...shootForm.querySelectorAll('input[name="name"][type="text"], input[name="name"]')]);
+    const bulletsEl = pickVisible([...shootForm.querySelectorAll('input[name="bullets"][type="text"], input[name="bullets"]')]);
 
     if(nameEl) setInputValue(nameEl, name);
 
