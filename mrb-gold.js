@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MRB Gold TEST - CC STABILITY GUARD
-// @version      6.0.0-test27-cc-stability-guard
+// @version      6.0.0-test27B-cc-stability-guard
 // @description  MRB Gold: centrale Unified Scheduler, navigatie-owner, retry-circuitbreaker en strikte actieguards.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -3570,7 +3570,7 @@ Naam3"></textarea><br><br>
     Vic:{attBase:20,attPer:8,defBase:0,defPer:3}
   };
   const PRESETS={
-    full_att:{label:'Full Attack',lineup:['Lee','Vic','Ike','Joe','Lex'],targets:{Lee:{att:0,def:10},Vic:{att:10,def:0},Ike:{att:10,def:0},Joe:{att:10,def:0},Lex:{att:10,def:0}}},
+    full_att:{label:'Full Attack',lineup:['Ray','Vic','Ike','Joe','Lex'],targets:{Ray:{att:10,def:0},Vic:{att:10,def:0},Ike:{att:10,def:0},Joe:{att:10,def:0},Lex:{att:10,def:0}}},
     full_def:{label:'Full Defense',lineup:['Lee','Ike','Joe','Lex','Ray'],targets:{Lee:{att:0,def:10},Ike:{att:0,def:10},Joe:{att:0,def:10},Lex:{att:0,def:10},Ray:{att:0,def:10}}},
     three_two:{label:'3 Attack / 2 Defense',lineup:['Lee','Ike','Vic','Joe','Lex'],targets:{Lee:{att:0,def:10},Ike:{att:0,def:10},Vic:{att:10,def:0},Joe:{att:10,def:0},Lex:{att:10,def:0}}},
     balanced:{label:'Gebalanceerd',lineup:['Lee','Ike','Joe','Vic','Lex'],targets:{Lee:{att:0,def:10},Ike:{att:0,def:10},Joe:{att:5,def:5},Vic:{att:10,def:0},Lex:{att:10,def:0}}}
