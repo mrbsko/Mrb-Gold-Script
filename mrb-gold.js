@@ -1,6 +1,6 @@
 // ==UserScript==
-// @name         MRB Gold
-// @version      6.0.1
+// @name         MRB Gold TEST - CC STABILITY GUARD
+// @version      6.0.0-test27-cc-stability-guard
 // @description  MRB Gold: centrale Unified Scheduler, navigatie-owner, retry-circuitbreaker en strikte actieguards.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -17,6 +17,8 @@
 // @connect      script.googleusercontent.com
 // @run-at       document-end
 // ==/UserScript==
+
+// Release 6.0.0-test27: centrale Crimes/Cars stabiliteitsfix. Na een eigen CC-poging wordt een nog stale Nu/Now serverwaarde niet opnieuw als nieuwe execute-permission geaccepteerd totdat de server eerst een echte toekomstige cooldown heeft bevestigd. CC confirm-wachten blokkeert Race/Heist/Spot niet meer zonder server-ready actie. Unified preemption/dispatcher respecteert nu ook de globale HTTP-403 server-backoff. Geen Race-, Heist- of Spot-actielogica gewijzigd.
 
 // Release 6.0.0-test26: final audit / Gold candidate. Tijdelijke Navigation Audit verwijderd; bewezen modules gebruiken waar veilig alleen de centrale mrbNavigate-owner als navigatiepad. Dode directe GUI/location fallbacks uit Spot, Bodyguard, D&D, Boozen, Bullets, Travel en Fill Lackey verwijderd. Milestones bewust volledig ongemoeid gelaten. Geen actieflow of prioriteitsvolgorde gewijzigd.
 // Release 6.0.0-test25b: D&D wacht op een volledige, tweemaal stabiel gelezen Travel-prijsmatrix voordat hoogste/laagste Cocaine-stad wordt gekozen. Geen lokale verkoop op basis van gedeeltelijk gerenderde SPA-tabel.
@@ -2428,18 +2430,6 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
     return (at > Date.now() + 1000 && get(K.timerReady, false) !== true) || /^(?:COOLDOWN|COMPLETE_COOLDOWN|DRIVER_COOLDOWN)$/.test(st);
   }
 
-  // 6.0.1: na de eerste echte Start/Update blijft de Spot-transactie eigenaar
-  // totdat de verplichte tweede doorgang is uitgevoerd. De server kan de nieuwe
-  // cooldown al tonen terwijl die tweede doorgang nog nodig is. Alleen een verse,
-  // aantoonbare second-pass (max. 2 minuten oud) mag die cooldown tijdelijk overrulen.
-  function activeSecondPassPending(){
-    if (Number(get(K.startCount, 0) || 0) !== 1) return false;
-    const pass = String(get(K.secondPass, '') || '');
-    if (!/^(?:need_group|need_spot|reopened)$/.test(pass)) return false;
-    const clickedAt = Number(get(K.startClickedAt, 0) || 0);
-    return clickedAt > 0 && (Date.now() - clickedAt) <= 120000;
-  }
-
   function clearStaleSecondPassForCooldown(reason='cooldown bekend'){
     set(K.leaderGo, false);
     set(K.driverAccepted, false);
@@ -2455,10 +2445,9 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
   }
 
   function loadGroupCrimesForSecondPass(){
-    // 6.0.1: een verse verplichte second-pass mag de inmiddels zichtbare servercooldown
-    // tijdelijk overrulen. Een oude/stale callback blijft wel hard geblokkeerd.
-    if (spotCooldownKnown() && !activeSecondPassPending()) {
-      clearStaleSecondPassForCooldown('bekende Spot-cooldown blokkeert stale GroupCrimes second-pass');
+    // 5.8.45: een oude second-pass callback mag nooit een bekende cooldown doorbreken.
+    if (spotCooldownKnown()) {
+      clearStaleSecondPassForCooldown('bekende Spot-cooldown blokkeert GroupCrimes');
       return false;
     }
     if (!canNavigate()) return false;
@@ -2472,10 +2461,10 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
   function handleExplicitSecondPass(){
     if (Number(get(K.startCount, 0) || 0) !== 1) return false;
 
-    // 6.0.1: een verse, aantoonbare second-pass is onderdeel van dezelfde Spot-transactie.
-    // De servercooldown mag die tweede verplichte doorgang daarom niet voortijdig wissen.
-    if (spotCooldownKnown() && !activeSecondPassPending()) {
-      clearStaleSecondPassForCooldown('cooldown blokkeert alleen een stale second-pass');
+    // 5.8.44: second-pass is uitsluitend geldig binnen een aantoonbaar actieve Spot-cyclus.
+    // Een bekende cooldown is altijd sterker dan oude start/secondPass-state.
+    if (spotCooldownKnown()) {
+      clearStaleSecondPassForCooldown('cooldown was al bekend voordat second-pass kon starten');
       return true;
     }
     let pass = String(get(K.secondPass, '') || 'need_group');
@@ -2599,21 +2588,20 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
   }
 
   async function leaderTick() {
-    // 6.0.1: een verse verplichte second-pass hoort nog bij dezelfde Spot-transactie.
-    // De server kan na klik 1 al cooldown tonen; die mag klik 2 niet voortijdig annuleren.
-    const secondPassPending = activeSecondPassPending();
+    // 5.8.44: servercooldown controleren VOOR enige second-pass/recovery-navigatie.
+    // Dit voorkomt precies de GroupCrimes -> Mijn Account -> GroupCrimes lus van een stale secondPass.
     if (isInfoPage()) {
       const freshTimer = readSpotTimer();
       if (freshTimer?.found) {
         syncSpotTimer(freshTimer);
-        if (!freshTimer.ready && !secondPassPending && hardStopSpotCooldown(freshTimer.raw, 'Mijn Account pre-second-pass')) return;
+        if (!freshTimer.ready && hardStopSpotCooldown(freshTimer.raw, 'Mijn Account pre-second-pass')) return;
       }
     }
     if (isGroupPage()) {
       const freshGroupCooldown = readGroupSpotCooldown();
-      if (freshGroupCooldown && !secondPassPending && hardStopSpotCooldown(freshGroupCooldown, 'Groepsmisdaden pre-second-pass')) return;
+      if (freshGroupCooldown && hardStopSpotCooldown(freshGroupCooldown, 'Groepsmisdaden pre-second-pass')) return;
     }
-    if (spotCooldownKnown() && !secondPassPending) {
+    if (spotCooldownKnown()) {
       clearStaleSecondPassForCooldown('lokale/servercooldown al bekend bij LeaderTick');
       return;
     }
@@ -8721,6 +8709,15 @@ try {
   let lastJailParkAt = 0;
   let lastPassiveInfoSyncAt = 0;
 
+  // TEST27: na een eigen CC-poging moet de server eerst een echte toekomstige
+  // cooldown tonen voordat dezelfde nog zichtbare Nu/Now opnieuw als nieuwe run
+  // mag worden geaccepteerd. Dit voorkomt CC-starvation van Race/Heist/Spot.
+  let crimesAwaitFreshCooldown = false;
+  let carsAwaitFreshCooldown = false;
+  let crimesAwaitFreshSince = 0;
+  let carsAwaitFreshSince = 0;
+  const CC_STALE_NOW_GRACE_MS = 45_000;
+
   function lastAttemptAt(kind){
     return kind === 'crimes' ? crimesLastAttempt : carsLastAttempt;
   }
@@ -8729,9 +8726,15 @@ try {
     const now = Date.now();
     if (kind === 'crimes'){
       crimesLastAttempt = now;
+      crimesAwaitFreshCooldown = true;
+      crimesAwaitFreshSince = now;
+      crimesServerReady = false;
       GM_Set(K_CR_ATTEMPT, now);
     } else if (kind === 'cars'){
       carsLastAttempt = now;
+      carsAwaitFreshCooldown = true;
+      carsAwaitFreshSince = now;
+      carsServerReady = false;
       GM_Set(K_CA_ATTEMPT, now);
     }
     try { console.log(`[Crimes/Cars] ${kind} poging geregistreerd (${source})`); } catch(_) {}
@@ -8763,8 +8766,40 @@ try {
     const next = now + ms;
     const ready = ms <= 0;
 
-    // TEST3: serverinformatie is leidend, ook wanneer een lokale deadline al op Nu stond.
-    // Hiermee kan een driftende lokale timer nooit meer een vroege Crimes/Cars-run afdwingen.
+    const awaiting = kind === 'crimes' ? crimesAwaitFreshCooldown : carsAwaitFreshCooldown;
+    const awaitSince = kind === 'crimes' ? crimesAwaitFreshSince : carsAwaitFreshSince;
+    const awaitAge = awaitSince > 0 ? now - awaitSince : 0;
+
+    // TEST27: direct na een eigen poging kan Mijn Account nog kort de oude Nu/Now
+    // tonen. Dat is geen nieuwe server-run. Houd execute-permission dan uit totdat
+    // eerst een echte toekomstige cooldown (>5s) is gezien. Bij een 403/mislukte
+    // update vervalt deze bescherming begrensd zodat CC later opnieuw kan proberen.
+    if (awaiting && ready && awaitAge < CC_STALE_NOW_GRACE_MS){
+      if (kind === 'crimes'){
+        crimesServerReady = false;
+        crimesServerSyncAt = now;
+      } else {
+        carsServerReady = false;
+        carsServerSyncAt = now;
+      }
+      try { console.debug(`[MRB TEST27] ${kind} stale Nu/Now genegeerd na eigen poging (${source}, ${Math.ceil(awaitAge/1000)}s)`); } catch(_) {}
+      return true;
+    }
+
+    if (awaiting && (ms > 5000 || awaitAge >= CC_STALE_NOW_GRACE_MS)){
+      if (kind === 'crimes'){
+        crimesAwaitFreshCooldown = false;
+        crimesAwaitFreshSince = 0;
+      } else {
+        carsAwaitFreshCooldown = false;
+        carsAwaitFreshSince = 0;
+      }
+      if (ms > 5000){
+        try { console.debug(`[MRB TEST27] ${kind} nieuwe servercooldown bevestigd (${Math.ceil(ms/1000)}s)`); } catch(_) {}
+      }
+    }
+
+    // Serverinformatie blijft leidend zodra de stale-Now overgang hierboven is afgehandeld.
     if (kind === 'crimes'){
       crimesNext = next;
       crimesServerReady = ready;
@@ -10334,6 +10369,7 @@ paint();
   }
   function guardBlocked(){
     try { if(unsafeWindow.mrbSessionSafeMode?.active?.()) return true; } catch(_) {}
+    try { if(unsafeWindow.mrbServerBackoff?.active?.()) return true; } catch(_) {}
     try { if(unsafeWindow.mrbManualControl?.isPaused?.()) return true; } catch(_) {}
     return false;
   }
@@ -10511,8 +10547,13 @@ paint();
       const cc=unsafeWindow.mrbV9CrimesCars;
       cc?.resyncFromInfo?.();
       const st=cc?.state?.();
-      const ccDue=!!st?.running && ((!!st.doCrimes && nowish(crimeRaw)) || (!!st.doCars && nowish(carsRaw)) || !!st.busy || !!st.confirmPendingKind || !!st.forcedRetryKind);
-      if(ccDue){ if(mayWake('cc')){ diag('CC_WAKE',{crimeTimer:crimeRaw,carsTimer:carsRaw},'cc-wake',1000); cc?.wake?.(); } return; }
+      const now=Date.now();
+      const crReady=!!st?.doCrimes && !!st?.crimesServerReady && (now-Number(st?.crimesServerSyncAt||0) <= 30_000);
+      const caReady=!!st?.doCars && !!st?.carsServerReady && (now-Number(st?.carsServerSyncAt||0) <= 30_000);
+      // TEST27: alleen echte server-ready CC of een werkelijk lopende actie mag
+      // de groepsmodules blokkeren. Een confirmPending op zichzelf is achtergrondwerk.
+      const ccDue=!!st?.running && (crReady || caReady || !!st.busy || !!st.forcedRetryKind);
+      if(ccDue){ if(mayWake('cc')){ diag('CC_WAKE',{crimeTimer:crimeRaw,carsTimer:carsRaw,crReady,caReady},'cc-wake',1000); cc?.wake?.(); } return; }
     } catch(e){ console.warn('[MRB Unified TEST8] CC dispatch',e); }
 
     // 2) Centrale group-owner: een eenmaal gestarte Race/Heist/Spot wordt
