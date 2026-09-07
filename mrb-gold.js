@@ -1,6 +1,6 @@
 // ==UserScript==
-// @name         MRB Gold TEST - CC STABILITY GUARD
-// @version      6.0.0-test27B-cc-stability-guard
+// @name         MRB Gold TEST - RACE DRIVER STALE READY FIX
+// @version      6.0.0-test27C-race-driver-stale-ready-fix
 // @description  MRB Gold: centrale Unified Scheduler, navigatie-owner, retry-circuitbreaker en strikte actieguards.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -18,6 +18,7 @@
 // @run-at       document-end
 // ==/UserScript==
 
+// Release 6.0.0-test27c: Race Driver stale DRIVER_READY guard. Een bevestigde Driver-ready krijgt een maximale levensduur van 90s zolang geen echte servercooldown wordt gezien. Daarna worden oude driver-watch, Race-plan en group-owner vrijgegeven en mag een verse Race=Nu een nieuwe invite-cyclus starten. Binnen 90s blijft de anti-dubbelstart intact. Geen Leider-, Crimes/Cars-, Heist- of Spot-flow gewijzigd.
 // Release 6.0.0-test27: centrale Crimes/Cars stabiliteitsfix. Na een eigen CC-poging wordt een nog stale Nu/Now serverwaarde niet opnieuw als nieuwe execute-permission geaccepteerd totdat de server eerst een echte toekomstige cooldown heeft bevestigd. CC confirm-wachten blokkeert Race/Heist/Spot niet meer zonder server-ready actie. Unified preemption/dispatcher respecteert nu ook de globale HTTP-403 server-backoff. Geen Race-, Heist- of Spot-actielogica gewijzigd.
 
 // Release 6.0.0-test26: final audit / Gold candidate. Tijdelijke Navigation Audit verwijderd; bewezen modules gebruiken waar veilig alleen de centrale mrbNavigate-owner als navigatiepad. Dode directe GUI/location fallbacks uit Spot, Bodyguard, D&D, Boozen, Bullets, Travel en Fill Lackey verwijderd. Milestones bewust volledig ongemoeid gelaten. Geen actieflow of prioriteitsvolgorde gewijzigd.
@@ -6217,6 +6218,34 @@ try {
   // Na enkele bevestigde lege Race-controles synchroniseert Driver opnieuw via Mijn Account.
   let driverAcceptedWatch = false;
   let driverAcceptedMisses = 0;
+  const DRIVER_READY_STALE_MS = 90_000;
+  let driverAcceptedSince = 0;
+  function markDriverAccepted(){
+    driverAcceptedWatch = true;
+    if (!driverAcceptedSince) driverAcceptedSince = Date.now();
+    driverAcceptedMisses = 0;
+  }
+  function clearDriverAcceptedWatch(reason=''){
+    driverAcceptedWatch = false;
+    driverAcceptedSince = 0;
+    driverAcceptedMisses = 0;
+    clearDriverReadyExit();
+    if(reason){ try { unsafeWindow.mrbUnifiedDiagnostics?.add?.('RACE_DRIVER_READY_CLEAR',{reason,role:raceRole}); } catch(_) {} }
+  }
+  function driverAcceptedStale(){
+    return !!driverAcceptedWatch && driverAcceptedSince > 0 && (Date.now() - driverAcceptedSince) >= DRIVER_READY_STALE_MS;
+  }
+  function recoverStaleDriverReady(reason='oude DRIVER_READY verlopen'){
+    if (raceRole !== 'slave' || !driverAcceptedStale()) return false;
+    const ageMs = Date.now() - driverAcceptedSince;
+    clearRacePlan();
+    clearDriverAcceptedWatch(reason);
+    raceReleaseAction(reason);
+    raceRegistryState('CHECK_TIMER', reason);
+    try { unsafeWindow.mrbUnifiedDiagnostics?.add?.('RACE_DRIVER_READY_STALE_RECOVER',{reason,ageMs,role:raceRole}); } catch(_) {}
+    try { unsafeWindow.mrbFlightRecorder?.add?.('RACE_DRIVER_READY_STALE_RECOVER',{reason,ageMs}); } catch(_) {}
+    return true;
+  }
   // 5.8.50: onafhankelijke Driver-exit. Na een bevestigde/ingestuurde auto mag de
   // Driver niet afhankelijk blijven van de gedeelde Race loopTimer. Die timer kan door
   // een andere Race-callback worden vervangen. Deze aparte timer keert daarom altijd
@@ -7164,9 +7193,7 @@ try {
   }
 
   function raceDriverRecoverCancelledInvite(reason='oude Race-uitnodiging verdwenen'){
-    clearDriverReadySince();
-    driverAcceptedWatch = false;
-    driverAcceptedMisses = 0;
+    clearDriverAcceptedWatch('oude Race-uitnodiging verdwenen');
     clearRacePlan();
     raceReleaseAction();
     raceRegistryState('DRIVER_RESTART_AFTER_CANCEL', reason);
@@ -7215,8 +7242,7 @@ try {
     }
 
     if (alreadyAcceptedMsg(body)){
-      driverAcceptedWatch = true;
-      driverAcceptedMisses = 0;
+      markDriverAccepted();
 
       // Driver heeft zijn auto bevestigd. Vanaf dit moment niet op de oude
       // Race-pagina blijven pollen: Mijn Account is de bron van waarheid voor
@@ -7242,8 +7268,7 @@ try {
 
     const accept = $('a').filter(function(){ return /(Accepteer|Accept)/i.test($(this).text()); });
     if (accept.length){
-      driverAcceptedWatch = true;
-      driverAcceptedMisses = 0;
+      markDriverAccepted();
       accept[0].click();
       next(slave_selectCar, actionDelay());
       return;
@@ -7325,8 +7350,7 @@ try {
             try{ form.submit(); submitted = true; }catch{}
           }
 
-          driverAcceptedWatch = true;
-          driverAcceptedMisses = 0;
+          markDriverAccepted();
           // Zet direct ook de onafhankelijke hard-exit klaar. Zodra de bevestigingspagina
           // zichtbaar is, kan geen andere Race-callback deze terugkeer meer blokkeren.
           driverReadyHardExit('Auto bevestigd; Driver verlaat Race altijd naar Mijn Account');
@@ -7410,13 +7434,16 @@ try {
         return;
       }
 
-      // Driver heeft zijn auto al bevestigd. Zolang de server-Racetimer nog Nu
-      // toont is dit dezelfde lopende Race, geen nieuwe Driver-start.
+      // TEST27C: een recente DRIVER_READY hoort bij dezelfde lopende Race.
+      // Als die state 90s bleef hangen zonder servercooldown, is hij stale en mag
+      // deze verse Nu een nieuwe Driver-cyclus starten.
       if (raceRole === 'slave' && driverAcceptedWatch){
-        raceRegistryState('DRIVER_READY', 'auto bevestigd · wacht op Leider/resultaat');
-        saveRacePlan({ type:'info', at:Date.now()+randomDelay(10000,15000), createdAt:Date.now(), role:raceRole });
-        armStoredRacePlan();
-        return;
+        if (!recoverStaleDriverReady('Race bleef DRIVER_READY terwijl timer opnieuw Nu is')){
+          raceRegistryState('DRIVER_READY', 'auto bevestigd · wacht op Leider/resultaat');
+          saveRacePlan({ type:'info', at:Date.now()+randomDelay(10000,15000), createdAt:Date.now(), role:raceRole });
+          armStoredRacePlan();
+          return;
+        }
       }
 
       planRaceStart();
@@ -7426,9 +7453,7 @@ try {
     const wait = parseTimer(status);
     if (wait > 0){
       if (driverAcceptedWatch){
-        driverAcceptedWatch = false;
-        driverAcceptedMisses = 0;
-        clearDriverReadyExit();
+        clearDriverAcceptedWatch('Race-servercooldown bevestigd');
       }
       planInfoRecheck(wait + randomDelay(5000,15000));
       return;
@@ -7466,16 +7491,19 @@ try {
       try { unsafeWindow.mrbUnifiedDiagnostics?.add?.('RACE_WAKE_DEFER',{source,role:raceRole,phase:raceCorePhase,reason:'partner-single-flight'}); } catch(_) {}
       return false;
     }
-    // Een Driver die zijn auto al heeft bevestigd wacht op dezelfde lopende Race.
-    // De info-recheck blijft eigenaar tot de server een echte cooldown toont.
+    // TEST27C: een recente Driver-ready blijft single-flight. Een stale ready
+    // (>90s zonder servercooldown) wordt eerst vrijgegeven, zodat deze wake de
+    // nieuwe Race-cyclus kan oppakken.
     if (raceRole === 'slave' && driverAcceptedWatch){
-      if (oldPlan?.type === 'info') armStoredRacePlan();
-      else {
-        saveRacePlan({ type:'info', at:Date.now()+randomDelay(10000,15000), createdAt:Date.now(), role:raceRole });
-        armStoredRacePlan();
+      if (!recoverStaleDriverReady('centrale Race-wake trof stale DRIVER_READY')){
+        if (oldPlan?.type === 'info') armStoredRacePlan();
+        else {
+          saveRacePlan({ type:'info', at:Date.now()+randomDelay(10000,15000), createdAt:Date.now(), role:raceRole });
+          armStoredRacePlan();
+        }
+        try { unsafeWindow.mrbUnifiedDiagnostics?.add?.('RACE_WAKE_DEFER',{source,role:raceRole,phase:raceCorePhase,reason:'driver-ready-single-flight'}); } catch(_) {}
+        return false;
       }
-      try { unsafeWindow.mrbUnifiedDiagnostics?.add?.('RACE_WAKE_DEFER',{source,role:raceRole,phase:raceCorePhase,reason:'driver-ready-single-flight'}); } catch(_) {}
-      return false;
     }
 
     // Een centrale wake is leidend boven een oud cooldown/info-plan. De verse
