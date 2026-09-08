@@ -1,6 +1,6 @@
 // ==UserScript==
-// @name         MRB Gold TEST - SPOT DRIVER PROBE OWNERSHIP FIX
-// @version      6.0.0-test27H-spot-driver-probe-ownership-fix
+// @name         MRB Gold TEST - GARAGE HEIST AUTO BUTTON
+// @version      6.0.0-test27I-garage-heist-auto-button
 // @description  MRB Gold: centrale Unified Scheduler, navigatie-owner, retry-circuitbreaker en strikte actieguards.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -18,6 +18,7 @@
 // @run-at       document-end
 // ==/UserScript==
 
+// Release 6.0.0-test27I: Garage Quick Actions heeft opnieuw een aparte 'Heist Auto'-knop. Gebruikt dezelfde bestaande garage-submitroute als OC/MOC, Spotoverval en Repareer; overige moduleflows ongewijzigd.
 // Release 6.0.0-test27H: Spot Driver-probes claimen geen centrale group-owner meer. Alleen een echte Spot-uitnodiging/acceptatie/auto-ready fase bezit Spot; passieve GroupCrimes-probes geven ownership expliciet vrij zodat een al verzonden Race direct door de Driver kan worden afgehandeld.
 // Release 6.0.0-test27c: Race Driver stale DRIVER_READY guard. Een bevestigde Driver-ready krijgt een maximale levensduur van 90s zolang geen echte servercooldown wordt gezien. Daarna worden oude driver-watch, Race-plan en group-owner vrijgegeven en mag een verse Race=Nu een nieuwe invite-cyclus starten. Binnen 90s blijft de anti-dubbelstart intact. Geen Leider-, Crimes/Cars-, Heist- of Spot-flow gewijzigd.
 // Release 6.0.0-test27: centrale Crimes/Cars stabiliteitsfix. Na een eigen CC-poging wordt een nog stale Nu/Now serverwaarde niet opnieuw als nieuwe execute-permission geaccepteerd totdat de server eerst een echte toekomstige cooldown heeft bevestigd. CC confirm-wachten blokkeert Race/Heist/Spot niet meer zonder server-ready actie. Unified preemption/dispatcher respecteert nu ook de globale HTTP-403 server-backoff. Geen Race-, Heist- of Spot-actielogica gewijzigd.
@@ -13781,6 +13782,7 @@ paint();
 // =====================================================================
 ;(function () {
   const MATCH = {
+    heist: /heist/i,
     oc: /(oc|moc)/i,
     raid: /(spotoverval|raid)/i,
     repair: /(repareer|repair)/i,
@@ -13836,7 +13838,7 @@ paint();
     if (!hidden) {
       hidden = document.createElement('input');
       hidden.type = 'hidden';
-      hidden.name = which; // verwacht: oc | raid | repair
+      hidden.name = which; // verwacht: heist | oc | raid | repair
       hidden.value = '1';
       form.appendChild(hidden);
     }
@@ -13854,6 +13856,7 @@ paint();
     bar.id = 'gmGarageTopBar';
     bar.innerHTML = `
       <div class="gm-inner">
+        <input type="button" class="gm-btn" id="gm_heist"  value="Heist Auto">
         <input type="button" class="gm-btn" id="gm_oc"     value="OC/MOC Auto">
         <input type="button" class="gm-btn" id="gm_raid"   value="Spotoverval Auto">
         <input type="button" class="gm-btn" id="gm_repair" value="Repareer">
@@ -13865,6 +13868,7 @@ paint();
     if (center && center.firstChild) center.insertBefore(bar, center.firstChild);
     else form.insertBefore(bar, form.firstChild);
 
+    bar.querySelector('#gm_heist').onclick  = () => clickOrSubmit('heist');
     bar.querySelector('#gm_oc').onclick     = () => clickOrSubmit('oc');
     bar.querySelector('#gm_raid').onclick   = () => clickOrSubmit('raid');
     bar.querySelector('#gm_repair').onclick = () => clickOrSubmit('repair');
