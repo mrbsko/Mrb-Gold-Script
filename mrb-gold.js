@@ -1,6 +1,6 @@
 // ==UserScript==
-// @name         MRB Gold TEST - SPOT LEADER 10S REFRESH
-// @version      6.0.0-test27G-spot-leader-10s-refresh
+// @name         MRB Gold TEST - SPOT DRIVER PROBE OWNERSHIP FIX
+// @version      6.0.0-test27H-spot-driver-probe-ownership-fix
 // @description  MRB Gold: centrale Unified Scheduler, navigatie-owner, retry-circuitbreaker en strikte actieguards.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -18,6 +18,7 @@
 // @run-at       document-end
 // ==/UserScript==
 
+// Release 6.0.0-test27H: Spot Driver-probes claimen geen centrale group-owner meer. Alleen een echte Spot-uitnodiging/acceptatie/auto-ready fase bezit Spot; passieve GroupCrimes-probes geven ownership expliciet vrij zodat een al verzonden Race direct door de Driver kan worden afgehandeld.
 // Release 6.0.0-test27c: Race Driver stale DRIVER_READY guard. Een bevestigde Driver-ready krijgt een maximale levensduur van 90s zolang geen echte servercooldown wordt gezien. Daarna worden oude driver-watch, Race-plan en group-owner vrijgegeven en mag een verse Race=Nu een nieuwe invite-cyclus starten. Binnen 90s blijft de anti-dubbelstart intact. Geen Leider-, Crimes/Cars-, Heist- of Spot-flow gewijzigd.
 // Release 6.0.0-test27: centrale Crimes/Cars stabiliteitsfix. Na een eigen CC-poging wordt een nog stale Nu/Now serverwaarde niet opnieuw als nieuwe execute-permission geaccepteerd totdat de server eerst een echte toekomstige cooldown heeft bevestigd. CC confirm-wachten blokkeert Race/Heist/Spot niet meer zonder server-ready actie. Unified preemption/dispatcher respecteert nu ook de globale HTTP-403 server-backoff. Geen Race-, Heist- of Spot-actielogica gewijzigd.
 
@@ -2594,9 +2595,27 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
     // aantoonbare opdracht claimt de owner niet.
     try {
       const st=String(s||'').toUpperCase();
-      const active=/^(?:GO_GROUP|OPEN_SPOT|WAIT_ACTIVE_DETAILS|INVITE_SENT|WAIT_DRIVER_READY|RECHECK_DRIVER_READY|WAIT_START_CONTROL|WAIT_START_SETTLE|RECHECK_AFTER_START|WAIT_START_RECHECK_NAV|WAIT_START_BACKGROUND|RECOVER_GROUP|SECOND_PASS_|SPOT_FINALIZE_|SPOT_PAGE_SETTLE|DRIVER_GO_GROUP|DRIVER_OPEN_SPOT|DRIVER_ACCEPT_CLICKED|DRIVER_READY|DRIVER_WAIT_LEADER|DRIVER_WAIT_SERVER|DRIVER_RECHECK_INVITE)/.test(st);
-      if(active) unsafeWindow.mrbGroupTransaction?.acquire?.('spot',st);
-      if(/^(?:IDLE|STOPPED|COOLDOWN|COMPLETE|COMPLETE_COOLDOWN|DRIVER_COOLDOWN|LOCAL_COOLDOWN|DRIVER_LOCAL_COOLDOWN)$/.test(st)) unsafeWindow.mrbGroupTransaction?.release?.('spot','spot '+st.toLowerCase());
+
+      // TEST27H:
+      // Driver-probes zijn GEEN echte Spot-transactie. Tijdens DRIVER_GO_GROUP /
+      // DRIVER_OPEN_SPOT / DRIVER_WAIT_INVITE / DRIVER_RECHECK_INVITE zoekt de
+      // Driver alleen of er een uitnodiging bestaat. Zo'n probe mag Race of Heist
+      // nooit blokkeren via de centrale group-owner.
+      const passiveDriverProbe=/^(?:DRIVER_GO_GROUP|DRIVER_OPEN_SPOT|DRIVER_WAIT_INVITE|DRIVER_RECHECK_INVITE|DRIVER_TIMER_READY|DRIVER_WAIT_INVITE_PROBE|DRIVER_PASSIVE)$/.test(st);
+
+      // Spot krijgt pas ownership zodra er werkelijk een Spot-opdracht bestaat:
+      // Leider-flow na openen/invite, of Driver na echte acceptatie/auto-ready.
+      const active=/^(?:GO_GROUP|OPEN_SPOT|WAIT_ACTIVE_DETAILS|INVITE_SENT|WAIT_DRIVER_READY|RECHECK_DRIVER_READY|WAIT_START_CONTROL|WAIT_START_SETTLE|RECHECK_AFTER_START|WAIT_START_RECHECK_NAV|WAIT_START_BACKGROUND|RECOVER_GROUP|SECOND_PASS_|SPOT_FINALIZE_|SPOT_PAGE_SETTLE|DRIVER_ACCEPT_CLICKED|DRIVER_READY|DRIVER_WAIT_LEADER|DRIVER_WAIT_SERVER)/.test(st);
+
+      if(passiveDriverProbe) {
+        unsafeWindow.mrbGroupTransaction?.release?.('spot','spot driver probe yield '+st.toLowerCase());
+      } else if(active) {
+        unsafeWindow.mrbGroupTransaction?.acquire?.('spot',st);
+      }
+
+      if(/^(?:IDLE|STOPPED|COOLDOWN|COMPLETE|COMPLETE_COOLDOWN|DRIVER_COOLDOWN|LOCAL_COOLDOWN|DRIVER_LOCAL_COOLDOWN|DRIVER_YIELD_HEIST)$/.test(st)) {
+        unsafeWindow.mrbGroupTransaction?.release?.('spot','spot '+st.toLowerCase());
+      }
     } catch(_) {}
     if (statusEl) statusEl.textContent = s; if (detailEl) detailEl.textContent = d; if (familyLabel) familyLabel.textContent = `Eigen familie: ${family() || 'niet herkend'} (automatisch)`; renderMeta();
   }
