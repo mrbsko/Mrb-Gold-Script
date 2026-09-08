@@ -1,6 +1,6 @@
 // ==UserScript==
-// @name         MRB Gold TEST - RACE DRIVER STALE READY FIX
-// @version      6.0.0-test27E-sniper-dutch-found-kill-fix
+// @name         MRB Gold TEST - SPOT LEADER 10S REFRESH
+// @version      6.0.0-test27F-spot-leader-10s-refresh
 // @description  MRB Gold: centrale Unified Scheduler, navigatie-owner, retry-circuitbreaker en strikte actieguards.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -2007,7 +2007,7 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
   const DRIVER_SETTING_KEYS = ['race_partner_name', 'driver_name', 'mrb_driver_name', 'partner_name'];
   const NAV_GUARD = 1200;
   const ACTION_GUARD = 1500;
-  const DRIVER_READY_RECHECK = 35000;
+  const DRIVER_READY_RECHECK = 10000;
   const IDLE_RECHECK = 12000;
   const PAGE_RECHECK = 2200;
   const COOLDOWN_RECHECK = 30000;
