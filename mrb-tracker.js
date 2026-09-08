@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MRB Tracker Suite
 // @namespace    https://barafranca.nl/
-// @version      1.9.0
+// @version      1.10.0
 // @description  MRB Tracker Suite core - Moneydrops + Plating, geschikt voor GitHub-loader.
 // @match        https://barafranca.nl/*
 // @grant        GM_getValue
@@ -51,7 +51,9 @@
     K_MIN: 'mrb_tracker_suite_minimized',
     K_HIDDEN: 'mrb_tracker_suite_hidden',
     minimized: !!g('mrb_tracker_suite_minimized', false),
-    hidden: !!g('mrb_tracker_suite_hidden', false)
+    hidden: !!g('mrb_tracker_suite_hidden', false),
+    mdHistoryExpanded: false,
+    ptHistoryExpanded: false
   };
 
 
@@ -660,7 +662,8 @@
     const h = mdHistory();
     const mdTotal = h.reduce((a,x)=>a+Number(x.amount||0),0);
     const mdLast = h[h.length-1];
-    const recentDrops = h.slice(-4).reverse().map(x => `
+    const mdVisible = UI.mdHistoryExpanded ? h.slice().reverse() : h.slice(-10).reverse();
+    const recentDrops = mdVisible.map(x => `
       <div style="display:flex;justify-content:space-between;border-top:1px solid #333;padding:3px 0">
         <span>${esc(fmtDateTime(x.ts))}</span><b>${money(x.amount)}</b>
       </div>`).join('') || '<div style="opacity:.65">Nog geen drops.</div>';
@@ -676,7 +679,7 @@
           </span>
         </div>
         <div style="display:flex;align-items:center;gap:6px">
-          <span>v1.7</span>
+          <span>v1.10</span>
           <button id="mrb-suite-min" type="button" title="${UI.minimized?'Uitklappen':'Minimaliseren'}"
             style="min-width:24px;padding:1px 5px">${UI.minimized?'＋':'−'}</button>
           <button id="mrb-suite-hide" type="button" title="Verbergen"
@@ -694,7 +697,8 @@
         <div>Totaal: <b>${money(mdTotal)}</b></div>
         <div>Laatste: <b>${mdLast ? money(mdLast.amount)+' · '+fmtTime(mdLast.ts) : '-'}</b></div>
         <div style="opacity:.75;margin-top:3px">${esc(MD.status)}</div>
-        <div style="margin-top:5px">${recentDrops}</div>
+        <div style="margin-top:5px;${UI.mdHistoryExpanded?'max-height:260px;overflow:auto;padding-right:3px':''}">${recentDrops}</div>
+        ${h.length > 10 ? `<button id="mdHistoryToggle" style="margin-top:5px">${UI.mdHistoryExpanded?'Toon minder':'Toon volledige historie ('+h.length+')'}</button>` : ''}
         <div style="display:flex;gap:5px;margin-top:6px">
           <button id="mdToggle">${MD.enabled?'Stop':'Start'}</button>
           <button id="mdResetToday">Reset vandaag</button>
@@ -713,7 +717,7 @@
         <div style="margin-top:6px">
           <div style="font-weight:bold;margin-bottom:2px">Plating kwijt geraakt:</div>
           ${
-            ptEvents().slice(-6).reverse().map(e => `
+            (UI.ptHistoryExpanded ? ptEvents().slice().reverse() : ptEvents().slice(-10).reverse()).map(e => `
               <div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #333;padding:3px 0">
                 <span>${esc(e.name)}</span>
                 <span>${esc(fmtDateTime(e.ts))}</span>
@@ -721,6 +725,7 @@
             `).join('') || '<div style="opacity:.65">Nog geen plating-verlies geregistreerd.</div>'
           }
         </div>
+        ${ptEvents().length > 10 ? `<button id="ptHistoryToggle" style="margin-top:5px">${UI.ptHistoryExpanded?'Toon minder':'Toon volledige historie ('+ptEvents().length+')'}</button>` : ''}
         <div style="display:flex;gap:5px;margin-top:6px">
           <button id="ptToggle">${PT.running?'Stop':'Start'}</button>
           <button id="ptSweep">Sweep nu</button>
@@ -749,6 +754,9 @@
       box.style.display = 'none';
     };
 
+    const mdHistoryToggle = box.querySelector('#mdHistoryToggle');
+    if (mdHistoryToggle) mdHistoryToggle.onclick = () => { UI.mdHistoryExpanded = !UI.mdHistoryExpanded; render(); };
+
     box.querySelector('#mdToggle').onclick = () => {
       MD.enabled = !MD.enabled;
       s(MD.K.enabled, MD.enabled);
@@ -772,6 +780,9 @@
       MD.status = 'Alles gewist; volgende meting is nulmeting.';
       render();
     };
+
+    const ptHistoryToggle = box.querySelector('#ptHistoryToggle');
+    if (ptHistoryToggle) ptHistoryToggle.onclick = () => { UI.ptHistoryExpanded = !UI.ptHistoryExpanded; render(); };
 
     box.querySelector('#ptToggle').onclick = () => {
       PT.running = !PT.running;
