@@ -1,65 +1,202 @@
 // ==UserScript==
-// @name         MRB Heist Night Manager
-// @version      2.1.3
-// @description  Standalone login-detectie fix: Night Manager velden tellen niet als game-login; Race/Spot/Heist gebruiken dezelfde betrouwbare gate-status.
+// @name         MRB Heist Night Manager Loader
+// @namespace    https://barafranca.nl
+// @version      1.0.0
+// @description  Laadt de MRB Heist Night Manager automatisch vanaf GitHub met lokale cache en rollback.
 // @author       Mrb
-// @include      http://*.barafranca.nl/*
-// @include      https://*.barafranca.nl/*
-// @include      http://barafranca.nl/*
-// @include      https://barafranca.nl/*
+// @match        http://barafranca.nl/*
+// @match        https://barafranca.nl/*
+// @match        http://*.barafranca.nl/*
+// @match        https://*.barafranca.nl/*
+// @run-at       document-end
 // @grant        unsafeWindow
 // @grant        GM_setValue
 // @grant        GM_getValue
-// @grant        GM_addStyle
-// @run-at       document-end
 // @grant        GM_deleteValue
+// @grant        GM_addStyle
+// @grant        GM_xmlhttpRequest
+// @grant        GM_registerMenuCommand
+// @connect      raw.githubusercontent.com
+// @updateURL    https://raw.githubusercontent.com/mrbsko/Mrb-Gold-Script/main/night-manager-loader.user.js
+// @downloadURL  https://raw.githubusercontent.com/mrbsko/Mrb-Gold-Script/main/night-manager-loader.user.js
 // ==/UserScript==
 
-// GitHub core: mrb-night-manager.js
-// =====================================================================
-// MRB NIGHT MANAGER STANDALONE CORE
-// Alleen de bewezen Race-, Spot Overval- en Heist-cores uit MRB Gold 5.8.51
-// zijn hier opgenomen. Er is geen apart MRB Gold-script nodig.
-// =====================================================================
-(function MRBNightStandaloneCore(){
+(function () {
   'use strict';
-  const GM_Get=(k,d)=>{try{return GM_getValue(k,d);}catch(_){return d;}};
-  const GM_Set=(k,v)=>{try{GM_setValue(k,v);}catch(_){}};
-  const mrbSetInterval=(fn,ms)=>setInterval(fn,ms);
-  unsafeWindow.mrbModuleStateRegistry=unsafeWindow.mrbModuleStateRegistry||(()=>{
-    const m=new Map(); const key=n=>String(n||'').toLowerCase();
-    return {set:(n,v)=>m.set(key(n),{...(v||{})}),get:n=>m.get(key(n)),all:()=>[...m.entries()]};
-  })();
-  unsafeWindow.mrbNavigate=unsafeWindow.mrbNavigate||((path)=>{try{if(unsafeWindow?.omerta?.GUI?.container?.loadPage){unsafeWindow.omerta.GUI.container.loadPage(path);return true;}}catch(_){} try{location.href=path;return true;}catch(_){return false;}});
-  unsafeWindow.mrbVarDelayMs=unsafeWindow.mrbVarDelayMs||(()=>2000+Math.floor(Math.random()*3001));
 
-  // Standalone gedeelde gate/login-detectie.
-  // De ingebouwde Gold-cores gebruikten deze helpers oorspronkelijk uit de
-  // globale Gold-shell. In standalone zijn ze hier bewust lokaal eigendom van
-  // de core, zodat Race/Spot/Heist geen MRB Gold-afhankelijkheid meer hebben.
-  function gm_isCloudflareCheck(){
-    const t=String(document.body?.innerText||'').replace(/\s+/g,' ').trim();
-    return /Verifying you are human|Verify you are human|Verifieer dat u een mens bent|security of your connection|Dit kan enkele seconden duren|This may take a few seconds/i.test(t)
-      || !!document.querySelector('form[action*="cdn-cgi"],script[src*="cdn-cgi/challenge-platform"],#cf-challenge-running,.cf-browser-verification,#recaptcha-popup,.g-recaptcha');
+  const LOADER_VERSION = '1.0.0';
+  const SCRIPT_URL = 'https://raw.githubusercontent.com/mrbsko/Mrb-Gold-Script/main/mrb-night-manager.js';
+  const REQUEST_TIMEOUT = 30000;
+  const MIN_SCRIPT_LENGTH = 50000;
+  const RUN_GUARD = '__MRB_NIGHT_MANAGER_LOADER_ACTIVE__';
+  const SCRIPT_GUARD = '__MRB_NIGHT_MANAGER_SCRIPT_STARTED__';
+  const pageWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+
+  const KEY = Object.freeze({
+    currentCode: 'mrb_night_loader_current_code',
+    currentHash: 'mrb_night_loader_current_hash',
+    currentVersion: 'mrb_night_loader_current_version',
+    currentTime: 'mrb_night_loader_current_time',
+    previousCode: 'mrb_night_loader_previous_code',
+    previousHash: 'mrb_night_loader_previous_hash',
+    previousVersion: 'mrb_night_loader_previous_version',
+    previousTime: 'mrb_night_loader_previous_time',
+    lastSource: 'mrb_night_loader_last_source',
+    lastError: 'mrb_night_loader_last_error',
+    lastSuccess: 'mrb_night_loader_last_success'
+  });
+
+  if (pageWindow[RUN_GUARD]) {
+    console.info('[MRB Night Loader] Tweede loader-start geblokkeerd.');
+    return;
   }
-  function gm_isLoginVisible(){
-    // v2.1.2: alleen een ECHT zichtbaar game-loginformulier telt als uitgelogd.
-    // Tekst zoals "login" of de velden van de Night Manager zelf tellen nooit mee.
-    const visible=el=>!!el && !el.closest('#mrb-night-manager-panel') &&
-      (el.offsetWidth||el.offsetHeight||el.getClientRects().length) &&
-      getComputedStyle(el).visibility!=='hidden' && getComputedStyle(el).display!=='none';
-    const password=[...document.querySelectorAll('input[type="password"]')].find(visible);
-    if(password) return true;
-    const loginForm=[...document.querySelectorAll('form[action*="login" i],#loginModal')].find(visible);
-    return !!loginForm;
-  }
-  function gm_isGateVisible(){ return gm_isCloudflareCheck() || gm_isLoginVisible(); }
-  function gm_gateReason(){
-    if (gm_isCloudflareCheck()) return 'Cloudflare/captcha';
-    if (gm_isLoginVisible()) return 'Login zichtbaar';
-    return '';
+  pageWindow[RUN_GUARD] = true;
+
+  const log = (msg, ...extra) => console.info(`[MRB Night Loader ${LOADER_VERSION}] ${msg}`, ...extra);
+  const warn = (msg, ...extra) => console.warn(`[MRB Night Loader ${LOADER_VERSION}] ${msg}`, ...extra);
+
+  function extractVersion(source) {
+    const m = String(source || '').match(/^\/\/\s*@version\s+([^\s]+)\s*$/im);
+    return m ? m[1].trim() : 'onbekend';
   }
 
+  function simpleHash(source) {
+    let hash = 2166136261;
+    const s = String(source || '');
+    for (let i = 0; i < s.length; i++) {
+      hash ^= s.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+    return (`00000000${(hash >>> 0).toString(16)}`).slice(-8);
+  }
+
+  function validScript(source) {
+    if (typeof source !== 'string' || source.length < MIN_SCRIPT_LENGTH) return false;
+    const bad = ['404: Not Found', '429: Too Many Requests', '503 Service Unavailable', '<html'];
+    if (bad.some(x => source.includes(x))) return false;
+    return /MRB Heist Night Manager/i.test(source) && /MRBNightStandaloneCore/i.test(source);
+  }
+
+  function execute(source, label) {
+    if (pageWindow[SCRIPT_GUARD]) {
+      log('Night Manager is op deze pagina al gestart.');
+      return true;
+    }
+
+    try {
+      const runner = new Function(
+        'unsafeWindow',
+        'GM_setValue',
+        'GM_getValue',
+        'GM_deleteValue',
+        'GM_addStyle',
+        `${source}\n//# sourceURL=mrb-night-manager-${label}.js`
+      );
+
+      pageWindow[SCRIPT_GUARD] = true;
+      runner(
+        pageWindow,
+        GM_setValue,
+        GM_getValue,
+        GM_deleteValue,
+        GM_addStyle
+      );
+
+      GM_setValue(KEY.lastSource, label);
+      GM_setValue(KEY.lastSuccess, Date.now());
+      GM_setValue(KEY.lastError, '');
+      log(`Night Manager ${extractVersion(source)} gestart via ${label}.`);
+      return true;
+    } catch (err) {
+      pageWindow[SCRIPT_GUARD] = false;
+      GM_setValue(KEY.lastError, String(err && (err.stack || err.message) || err));
+      warn(`Uitvoeren via ${label} mislukt.`, err);
+      return false;
+    }
+  }
+
+  function promoteToCache(source) {
+    const hash = simpleHash(source);
+    const currentHash = GM_getValue(KEY.currentHash, '');
+
+    if (currentHash === hash) return;
+
+    const old = GM_getValue(KEY.currentCode, '');
+    if (validScript(old)) {
+      GM_setValue(KEY.previousCode, old);
+      GM_setValue(KEY.previousHash, GM_getValue(KEY.currentHash, ''));
+      GM_setValue(KEY.previousVersion, GM_getValue(KEY.currentVersion, extractVersion(old)));
+      GM_setValue(KEY.previousTime, GM_getValue(KEY.currentTime, 0));
+    }
+
+    GM_setValue(KEY.currentCode, source);
+    GM_setValue(KEY.currentHash, hash);
+    GM_setValue(KEY.currentVersion, extractVersion(source));
+    GM_setValue(KEY.currentTime, Date.now());
+  }
+
+  function runCache(reason) {
+    const current = GM_getValue(KEY.currentCode, '');
+    if (validScript(current) && execute(current, 'cache')) {
+      warn(`GitHub niet gebruikt; actuele cache gestart. ${reason || ''}`);
+      return true;
+    }
+
+    const previous = GM_getValue(KEY.previousCode, '');
+    if (validScript(previous) && execute(previous, 'rollback')) {
+      warn(`Rollback-versie gestart. ${reason || ''}`);
+      return true;
+    }
+
+    warn('Geen geldige cache of rollback beschikbaar.', reason || '');
+    return false;
+  }
+
+  function fetchLatest() {
+    GM_xmlhttpRequest({
+      method: 'GET',
+      url: `${SCRIPT_URL}?t=${Date.now()}`,
+      timeout: REQUEST_TIMEOUT,
+      headers: {
+        'Accept': 'text/plain, text/javascript, application/javascript, */*'
+      },
+      onload(response) {
+        const source = String(response.responseText || '');
+
+        if (response.status < 200 || response.status >= 300 || !validScript(source)) {
+          runCache(`GitHub-response ongeldig (HTTP ${response.status}).`);
+          return;
+        }
+
+        // Eerst uitvoeren; alleen een werkende bron promoveren naar cache.
+        if (execute(source, 'github')) {
+          promoteToCache(source);
+        } else {
+          runCache('Nieuwe GitHub-versie gaf een uitvoerfout.');
+        }
+      },
+      onerror() {
+        runCache('GitHub-request mislukt.');
+      },
+      ontimeout() {
+        runCache('GitHub-request timeout.');
+      }
+    });
+  }
+
+  try {
+    GM_registerMenuCommand('Night Manager: cache-info', () => {
+      alert(
+        `Bron: ${GM_getValue(KEY.lastSource, '-')}\n` +
+        `Versie: ${GM_getValue(KEY.currentVersion, '-')}\n` +
+        `Laatste succes: ${GM_getValue(KEY.lastSuccess, 0) ? new Date(GM_getValue(KEY.lastSuccess, 0)).toLocaleString('nl-NL') : '-'}\n` +
+        `Laatste fout: ${GM_getValue(KEY.lastError, '-') || '-'}`
+      );
+    });
+  } catch (_) {}
+
+  fetchLatest();
+})();
   // Gedeelde DOM-helpers die de uit Gold afkomstige cores verwachten.
   // In standalone zijn deze bewust onderdeel van de eigen core.
   const q=(selector,root=document)=>(root||document).querySelector(selector);
