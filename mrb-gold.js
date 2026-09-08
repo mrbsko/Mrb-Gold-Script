@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MRB Gold TEST - SPOT LEADER 10S REFRESH
-// @version      6.0.0-test27F-spot-leader-10s-refresh
+// @version      6.0.0-test27G-spot-leader-10s-refresh
 // @description  MRB Gold: centrale Unified Scheduler, navigatie-owner, retry-circuitbreaker en strikte actieguards.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -2431,6 +2431,22 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
     return (at > Date.now() + 1000 && get(K.timerReady, false) !== true) || /^(?:COOLDOWN|COMPLETE_COOLDOWN|DRIVER_COOLDOWN)$/.test(st);
   }
 
+  // TEST27G: na de EERSTE Start/Update kan de server al direct een cooldown tonen,
+  // terwijl Omerta nog steeds de verplichte tweede Spot-doorgang nodig heeft.
+  // Alleen deze verse, aantoonbare second-pass krijgt tijdelijk voorrang op cooldown.
+  // Oude/stale second-pass state blijft door de gewone cooldown-guard geblokkeerd.
+  function validFreshSecondPass(){
+    const clicks = Number(get(K.startCount, 0) || 0);
+    const pass = String(get(K.secondPass, '') || '');
+    const clickedAt = Number(get(K.startClickedAt, 0) || 0);
+    if (clicks !== 1 || !pass || !clickedAt) return false;
+
+    const age = Date.now() - clickedAt;
+    // Ruim genoeg voor de verplichte GroupCrimes -> Spot -> Start/Update route,
+    // maar begrensd zodat een oude state nooit uren later cooldown kan doorbreken.
+    return age >= 0 && age <= 120000;
+  }
+
   function clearStaleSecondPassForCooldown(reason='cooldown bekend'){
     set(K.leaderGo, false);
     set(K.driverAccepted, false);
@@ -2447,7 +2463,7 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
 
   function loadGroupCrimesForSecondPass(){
     // 5.8.45: een oude second-pass callback mag nooit een bekende cooldown doorbreken.
-    if (spotCooldownKnown()) {
+    if (spotCooldownKnown() && !validFreshSecondPass()) {
       clearStaleSecondPassForCooldown('bekende Spot-cooldown blokkeert GroupCrimes');
       return false;
     }
@@ -2464,7 +2480,7 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
 
     // 5.8.44: second-pass is uitsluitend geldig binnen een aantoonbaar actieve Spot-cyclus.
     // Een bekende cooldown is altijd sterker dan oude start/secondPass-state.
-    if (spotCooldownKnown()) {
+    if (spotCooldownKnown() && !validFreshSecondPass()) {
       clearStaleSecondPassForCooldown('cooldown was al bekend voordat second-pass kon starten');
       return true;
     }
@@ -2591,18 +2607,20 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
   async function leaderTick() {
     // 5.8.44: servercooldown controleren VOOR enige second-pass/recovery-navigatie.
     // Dit voorkomt precies de GroupCrimes -> Mijn Account -> GroupCrimes lus van een stale secondPass.
+    const freshSecondPass = validFreshSecondPass();
+
     if (isInfoPage()) {
       const freshTimer = readSpotTimer();
       if (freshTimer?.found) {
         syncSpotTimer(freshTimer);
-        if (!freshTimer.ready && hardStopSpotCooldown(freshTimer.raw, 'Mijn Account pre-second-pass')) return;
+        if (!freshTimer.ready && !freshSecondPass && hardStopSpotCooldown(freshTimer.raw, 'Mijn Account pre-second-pass')) return;
       }
     }
     if (isGroupPage()) {
       const freshGroupCooldown = readGroupSpotCooldown();
-      if (freshGroupCooldown && hardStopSpotCooldown(freshGroupCooldown, 'Groepsmisdaden pre-second-pass')) return;
+      if (freshGroupCooldown && !freshSecondPass && hardStopSpotCooldown(freshGroupCooldown, 'Groepsmisdaden pre-second-pass')) return;
     }
-    if (spotCooldownKnown()) {
+    if (spotCooldownKnown() && !freshSecondPass) {
       clearStaleSecondPassForCooldown('lokale/servercooldown al bekend bij LeaderTick');
       return;
     }
