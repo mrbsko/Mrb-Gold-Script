@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MRB Tracker Suite
 // @namespace    https://barafranca.nl/
-// @version      1.10.0
+// @version      1.11.0
 // @description  MRB Tracker Suite core - Moneydrops + Plating, geschikt voor GitHub-loader.
 // @match        https://barafranca.nl/*
 // @grant        GM_getValue
@@ -35,52 +35,21 @@
     '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'
   }[c]));
 
+  function omertaDate(ts) {
+    // Omerta gameklok: 2 uur achter op de lokale NL-browserklok.
+    return new Date(Number(ts || 0) - 7200000);
+  }
+
   function fmtDateTime(ts) {
     if (!ts) return '-';
-    const d = new Date(ts);
-    return d.toLocaleDateString('nl-NL') + ' ' +
-      d.toLocaleTimeString('nl-NL', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    const d = omertaDate(ts);
+    return `${d.getDate()}-${d.getMonth()+1}-${d.getFullYear()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}`;
   }
   function fmtTime(ts) {
     if (!ts) return '-';
-    return new Date(ts).toLocaleTimeString('nl-NL', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    const d = omertaDate(ts);
+    return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}`;
   }
-  const money = n => '$' + Number(n || 0).toLocaleString('en-US');
-
-  const UI = {
-    K_MIN: 'mrb_tracker_suite_minimized',
-    K_HIDDEN: 'mrb_tracker_suite_hidden',
-    minimized: !!g('mrb_tracker_suite_minimized', false),
-    hidden: !!g('mrb_tracker_suite_hidden', false),
-    mdHistoryExpanded: false,
-    ptHistoryExpanded: false
-  };
-
-
-  // ============================================================
-  // MONEYDROP TRACKER
-  // Bestaande v1.1 keys blijven behouden zodat historie meegaat.
-  // ============================================================
-  const MD = {
-    paths: [
-      '/?module=Statistics&action=global_stats',
-      '/index.php?module=Statistics&action=global_stats'
-    ],
-    checkMs: 15000,
-    minDrop: 1000000,
-    K: {
-      enabled: 'mrb_moneydrop_enabled',
-      lastTotal: 'mrb_moneydrop_last_total',
-      lastPocket: 'mrb_moneydrop_last_pocket',
-      lastBank: 'mrb_moneydrop_last_bank',
-      history: 'mrb_moneydrop_history'
-    },
-    enabled: !!g('mrb_moneydrop_enabled', true),
-    busy: false,
-    timer: null,
-    status: 'Wachten op eerste achtergrondmeting…'
-  };
-
   function parseMoney(text) {
     const m = String(text || '').match(/\$\s*([\d,.]+)/);
     if (!m) return null;
@@ -679,7 +648,7 @@
           </span>
         </div>
         <div style="display:flex;align-items:center;gap:6px">
-          <span>v1.10</span>
+          <span>v1.11</span>
           <button id="mrb-suite-min" type="button" title="${UI.minimized?'Uitklappen':'Minimaliseren'}"
             style="min-width:24px;padding:1px 5px">${UI.minimized?'＋':'−'}</button>
           <button id="mrb-suite-hide" type="button" title="Verbergen"
