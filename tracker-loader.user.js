@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MRB Tracker Suite Loader
 // @namespace    https://barafranca.nl
-// @version      1.1.0
+// @version      1.1.1
 // @description  Laadt automatisch de nieuwste MRB Tracker Suite vanaf GitHub met lokale cache en rollback.
 // @author       Mrb
 // @match        http://barafranca.nl/*
@@ -23,7 +23,7 @@
 (function () {
   'use strict';
 
-  const LOADER_VERSION = '1.1.0';
+  const LOADER_VERSION = '1.1.1';
   const SCRIPT_URL = 'https://raw.githubusercontent.com/mrbsko/Mrb-Gold-Script/main/mrb-tracker.js';
   const REQUEST_TIMEOUT = 30000;
   const MIN_SCRIPT_LENGTH = 10000;
@@ -66,7 +66,7 @@
     if (t.length < MIN_SCRIPT_LENGTH) return false;
     if (!t.includes('MRB Tracker Suite')) return false;
     if (!t.includes('mrb_plating_tracker_db_v1')) return false;
-    if (!t.includes('mrb_moneydrop_history')) return false;
+    if (!t.includes("history: 'mrb_moneydrop_history'")) return false;
     return !['404: Not Found','429: Too Many Requests','503 Service Unavailable','Unsupported Media Type'].some(x => t.includes(x));
   }
 
