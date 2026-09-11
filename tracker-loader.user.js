@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MRB Tracker Suite Loader
 // @namespace    https://barafranca.nl
-// @version      1.0.0
+// @version      1.1.0
 // @description  Laadt automatisch de nieuwste MRB Tracker Suite vanaf GitHub met lokale cache en rollback.
 // @author       Mrb
 // @match        http://barafranca.nl/*
@@ -14,6 +14,7 @@
 // @grant        GM_getValue
 // @grant        GM_deleteValue
 // @grant        GM_xmlhttpRequest
+// @grant        GM_registerMenuCommand
 // @connect      raw.githubusercontent.com
 // @updateURL    https://raw.githubusercontent.com/mrbsko/Mrb-Gold-Script/main/tracker-loader.user.js
 // @downloadURL  https://raw.githubusercontent.com/mrbsko/Mrb-Gold-Script/main/tracker-loader.user.js
@@ -22,7 +23,7 @@
 (function () {
   'use strict';
 
-  const LOADER_VERSION = '1.0.0';
+  const LOADER_VERSION = '1.1.0';
   const SCRIPT_URL = 'https://raw.githubusercontent.com/mrbsko/Mrb-Gold-Script/main/mrb-tracker.js';
   const REQUEST_TIMEOUT = 30000;
   const MIN_SCRIPT_LENGTH = 10000;
@@ -30,15 +31,15 @@
   const pageWindow = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
 
   const KEY = Object.freeze({
-    currentCode: 'mrb_tracker_loader_current_code_v1',
-    currentVersion: 'mrb_tracker_loader_current_version_v1',
-    currentTime: 'mrb_tracker_loader_current_time_v1',
-    previousCode: 'mrb_tracker_loader_previous_code_v1',
-    previousVersion: 'mrb_tracker_loader_previous_version_v1',
-    previousTime: 'mrb_tracker_loader_previous_time_v1',
-    lastSource: 'mrb_tracker_loader_last_source_v1',
-    lastError: 'mrb_tracker_loader_last_error_v1',
-    lastSuccess: 'mrb_tracker_loader_last_success_v1'
+    currentCode: 'mrb_tracker_loader_current_code_v2',
+    currentVersion: 'mrb_tracker_loader_current_version_v2',
+    currentTime: 'mrb_tracker_loader_current_time_v2',
+    previousCode: 'mrb_tracker_loader_previous_code_v2',
+    previousVersion: 'mrb_tracker_loader_previous_version_v2',
+    previousTime: 'mrb_tracker_loader_previous_time_v2',
+    lastSource: 'mrb_tracker_loader_last_source_v2',
+    lastError: 'mrb_tracker_loader_last_error_v2',
+    lastSuccess: 'mrb_tracker_loader_last_success_v2'
   });
 
   if (pageWindow[RUN_GUARD]) {
@@ -117,21 +118,45 @@
     GM_setValue(KEY.currentTime, Date.now());
   }
 
-  function fetchLatest() {
+  function fetchLatest(force = false) {
+    const url = SCRIPT_URL + '?t=' + Date.now() + (force ? '&force=1' : '');
+    log(`GitHub ophalen: ${url}`);
+
     GM_xmlhttpRequest({
       method: 'GET',
-      url: SCRIPT_URL + '?t=' + Date.now(),
+      url,
       timeout: REQUEST_TIMEOUT,
-      headers: { 'Cache-Control': 'no-cache' },
+      headers: {
+        'Cache-Control': 'no-cache, no-store, max-age=0',
+        'Pragma': 'no-cache',
+        'Accept': 'text/plain, text/javascript, application/javascript, */*'
+      },
       onload: response => {
         const code = String(response.responseText || '');
-        if (response.status >= 200 && response.status < 300 && isValidScript(code)) {
-          saveFresh(code);
-          if (!executeScript(code, 'github')) runCached('Nieuwe GitHub-versie kon niet worden uitgevoerd.');
+        const version = extractVersion(code);
+        const valid = isValidScript(code);
+
+        log(`GitHub HTTP ${response.status}; versie=${version}; lengte=${code.length}; valid=${valid}`);
+
+        if (response.status >= 200 && response.status < 300 && valid) {
+          if (executeScript(code, 'github')) {
+            saveFresh(code);
+            GM_setValue(KEY.lastError, '');
+            GM_setValue(KEY.lastSource, 'github');
+            GM_setValue(KEY.lastSuccess, Date.now());
+            log(`GitHub Tracker ${version} actief.`);
+          } else {
+            const reason = `Tracker ${version} valide maar uitvoeren mislukt.`;
+            GM_setValue(KEY.lastError, reason);
+            warn(reason);
+            runCached(reason);
+          }
           return;
         }
-        const reason = `HTTP ${response.status}; ongeldige of lege GitHub-response.`;
+
+        const reason = `HTTP ${response.status}; ongeldige GitHub-build; versie=${version}; lengte=${code.length}.`;
         GM_setValue(KEY.lastError, reason);
+        warn(reason);
         if (!runCached(reason)) warn('Geen geldige Tracker-versie beschikbaar.');
       },
       ontimeout: () => {
@@ -146,6 +171,25 @@
       }
     });
   }
+
+  try {
+    GM_registerMenuCommand('Tracker Loader: forceer GitHub refresh', () => {
+      for (const k of [KEY.currentCode,KEY.currentVersion,KEY.currentTime,KEY.previousCode,KEY.previousVersion,KEY.previousTime]) {
+        try { GM_deleteValue(k); } catch (_) {}
+      }
+      log('Loader-cache gewist; force refresh gestart.');
+      fetchLatest(true);
+    });
+
+    GM_registerMenuCommand('Tracker Loader: toon status', () => {
+      alert(
+        `Loader: ${LOADER_VERSION}\n` +
+        `Bron: ${GM_getValue(KEY.lastSource, '-')}\n` +
+        `Cacheversie: ${GM_getValue(KEY.currentVersion, '-')}\n` +
+        `Laatste fout: ${GM_getValue(KEY.lastError, '-') || '-'}`
+      );
+    });
+  } catch (_) {}
 
   fetchLatest();
 })();
