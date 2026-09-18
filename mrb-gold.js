@@ -1,6 +1,6 @@
 // ==UserScript==
-// @name         MRB Gold TEST - HEIST DRIVER CENTRAL PROBE
-// @version      6.0.0-test27J-heist-driver-central-probe
+// @name         MRB Gold TEST - CC JAIL RELEASE STATE
+// @version      6.0.0-test27K-cc-jail-release-state
 // @description  MRB Gold: centrale Unified Scheduler, navigatie-owner, retry-circuitbreaker en strikte actieguards.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -18,6 +18,7 @@
 // @run-at       document-end
 // ==/UserScript==
 
+// Release 6.0.0-test27K: structurele Crimes/Cars jail-lifecycle. Buy out leidt niet meer direct naar scheduleCooldown/module-reload. De CC-runner houdt ownership in WAIT_JAIL_RELEASE, wacht op stabiele server/DOM-bevestiging dat jail weg is, gaat daarna eerst naar Mijn Account, leest Crimes+Cars timers opnieuw server-side en geeft pas dan de Unified Scheduler vrij. Geen extra watchdog/losse retry-loop; dezelfde centrale CC-task bezit de volledige jail-overgang.
 // Release 6.0.0-test27J: structurele Heist Driver scheduler-cleanup. Een passieve Driver-probe claimt geen group-owner meer, wordt uitsluitend door de Unified Dispatcher opnieuw gewekt en plant na een lege GroupCrimes-controle geen eigen driverStart-callback meer. Pas bij een echte Heist-uitnodiging claimt de Driver ownership. Race kan daardoor tijdens een passieve Heist-probe direct preempten/accepten.
 // Release 6.0.0-test27I: Garage Quick Actions heeft opnieuw een aparte 'Heist Auto'-knop. Gebruikt dezelfde bestaande garage-submitroute als OC/MOC, Spotoverval en Repareer; overige moduleflows ongewijzigd.
 // Release 6.0.0-test27H: Spot Driver-probes claimen geen centrale group-owner meer. Alleen een echte Spot-uitnodiging/acceptatie/auto-ready fase bezit Spot; passieve GroupCrimes-probes geven ownership expliciet vrij zodat een al verzonden Race direct door de Driver kan worden afgehandeld.
@@ -8429,6 +8430,8 @@ try {
   const FALLBACK_CARS_MS   = 270_250;  // 270.2s
   const TOO_EARLY_RETRY_MS = 1_000;    // bij "Too tired" zonder popup countdown
   const JAIL_PAUSE_MS      = 10_000;   // centrale jail-pauze hele blok
+  const JAIL_RELEASE_STABLE_MS = 900;   // vrij-status moet kort stabiel zijn voor timer-sync
+  const JAIL_RELEASE_MAX_MS    = 60_000; // harde bovengrens voor één buyout-overgang
 
   // D&D mag alleen als Crimes én Cars nog > 30 sec hebben
   const DD_MIN_BUFFER_MS = 30_000;
@@ -8776,6 +8779,16 @@ try {
   let lastJailParkAt = 0;
   let lastPassiveInfoSyncAt = 0;
 
+  // TEST27K: één expliciete jail-release state binnen dezelfde centrale CC-task.
+  // Geen losse timeout-loop: schedulerNextAt() houdt deze transitie wakker.
+  let jailReleasePending = false;
+  let jailReleaseKind = '';
+  let jailReleaseStage = ''; // 'wait-free' | 'sync-info'
+  let jailReleaseStartedAt = 0;
+  let jailReleaseFreeSeenAt = 0;
+  let jailReleaseLastClickAt = 0;
+  let jailReleaseLastNavAt = 0;
+
   // TEST27: na een eigen CC-poging moet de server eerst een echte toekomstige
   // cooldown tonen voordat dezelfde nog zichtbare Nu/Now opnieuw als nieuwe run
   // mag worden geaccepteerd. Dit voorkomt CC-starvation van Race/Heist/Spot.
@@ -9062,7 +9075,115 @@ try {
   }
   function jailFreeDetected(){
     const t = gameText();
-    return /Thanks to your contacts, you are free again! But favours don't last forever/i.test(t);
+    return /Thanks to your contacts, you are free again! But favours don't last forever|Je zit niet in de gevangenis!?|Je bent niet langer in de gevangenis|Je bent weer vrij/i.test(t);
+  }
+
+  function clearJailReleaseState(reason=''){
+    jailReleasePending = false;
+    jailReleaseKind = '';
+    jailReleaseStage = '';
+    jailReleaseStartedAt = 0;
+    jailReleaseFreeSeenAt = 0;
+    jailReleaseLastClickAt = 0;
+    jailReleaseLastNavAt = 0;
+    jailUntil = 0;
+    GM_Set(K_JAIL_UNTIL, 0);
+    if (reason) { try { console.info('[MRB TEST27K] Jail-release afgerond:', reason); } catch(_) {} }
+  }
+
+  function beginJailRelease(kind, source=''){
+    clearForcedRetry();
+    stopConfirmSync();
+    stopWaiters();
+
+    jailReleasePending = true;
+    jailReleaseKind = kind === 'cars' ? 'cars' : 'crimes';
+    jailReleaseStage = 'wait-free';
+    jailReleaseStartedAt = Date.now();
+    jailReleaseFreeSeenAt = 0;
+    jailReleaseLastClickAt = 0;
+    jailReleaseLastNavAt = 0;
+    jailUntil = 0;
+    GM_Set(K_JAIL_UNTIL, 0);
+
+    // De poging is al geregistreerd vóór de crime/car-klik. Houd server-ready uit
+    // totdat Mijn Account na vrijlating een verse timer heeft bevestigd.
+    if (jailReleaseKind === 'crimes') crimesServerReady = false;
+    if (jailReleaseKind === 'cars') carsServerReady = false;
+
+    busy = true;
+    current = jailReleaseKind;
+    try { console.warn('[MRB TEST27K] WAIT_JAIL_RELEASE gestart', {kind:jailReleaseKind, source}); } catch(_) {}
+    progressJailRelease();
+    paint();
+    return true;
+  }
+
+  function progressJailRelease(){
+    if (!jailReleasePending) return false;
+    if (!running) { clearJailReleaseState('module gestopt'); busy=false; current=''; return true; }
+    if (isLoggedOut()) { gatePause('Gate tijdens WAIT_JAIL_RELEASE'); return true; }
+    if (captchaActief()) { setCaptchaPaused(true); return true; }
+
+    const now = Date.now();
+    if (now - jailReleaseStartedAt > JAIL_RELEASE_MAX_MS) {
+      const kind = jailReleaseKind;
+      clearJailReleaseState('timeout');
+      busy=false; current='';
+      enterJailPause(`WAIT_JAIL_RELEASE timeout (${kind})`);
+      return true;
+    }
+
+    if (jailReleaseStage === 'wait-free') {
+      if (jailNowDetected()) {
+        jailReleaseFreeSeenAt = 0;
+        const btn = jailBuyoutButton();
+        if (!buyOut || !btn) {
+          const kind = jailReleaseKind;
+          clearJailReleaseState('buyout niet beschikbaar');
+          busy=false; current='';
+          enterJailPause(`jail tijdens ${kind}; buyout niet beschikbaar`);
+          return true;
+        }
+        if (now - jailReleaseLastClickAt >= 1200) {
+          jailReleaseLastClickAt = now;
+          safeClick(btn);
+          try { console.info('[MRB TEST27K] Buy out geklikt; wachten op echte vrij-status'); } catch(_) {}
+        }
+        return true;
+      }
+
+      // Geen jail-DOM meer is pas geldig nadat dit kort stabiel bleef. Een expliciete
+      // servermelding 'niet in de gevangenis' telt als hetzelfde signaal.
+      if (!jailReleaseFreeSeenAt) jailReleaseFreeSeenAt = now;
+      if (!jailFreeDetected() && now - jailReleaseFreeSeenAt < JAIL_RELEASE_STABLE_MS) return true;
+      if (now - jailReleaseFreeSeenAt < JAIL_RELEASE_STABLE_MS) return true;
+
+      jailReleaseStage = 'sync-info';
+      jailReleaseLastNavAt = 0;
+    }
+
+    if (jailReleaseStage === 'sync-info') {
+      if (!onInfoPage()) {
+        if (now - jailReleaseLastNavAt >= 1200) {
+          jailReleaseLastNavAt = now;
+          loadPage(INFO_PAGE);
+        }
+        return true;
+      }
+
+      if (!syncAllFromInfoOnce()) return true;
+
+      const finishedKind = jailReleaseKind;
+      clearJailReleaseState(`server-timers opnieuw gelezen na ${finishedKind}`);
+      busy = false;
+      current = '';
+      paint();
+      try { unsafeWindow.mrbUnifiedRunnableDispatcher?.dispatch?.(); } catch(_) {}
+      return true;
+    }
+
+    return true;
   }
 
   // ===================================================================
@@ -9956,6 +10077,11 @@ paint();
       return;
     }
 
+    if (jailReleasePending){
+      progressJailRelease();
+      return;
+    }
+
     if (jailPauseActive()){
       busy = false;
       current = '';
@@ -9979,8 +10105,9 @@ paint();
     if (!busy && jailNowDetected()){
       const buyBtn = jailBuyoutButton();
       if (buyBtn && buyOut){
-        safeClick(buyBtn);
-        paint();
+        // Zonder actieve kind is dit een rest-jail buiten een CC-poging. Houd de
+        // centrale controller eigenaar en synchroniseer daarna beide timers.
+        beginJailRelease((crimesServerReady ? 'crimes' : (carsServerReady ? 'cars' : 'crimes')), 'idle jail');
         return;
       }
       enterJailPause('idle on jail');
@@ -10013,6 +10140,7 @@ paint();
     const tryOnce = ()=>{
       if (!running || pausedCaptcha) return false;
       if (isLoggedOut()){ gatePause('Gate tijdens waitAndClick'); return false; }
+      if (jailReleasePending){ progressJailRelease(); return true; }
       if (jailPauseActive()){ parkOnInfoDuringJail(); return false; }
       if (forcedRetryActive() && forcedRetryKind !== kind){ return false; }
 
@@ -10032,8 +10160,7 @@ paint();
       if (jailNowDetected()){
         const buyBtn = jailBuyoutButton();
         if (buyBtn && buyOut){
-          safeClick(buyBtn);
-          mrbSetTimeout(()=>{ loadPage(kindToPage(kind)); }, 800);
+          beginJailRelease(kind, `waitAndClick:${kind}`);
           return true;
         }
 
@@ -10157,6 +10284,7 @@ paint();
     if (pausedCaptcha) return;
 
     if (isLoggedOut()){ gatePause('Gate tijdens outcome'); return; }
+    if (jailReleasePending){ progressJailRelease(); return; }
     if (jailPauseActive()){ parkOnInfoDuringJail(); return; }
     if (forcedRetryActive()) return;
 
@@ -10171,8 +10299,7 @@ paint();
     if (jailNowDetected()){
       const buyBtn = jailBuyoutButton();
       if (buyBtn && buyOut){
-        safeClick(buyBtn);
-        scheduleCooldown(kind);
+        beginJailRelease(kind, `outcome:${kind}`);
         return;
       }
 
@@ -10253,6 +10380,7 @@ paint();
   function schedulerNextAt(){
     const now = Date.now();
     if (!running) return now + 60_000;
+    if (jailReleasePending) return now + 250;
     if (now < ccForeignRecoveryUntil) return ccForeignRecoveryUntil;
     if (busy || confirmPendingKind || forcedRetryActive() || jailPauseActive()) return now + 1000;
 
@@ -10277,7 +10405,7 @@ paint();
     state:()=>({
       running, busy, current, doCrimes, doCars, doDD:false,
       crimesNext, carsNext, crimesServerReady, carsServerReady, crimesServerSyncAt, carsServerSyncAt,
-      ddRetryAt, jailUntil, pausedCaptcha, gatePaused, confirmPendingKind, forcedRetryKind
+      ddRetryAt, jailUntil, jailReleasePending, jailReleaseKind, jailReleaseStage, pausedCaptcha, gatePaused, confirmPendingKind, forcedRetryKind
     })
   };
 
@@ -10303,6 +10431,7 @@ paint();
       stopConfirmSync();
       stopWaiters();
       detachCaptchaObserver();
+      clearJailReleaseState('module handmatig gestopt');
       busy = false;
       current = '';
     }
