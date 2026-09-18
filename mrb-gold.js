@@ -1,6 +1,6 @@
 // ==UserScript==
-// @name         MRB Gold TEST - RACE INVITE WAIT YIELD
-// @version      6.0.0-test27O-race-invite-wait-yield
+// @name         MRB Gold TEST - RACE LEADER BOUNDED INSPECT
+// @version      6.0.0-test27P-race-leader-bounded-inspect
 // @description  MRB Gold: centrale Unified Scheduler, navigatie-owner, retry-circuitbreaker en strikte actieguards.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -18,6 +18,7 @@
 // @run-at       document-end
 // ==/UserScript==
 
+// Release 6.0.0-test27P: Leader partner-check is nu een strikt begrensde inspectie. Na het openen van /races.php geldt alleen een aantoonbare Start-knop/ready-status als reden om op Race te blijven; elke andere geldige niet-ready toestand (zoals Accepted zonder ingestelde auto) wordt direct WAITING_DRIVER en yieldt naar Mijn Account. De oude tekstafhankelijke fallback naar leader_raceFlow is verwijderd, zodat een onbekende/wijzigende status nooit meer de Racepagina kan vasthouden en Crimes/Cars blokkeren.
 // Release 6.0.0-test27O: Race Leider geeft direct na het versturen van de uitnodiging de atomaire LEADER_INVITE-fase vrij. De uitnodiging blijft persistent pending, maar de Leider gaat meteen naar Mijn Account en plant exact één partner-hercontrole. Hierdoor kunnen Crimes/Cars tijdens het wachten op de Driver gewoon doorlopen. Pas de korte LEADER_INSPECT en STARTING-fasen zijn atomair. Geen extra loop toegevoegd.
 // Release 6.0.0-test27N: structurele Race-state cleanup voor Leider + Driver. Eén gedeelde atomic/passive fase-definitie is nu leidend voor group ownership en preemption. Leider inspecteert /races.php kort atomair (LEADER_INSPECT) zodat Crimes/Cars de DOM niet tussen laden en Start-detectie kunnen vervangen; pas echte WAITING_DRIVER yieldt. De Race-yield watchdog mag atomaire Race-fasen niet meer naar IDLE herschrijven. Driver opent een verse Race sneller (8-12s na server-Nu i.p.v. 25-30s) en een bestaande DRIVER_READY wordt bij server-Nu begrensd op de Racepagina geverifieerd in plaats van tot 90s passief te blokkeren. Geen extra moduleloop toegevoegd; Unified Dispatcher blijft enige externe wake-owner.
 // Release 6.0.0-test27M: WAIT_JAIL_RELEASE wordt nu daadwerkelijk door de bestaande Unified Dispatcher voortgezet. De dispatcher roept de centrale Crimes/Cars-task elke 250ms wakker zolang jailReleasePending actief is; er is geen extra timer/loop toegevoegd. Hierdoor kan de flow na Buy out door naar vrij-status -> Mijn Account -> verse timer-sync.
@@ -7186,17 +7187,16 @@ try {
         return;
       }
 
-      if (/invited|accepted|uitgenodigd|geaccepteerd|waiting|wachten/i.test(body)){
-        // WAITING_DRIVER bezit geen atomaire pagina, maar behoudt wel exact EEN
-        // persistente hercontrole. Daardoor kan een Unified wake de bestaande
-        // invite niet opnieuw als een verse Race-start openen.
-        raceRegistryState('WAITING_DRIVER', 'wacht op Driver · Mijn Account vrijgegeven');
-        unsafeWindow.mrbNavigate?.('/information.php',{source:'race',yield:true,force:true});
-        planLeaderPartnerRecheck(randomDelay(10000,15000), retries+1);
-        return;
-      }
-
-      next(leader_raceFlow, randomDelay(2000,4000));
+      // TEST27P: dit is een begrensde inspectie, geen tweede Race-flow.
+      // Als er GEEN startknop/ready-status is, is de Driver simpelweg nog niet klaar.
+      // Dat geldt ook voor layouts/statussen die anders heten (bijv. "Accepted"
+      // zonder dat de Driver al een auto heeft ingezet). Blijf daarom nooit op
+      // /races.php hangen op basis van tekstherkenning: altijd terug naar Mijn Account
+      // en exact één partner-hercontrole bewaren.
+      raceRegistryState('WAITING_DRIVER', 'Driver nog niet startklaar · Mijn Account vrijgegeven');
+      unsafeWindow.mrbNavigate?.('/information.php',{source:'race-partner-wait',yield:true,force:true});
+      planLeaderPartnerRecheck(randomDelay(10000,15000), retries+1);
+      return;
     }, randomDelay(1000,2000));
   }
 
