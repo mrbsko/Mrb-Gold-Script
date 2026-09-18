@@ -1,6 +1,6 @@
 // ==UserScript==
-// @name         MRB Gold TEST - GARAGE HEIST AUTO BUTTON
-// @version      6.0.0-test27I-garage-heist-auto-button
+// @name         MRB Gold TEST - HEIST DRIVER CENTRAL PROBE
+// @version      6.0.0-test27J-heist-driver-central-probe
 // @description  MRB Gold: centrale Unified Scheduler, navigatie-owner, retry-circuitbreaker en strikte actieguards.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -18,6 +18,7 @@
 // @run-at       document-end
 // ==/UserScript==
 
+// Release 6.0.0-test27J: structurele Heist Driver scheduler-cleanup. Een passieve Driver-probe claimt geen group-owner meer, wordt uitsluitend door de Unified Dispatcher opnieuw gewekt en plant na een lege GroupCrimes-controle geen eigen driverStart-callback meer. Pas bij een echte Heist-uitnodiging claimt de Driver ownership. Race kan daardoor tijdens een passieve Heist-probe direct preempten/accepten.
 // Release 6.0.0-test27I: Garage Quick Actions heeft opnieuw een aparte 'Heist Auto'-knop. Gebruikt dezelfde bestaande garage-submitroute als OC/MOC, Spotoverval en Repareer; overige moduleflows ongewijzigd.
 // Release 6.0.0-test27H: Spot Driver-probes claimen geen centrale group-owner meer. Alleen een echte Spot-uitnodiging/acceptatie/auto-ready fase bezit Spot; passieve GroupCrimes-probes geven ownership expliciet vrij zodat een al verzonden Race direct door de Driver kan worden afgehandeld.
 // Release 6.0.0-test27c: Race Driver stale DRIVER_READY guard. Een bevestigde Driver-ready krijgt een maximale levensduur van 90s zolang geen echte servercooldown wordt gezien. Daarna worden oude driver-watch, Race-plan en group-owner vrijgegeven en mag een verse Race=Nu een nieuwe invite-cyclus starten. Binnen 90s blijft de anti-dubbelstart intact. Geen Leider-, Crimes/Cars-, Heist- of Spot-flow gewijzigd.
@@ -10605,7 +10606,9 @@ paint();
     watchRunnable('crimes', nowish(crimeRaw)&&!!ccDiagState.running&&!!ccDiagState.doCrimes, {timer:crimeRaw});
     watchRunnable('cars', nowish(carsRaw)&&!!ccDiagState.running&&!!ccDiagState.doCars, {timer:carsRaw});
     watchRunnable('race', nowish(raceRaw)&&!!GM_Get('race_scriptAan',false), {timer:raceRaw});
-    watchRunnable('heist', nowish(heistRaw)&&!!GM_Get('mrb_heist_integrated_enabled',false), {timer:heistRaw});
+    let heistCanWake=true;
+    try{heistCanWake=unsafeWindow.mrbHeistCoreControl?.canWake?.()!==false;}catch(_){}
+    watchRunnable('heist', nowish(heistRaw)&&!!GM_Get('mrb_heist_integrated_enabled',false)&&heistCanWake, {timer:heistRaw});
     watchRunnable('spot', nowish(spotRaw)&&!!GM_Get('mrb_spot_complete_v1_enabled',false), {timer:spotRaw});
 
     // 1) Crimes/Cars absoluut eerst en altijd opnieuw serverbevestigd op Mijn Account.
@@ -10646,11 +10649,22 @@ paint();
     }
     if(nowish(heistRaw) && GM_Get('mrb_heist_integrated_enabled',false)){
       try {
-        if(mayWake('heist') && unsafeWindow.mrbGroupTransaction?.acquire?.('heist','WAKE_PENDING')){
-          diag('HEIST_WAKE',{timer:heistRaw},'heist-wake',1200);
-          const accepted=unsafeWindow.mrbHeistCoreControl?.wake?.();
-          if(accepted===false) unsafeWindow.mrbGroupTransaction?.release?.('heist','heist wake geweigerd');
-          else return;
+        const ctl=unsafeWindow.mrbHeistCoreControl;
+        const hs=ctl?.getState?.()||{};
+        const canWake=ctl?.canWake?.()!==false;
+        if(canWake && mayWake('heist')){
+          // TEST27J: een Driver-wake is slechts een passieve invite-probe en krijgt
+          // daarom nog geen group-owner. Leider blijft wel atomair vanaf WAKE_PENDING.
+          if(String(hs.role||'').toLowerCase()==='driver'){
+            diag('HEIST_DRIVER_PROBE_WAKE',{timer:heistRaw},'heist-driver-probe-wake',1200);
+            const accepted=ctl?.wake?.();
+            if(accepted!==false) return;
+          } else if(unsafeWindow.mrbGroupTransaction?.acquire?.('heist','WAKE_PENDING')){
+            diag('HEIST_WAKE',{timer:heistRaw},'heist-wake',1200);
+            const accepted=ctl?.wake?.();
+            if(accepted===false) unsafeWindow.mrbGroupTransaction?.release?.('heist','heist wake geweigerd');
+            else return;
+          }
         }
       } catch(_) {}
     }
@@ -14500,6 +14514,9 @@ paint();
   const K_DRIVER='race_partner_name';
   const K_MIG='mrb_heist_560_com_clean_done';
   const K_INVITE_PENDING='mrb_heist_5812_invite_pending';
+  const K_DRIVER_PROBE_AFTER='mrb_heist_driver_probe_after_v1';
+  const DRIVER_PROBE_MIN_MS=15000;
+  const DRIVER_PROBE_MAX_MS=30000;
   const CITIES=['Detroit','Chicago','New York','Las Vegas','Philadelphia','Baltimore','Corleone','Palermo'];
   const CITY_ID={Detroit:0,Chicago:1,Palermo:2,'New York':3,'Las Vegas':4,Philadelphia:5,Baltimore:6,Corleone:7};
   const get=(k,d)=>{try{return GM_getValue(k,d);}catch(_){return d;}};
@@ -14513,6 +14530,10 @@ paint();
   const status=s=>set(K_STATUS,s);
   const invitePending=()=>get(K_INVITE_PENDING,false)===true;
   const setInvitePending=v=>set(K_INVITE_PENDING,v===true);
+  const driverProbeAfter=()=>Number(get(K_DRIVER_PROBE_AFTER,0)||0);
+  const driverProbeAllowed=()=>role()!=='driver'||Date.now()>=driverProbeAfter();
+  const deferDriverProbe=()=>{const until=Date.now()+rand(DRIVER_PROBE_MIN_MS,DRIVER_PROBE_MAX_MS);set(K_DRIVER_PROBE_AFTER,until);return until;};
+  const clearDriverProbeBackoff=()=>set(K_DRIVER_PROBE_AFTER,0);
   const sessionAllowsHeist=()=>unsafeWindow.mrbHeistSessionBatch?.managed?.()!==true||unsafeWindow.mrbHeistSessionBatch?.allows?.('heist')===true;
 
   if(get(K_MIG,false)!==true){
@@ -14612,6 +14633,7 @@ paint();
     travelTarget='';
     heistLastGroupNavAt=0;
     setInvitePending(false);
+    clearDriverProbeBackoff();
     status(`Heist cooldown (${source}): ${raw} · flow volledig gestopt`);
     load('/information.php');
     next(checkAvailability,Math.min(wait+rand(5000,15000),2147480000));
@@ -14744,14 +14766,17 @@ paint();
     const wait=parseTimer(raw);
     if(wait>0){phase='cooldown';try{unsafeWindow.mrbGroupTransaction?.release?.('heist','heist cooldown');}catch(_){}setInvitePending(false);status(`Heist cooldown: ${raw}`);next(goInfo,wait+rand(5000,15000));return;}
     if(!/^(Nu|Now|Ready)$/i.test(raw)){phase='wait_timer';try{unsafeWindow.mrbGroupTransaction?.release?.('heist','heist niet runnable');}catch(_){}status(`Heiststatus: ${raw}`);next(checkAvailability,10000);return;}
-    try{unsafeWindow.mrbGroupTransaction?.acquire?.('heist','READY');}catch(_){}
     if(role()==='leader'){
+      try{unsafeWindow.mrbGroupTransaction?.acquire?.('heist','READY');}catch(_){}
       phase='leader_start_pending';
       status('Heist Nu · Leider start over enkele seconden');
       next(leaderStart,rand(4000,10000));
     } else {
+      // TEST27J: een Driver die alleen zoekt of er een uitnodiging bestaat is nog
+      // geen echte groeps-transactie. Geen ownership claimen; Race blijft vrij om
+      // direct te starten/accepten wanneer die intussen runnable wordt.
       phase='driver_start_pending';
-      status('Heist Nu · Driver zoekt uitnodiging');
+      status('Heist Nu · Driver doet één passieve uitnodigingscontrole');
       next(driverStart,rand(8000,14000));
     }
   }
@@ -14933,16 +14958,41 @@ paint();
       return;
     }
     const acc=acceptLink();
-    if(acc){status('Heist-uitnodiging accepteren');acc.click();next(driverFinalize,rand(1500,4000));return;}
-    // 5.8.48: zonder echte uitnodiging blijft de Driver niet op Groepsmisdaden hangen.
-    // Eén controle is genoeg; daarna terug naar Mijn Account en pas later opnieuw kijken.
-    status('Geen Heist-uitnodiging zichtbaar · terug naar Mijn Account en later opnieuw controleren');
+    if(acc){
+      // TEST27J: pas een echte uitnodiging maakt Heist atomair. Tot dit moment was
+      // de Driver-probe volledig yieldable en kon Race zonder vertraging voorgaan.
+      const owned=unsafeWindow.mrbGroupTransaction?.acquire?.('heist','DRIVER_INVITE_FOUND')!==false;
+      if(!owned){
+        status('Heist-uitnodiging gevonden · wachten tot actieve groepsflow vrij is');
+        next(driverAcceptLoop,1000);
+        return;
+      }
+      clearDriverProbeBackoff();
+      phase='driver_accept';
+      status('Heist-uitnodiging accepteren');
+      acc.click();
+      next(driverFinalize,rand(1500,4000));
+      return;
+    }
+    // TEST27J structureel: geen zelfstandige Heist Driver-loop meer. Na precies
+    // één lege probe gaat ownership vrij, wordt alleen een deadline opgeslagen
+    // en stopt de module. De Unified Dispatcher beslist wanneer Heist opnieuw mag.
+    const until=deferDriverProbe();
+    phase='idle';
+    try{unsafeWindow.mrbGroupTransaction?.release?.('heist','lege Driver-probe; yield aan dispatcher');}catch(_){}
+    status(`Geen Heist-uitnodiging zichtbaar · Driver yieldt; volgende centrale probe over ongeveer ${Math.max(1,Math.ceil((until-Date.now())/1000))}s`);
     load('/information.php');
-    next(driverStart,rand(15000,30000));
+    clearLoop();
   }
   function driverFinalize(){
     if(!enabled()||role()!=='driver')return;
     if(waitForRaceBefore(driverFinalize,'Heist Driver-auto/reis'))return;
+    // Vanaf acceptatie/Heist-detail is er een echte opdracht en hoort Heist de
+    // gedeelde groepsflow te bezitten tot ready/result/cooldown.
+    try{
+      const owner=String(unsafeWindow.mrbGroupTransaction?.owner?.()||'');
+      if(!owner) unsafeWindow.mrbGroupTransaction?.acquire?.('heist','DRIVER_ACTIVE');
+    }catch(_){}
     if(!onHeist()){load('/?module=Heist&action=');next(driverFinalize,rand(1200,2400));return;}
 
     // De 'je bent niet in de stad'-melding is zelf al een moduleHeist-pagina.
@@ -15007,11 +15057,11 @@ paint();
     function setEnabled(on){
       on=on===true;
       if(enabled()===on){render();return;}
-      set(K_ON,on);clearLoop();phase='idle';acceptChecks=0;if(!on){setInvitePending(false);try{unsafeWindow.mrbGroupTransaction?.release?.('heist','heist uit');}catch(_){}}status(on?'Heist gestart':'Gestopt');render();if(on&&sessionAllowsHeist())next(goInfo,300);
+      set(K_ON,on);clearLoop();phase='idle';acceptChecks=0;if(!on){setInvitePending(false);clearDriverProbeBackoff();try{unsafeWindow.mrbGroupTransaction?.release?.('heist','heist uit');}catch(_){}}status(on?'Heist gestart':'Gestopt');render();if(on&&sessionAllowsHeist())next(goInfo,300);
     }
     unsafeWindow.mrbHeistSessionSetEnabled=setEnabled;
     block.querySelector('[data-heist-toggle]').onclick=()=>setEnabled(!enabled());
-    block.querySelectorAll('input[name="mrb-heist-role"]').forEach(x=>x.onchange=()=>{if(x.checked){set(K_ROLE,x.value);clearLoop();phase='idle';status(`Rol: ${x.value==='leader'?'Leider':'Driver'}`);render();if(enabled())next(goInfo,300);}});
+    block.querySelectorAll('input[name="mrb-heist-role"]').forEach(x=>x.onchange=()=>{if(x.checked){set(K_ROLE,x.value);clearDriverProbeBackoff();clearLoop();phase='idle';status(`Rol: ${x.value==='leader'?'Leider':'Driver'}`);render();if(enabled())next(goInfo,300);}});
     block.querySelectorAll('input[data-heist-city]').forEach(x=>x.onchange=()=>{
       const city=x.dataset.heistCity;
       const s=citySettings();
@@ -15030,13 +15080,14 @@ paint();
   }
 
   syncMenu();
-  function unifiedWake(){
+  function unifiedCanWake(){
     if(!enabled()||!sessionAllowsHeist())return false;
+    if(role()==='driver'&&!driverProbeAllowed())return false;
     const p=String(phase||'idle').toLowerCase();
-    // Unified Scheduler is de enige externe wake-owner. Zodra Heist zelf al een
-    // timercontrole, start, invite, Driver/Leider-actie of wachtfase bezit, mag een
-    // volgende 'Nu'-dispatch die interne callback niet annuleren/resetten.
-    if(!/^(?:idle|cooldown)$/.test(p))return false;
+    return /^(?:idle|cooldown)$/.test(p);
+  }
+  function unifiedWake(){
+    if(!unifiedCanWake())return false;
     clearLoop();
     phase='check_timer';
     next(goInfo,150);
@@ -15045,7 +15096,8 @@ paint();
   unsafeWindow.mrbHeistCoreControl=Object.freeze({
     setEnabled:on=>unsafeWindow.mrbHeistSessionSetEnabled?.(on===true),
     wake:unifiedWake,
-    getState:()=>({enabled:enabled(),role:role(),phase,status:String(get(K_STATUS,'')||'')})
+    canWake:unifiedCanWake,
+    getState:()=>({enabled:enabled(),role:role(),phase,status:String(get(K_STATUS,'')||''),driverProbeAfter:driverProbeAfter()})
   });
   if(enabled()) next(goInfo,600);
 })();
