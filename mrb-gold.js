@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MRB Gold TEST - CC JAIL RELEASE STATE
-// @version      6.0.0-test27K-cc-jail-release-state
+// @version      6.0.0-test27L-cc-post-buyout-info-recovery
 // @description  MRB Gold: centrale Unified Scheduler, navigatie-owner, retry-circuitbreaker en strikte actieguards.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -18,6 +18,7 @@
 // @run-at       document-end
 // ==/UserScript==
 
+// Release 6.0.0-test27L: post-buyout Mijn Account recovery. De borgsom-resultaatpagina gebruikt dezelfde /information.php-route en werd daardoor ten onrechte als volledig Mijn Account gezien. sameRouteRecovery kan nu bewust een zichtbare gelijknamige resultaatroute herladen; WAIT_JAIL_RELEASE doet dit single-flight wanneer timers ontbreken en de borgsom/vrijmelding zichtbaar is. Geen extra poller of watchdog.
 // Release 6.0.0-test27K: structurele Crimes/Cars jail-lifecycle. Buy out leidt niet meer direct naar scheduleCooldown/module-reload. De CC-runner houdt ownership in WAIT_JAIL_RELEASE, wacht op stabiele server/DOM-bevestiging dat jail weg is, gaat daarna eerst naar Mijn Account, leest Crimes+Cars timers opnieuw server-side en geeft pas dan de Unified Scheduler vrij. Geen extra watchdog/losse retry-loop; dezelfde centrale CC-task bezit de volledige jail-overgang.
 // Release 6.0.0-test27J: structurele Heist Driver scheduler-cleanup. Een passieve Driver-probe claimt geen group-owner meer, wordt uitsluitend door de Unified Dispatcher opnieuw gewekt en plant na een lege GroupCrimes-controle geen eigen driverStart-callback meer. Pas bij een echte Heist-uitnodiging claimt de Driver ownership. Race kan daardoor tijdens een passieve Heist-probe direct preempten/accepten.
 // Release 6.0.0-test27I: Garage Quick Actions heeft opnieuw een aparte 'Heist Auto'-knop. Gebruikt dezelfde bestaande garage-submitroute als OC/MOC, Spotoverval en Repareer; overige moduleflows ongewijzigd.
@@ -993,13 +994,17 @@
         } catch(_) {}
       }
 
+      // TEST27L: sameRouteRecovery moet vóór de zichtbaarheidsguard bekend zijn.
+      // Een server-resultaat kan dezelfde route én dezelfde kop ('Mijn Account') houden
+      // terwijl de echte timer-DOM ontbreekt. Alleen een expliciete recovery mag dan
+      // dezelfde route opnieuw laden; gewone navigatie blijft beschermd tegen dubbel laden.
+      const sameRouteRecovery = meta?.sameRouteRecovery === true;
       // URL en zichtbare module worden beide gecontroleerd. Bij een SPA-wissel
       // loopt de URL soms voor op de DOM; opnieuw laden veroorzaakt dan de witte/raw pagina.
-      if (targetAlreadyVisible(wanted)) return true;
+      if (!sameRouteRecovery && targetAlreadyVisible(wanted)) return true;
       // TEST19F: sommige SPA-resultaatpagina's houden exact dezelfde route terwijl
       // het eigenlijke formulier/module-DOM verdwenen is. Alleen een expliciete
       // sameRouteRecovery mag in dat geval dezelfde route opnieuw claimen.
-      const sameRouteRecovery = meta?.sameRouteRecovery === true;
       // Voor Crimes/Cars is de zichtbare DOM hierboven leidend. Een oude URL
       // kan na een SPA-onderbreking nog Crimes/Cars tonen terwijl Heist, Spot,
       // Race of een handmatige pagina daadwerkelijk in de container staat.
@@ -9075,7 +9080,11 @@ try {
   }
   function jailFreeDetected(){
     const t = gameText();
-    return /Thanks to your contacts, you are free again! But favours don't last forever|Je zit niet in de gevangenis!?|Je bent niet langer in de gevangenis|Je bent weer vrij/i.test(t);
+    return /Thanks to your contacts, you are free again! But favours don't last forever|Je zit niet in de gevangenis!?|Je bent niet langer in de gevangenis|Je bent weer vrij|Je hebt je borgsom van\s*\$?[\d.,]+\s*betaald|You (?:have )?paid (?:your )?bail/i.test(t);
+  }
+  function jailPostBuyoutResultVisible(){
+    const t = gameText();
+    return /Je hebt je borgsom van\s*\$?[\d.,]+\s*betaald|You (?:have )?paid (?:your )?bail|Je zit niet in de gevangenis!?|Je bent niet langer in de gevangenis|Je bent weer vrij/i.test(t);
   }
 
   function clearJailReleaseState(reason=''){
@@ -9172,7 +9181,26 @@ try {
         return true;
       }
 
-      if (!syncAllFromInfoOnce()) return true;
+      if (!syncAllFromInfoOnce()) {
+        // TEST27L: na Buy out toont Omerta soms alleen een resultaatbericht op
+        // /information.php ('Je hebt je borgsom ... betaald'). De URL en kop zijn
+        // dan al Mijn Account, maar de echte Wachttijden-DOM ontbreekt nog. Doe
+        // precies één begrensde same-route recovery totdat de timers terug zijn.
+        if (jailPostBuyoutResultVisible() && now - jailReleaseLastNavAt >= 1200) {
+          jailReleaseLastNavAt = now;
+          ccNavLeaseTarget = '';
+          ccNavLeaseUntil = 0;
+          try {
+            unsafeWindow.mrbNavigate?.(INFO_PAGE, {
+              source:'crimes-cars-jail-release',
+              sameRouteRecovery:true,
+              force:true
+            });
+            console.info('[MRB TEST27L] Borgsom-resultaat herkend; echt Mijn Account opnieuw geladen');
+          } catch(_) {}
+        }
+        return true;
+      }
 
       const finishedKind = jailReleaseKind;
       clearJailReleaseState(`server-timers opnieuw gelezen na ${finishedKind}`);
