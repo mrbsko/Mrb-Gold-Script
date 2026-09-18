@@ -1,6 +1,6 @@
 // ==UserScript==
-// @name         MRB Gold TEST - RACE STATE OWNERSHIP CLEANUP
-// @version      6.0.0-test27N-race-state-ownership-cleanup
+// @name         MRB Gold TEST - RACE INVITE WAIT YIELD
+// @version      6.0.0-test27O-race-invite-wait-yield
 // @description  MRB Gold: centrale Unified Scheduler, navigatie-owner, retry-circuitbreaker en strikte actieguards.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -18,6 +18,7 @@
 // @run-at       document-end
 // ==/UserScript==
 
+// Release 6.0.0-test27O: Race Leider geeft direct na het versturen van de uitnodiging de atomaire LEADER_INVITE-fase vrij. De uitnodiging blijft persistent pending, maar de Leider gaat meteen naar Mijn Account en plant exact één partner-hercontrole. Hierdoor kunnen Crimes/Cars tijdens het wachten op de Driver gewoon doorlopen. Pas de korte LEADER_INSPECT en STARTING-fasen zijn atomair. Geen extra loop toegevoegd.
 // Release 6.0.0-test27N: structurele Race-state cleanup voor Leider + Driver. Eén gedeelde atomic/passive fase-definitie is nu leidend voor group ownership en preemption. Leider inspecteert /races.php kort atomair (LEADER_INSPECT) zodat Crimes/Cars de DOM niet tussen laden en Start-detectie kunnen vervangen; pas echte WAITING_DRIVER yieldt. De Race-yield watchdog mag atomaire Race-fasen niet meer naar IDLE herschrijven. Driver opent een verse Race sneller (8-12s na server-Nu i.p.v. 25-30s) en een bestaande DRIVER_READY wordt bij server-Nu begrensd op de Racepagina geverifieerd in plaats van tot 90s passief te blokkeren. Geen extra moduleloop toegevoegd; Unified Dispatcher blijft enige externe wake-owner.
 // Release 6.0.0-test27M: WAIT_JAIL_RELEASE wordt nu daadwerkelijk door de bestaande Unified Dispatcher voortgezet. De dispatcher roept de centrale Crimes/Cars-task elke 250ms wakker zolang jailReleasePending actief is; er is geen extra timer/loop toegevoegd. Hierdoor kan de flow na Buy out door naar vrij-status -> Mijn Account -> verse timer-sync.
 // Release 6.0.0-test27L: post-buyout Mijn Account recovery. De borgsom-resultaatpagina gebruikt dezelfde /information.php-route en werd daardoor ten onrechte als volledig Mijn Account gezien. sameRouteRecovery kan nu bewust een zichtbare gelijknamige resultaatroute herladen; WAIT_JAIL_RELEASE doet dit single-flight wanneer timers ontbreken en de borgsom/vrijmelding zichtbaar is. Geen extra poller of watchdog.
@@ -7128,7 +7129,14 @@ try {
         raceSelectFirstAvailableCar();
         raceSafeClick(inviteBtn);
         if(failsafeTimer) mrbClearTimeout(failsafeTimer);
-        next(()=> leader_checkPartner(0), randomDelay(10000,15000));
+
+        // TEST27O: na het versturen is Race niet meer atomair. De Leider wacht
+        // op de Driver, dus geef de racepagina direct vrij voor Crimes/Cars en
+        // bewaar slechts één persistente partner-hercontrole. De volgende
+        // atomaire fase begint pas bij LEADER_INSPECT.
+        raceRegistryState('WAITING_DRIVER', 'uitnodiging verstuurd · wacht passief op Driver');
+        unsafeWindow.mrbNavigate?.('/information.php',{source:'race-invite-wait',yield:true,force:true});
+        planLeaderPartnerRecheck(randomDelay(10000,15000), 0);
       }, actionDelay());
       return;
     }
