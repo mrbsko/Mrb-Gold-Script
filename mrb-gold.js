@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MRB Gold TEST - CC JAIL RELEASE STATE
-// @version      6.0.0-test27L-cc-post-buyout-info-recovery
+// @version      6.0.0-test27M-cc-jail-central-wake
 // @description  MRB Gold: centrale Unified Scheduler, navigatie-owner, retry-circuitbreaker en strikte actieguards.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -18,6 +18,7 @@
 // @run-at       document-end
 // ==/UserScript==
 
+// Release 6.0.0-test27M: WAIT_JAIL_RELEASE wordt nu daadwerkelijk door de bestaande Unified Dispatcher voortgezet. De dispatcher roept de centrale Crimes/Cars-task elke 250ms wakker zolang jailReleasePending actief is; er is geen extra timer/loop toegevoegd. Hierdoor kan de flow na Buy out door naar vrij-status -> Mijn Account -> verse timer-sync.
 // Release 6.0.0-test27L: post-buyout Mijn Account recovery. De borgsom-resultaatpagina gebruikt dezelfde /information.php-route en werd daardoor ten onrechte als volledig Mijn Account gezien. sameRouteRecovery kan nu bewust een zichtbare gelijknamige resultaatroute herladen; WAIT_JAIL_RELEASE doet dit single-flight wanneer timers ontbreken en de borgsom/vrijmelding zichtbaar is. Geen extra poller of watchdog.
 // Release 6.0.0-test27K: structurele Crimes/Cars jail-lifecycle. Buy out leidt niet meer direct naar scheduleCooldown/module-reload. De CC-runner houdt ownership in WAIT_JAIL_RELEASE, wacht op stabiele server/DOM-bevestiging dat jail weg is, gaat daarna eerst naar Mijn Account, leest Crimes+Cars timers opnieuw server-side en geeft pas dan de Unified Scheduler vrij. Geen extra watchdog/losse retry-loop; dezelfde centrale CC-task bezit de volledige jail-overgang.
 // Release 6.0.0-test27J: structurele Heist Driver scheduler-cleanup. Een passieve Driver-probe claimt geen group-owner meer, wordt uitsluitend door de Unified Dispatcher opnieuw gewekt en plant na een lege GroupCrimes-controle geen eigen driverStart-callback meer. Pas bij een echte Heist-uitnodiging claimt de Driver ownership. Race kan daardoor tijdens een passieve Heist-probe direct preempten/accepten.
@@ -9097,7 +9098,7 @@ try {
     jailReleaseLastNavAt = 0;
     jailUntil = 0;
     GM_Set(K_JAIL_UNTIL, 0);
-    if (reason) { try { console.info('[MRB TEST27K] Jail-release afgerond:', reason); } catch(_) {} }
+    if (reason) { try { console.info('[MRB TEST27M] Jail-release afgerond:', reason); } catch(_) {} }
   }
 
   function beginJailRelease(kind, source=''){
@@ -9122,7 +9123,7 @@ try {
 
     busy = true;
     current = jailReleaseKind;
-    try { console.warn('[MRB TEST27K] WAIT_JAIL_RELEASE gestart', {kind:jailReleaseKind, source}); } catch(_) {}
+    try { console.warn('[MRB TEST27M] WAIT_JAIL_RELEASE gestart', {kind:jailReleaseKind, source}); } catch(_) {}
     progressJailRelease();
     paint();
     return true;
@@ -9157,7 +9158,7 @@ try {
         if (now - jailReleaseLastClickAt >= 1200) {
           jailReleaseLastClickAt = now;
           safeClick(btn);
-          try { console.info('[MRB TEST27K] Buy out geklikt; wachten op echte vrij-status'); } catch(_) {}
+          try { console.info('[MRB TEST27M] Buy out geklikt; wachten op echte vrij-status'); } catch(_) {}
         }
         return true;
       }
@@ -10860,7 +10861,23 @@ paint();
   function dispatcherLoop(){
     dispatcherTimer=null;
     raceYieldWatchdog();
-    if(!preemptDueCrimesCars()) dispatchInfo();
+
+    // TEST27M: WAIT_JAIL_RELEASE is een state van de centrale Crimes/Cars-task,
+    // geen eigen poller. De Unified Dispatcher is verantwoordelijk voor het
+    // voortzetten van deze state. Zonder deze wake werd beginJailRelease()
+    // slechts eenmaal uitgevoerd: Buy out werd geklikt, maar de volgende
+    // vrij-status/sync-info stap werd nooit meer uitgevoerd.
+    let ccJailReleasePending=false;
+    try {
+      const cc=unsafeWindow.mrbV9CrimesCars;
+      const st=cc?.state?.();
+      ccJailReleasePending=!!st?.running && !!st?.jailReleasePending;
+      if (ccJailReleasePending) cc?.wake?.();
+    } catch(e) {
+      try { console.warn('[MRB TEST27M] Jail-release wake fout', e); } catch(_) {}
+    }
+
+    if(!ccJailReleasePending && !preemptDueCrimesCars()) dispatchInfo();
     dispatcherTimer=mrbSetTimeout(dispatcherLoop,dispatcherDelay());
   }
   dispatcherTimer=mrbSetTimeout(dispatcherLoop,250);
