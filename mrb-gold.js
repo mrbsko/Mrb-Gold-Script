@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MRB Gold Edition
-// @version      6.0.0-test28F-heist-payout-order-fix
+// @version      6.0.0-test28G-cloudflare-safe-mode-fix
 // @description  MRB Gold: centrale Unified Scheduler, navigatie-owner, retry-circuitbreaker en strikte actieguards.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -18,6 +18,7 @@
 // @run-at       document-end
 // ==/UserScript==
 
+// Release 6.0.0-test28G: Cloudflare/security-verification heeft nu één centrale eigenaar: Logged-Out Safe Mode. Zodra een Cloudflare challenge zichtbaar is wordt alle MRB-uitvoering bevroren zonder Race/Heist/Spot-state te resetten; geen navigatie, refresh of modulecallback loopt door. Na terugkeer van een stabiele game-shell hervat Gold automatisch. De gewone captcha-pauzebrug behandelt alleen reCAPTCHA/hCaptcha in de gamepagina en bemoeit zich niet meer met Cloudflare.
 // Release 6.0.0-test28F: Heist-uitbetaling volgorde hersteld. Na een afgeronde Heist controleert de Leider op Groepsmisdaden nu EERST of de winst-transfer zichtbaar is en pas daarna of de nieuwe Heist-cooldown actief is. Voorheen kon de cooldown direct na afronding de flow hard stoppen en de Leider naar Mijn Account sturen voordat transferLink() kon klikken. Geen wijziging aan Driver-, Travel-, Race- of captcha-logica.
 // Release 6.0.0-test28E: handmatige Freeze diagnose toegevoegd. Geen continue logger en geen wijziging aan Race/Heist/Travel/refresh-beslissingen. Typ mrbFreezeDiag() in de console tijdens een grijs scherm; mrbFreezeDiag(true) toont daarnaast de gevonden overlay-elementen.
 // Release 6.0.0-test28D: Travel-diagnose opgeschoond zonder functionele Travel-logica te wijzigen. De seconde-per-seconde tick-logging is verwijderd; alleen relevante state changes en beslismomenten blijven gelogd. Geen extra navigatie, clicks, timers of module-state toegevoegd.
@@ -394,7 +395,7 @@
         // Normale ingelogde gamepagina: geen volledige bodytekst scannen.
         if (document.querySelector('#game_container')) return false;
         const t=String(document.body?.textContent||'').replace(/\s+/g,' ').trim();
-        return /Verifying you are human|Verify you are human|Verifieer dat u een mens bent|This may take a few seconds|Dit kan enkele seconden duren/i.test(t);
+        return /Verifying you are human|Verify you are human|Verifieer dat u een mens bent|Performing security verification|security verification|protect against malicious bots|This may take a few seconds|Dit kan enkele seconden duren/i.test(t);
       } catch(_) { return false; }
     }
 
@@ -423,13 +424,18 @@
       } catch(_) {}
     }
 
-    function enter(why='Uitgelogd'){
+    function enter(why='Uitgelogd', options={}){
+      const preserveTransactions=options?.preserveTransactions===true;
       if (!active) {
         active = true; enteredAt = Date.now(); reason = String(why || 'Uitgelogd');
         try { console.warn('[MRB SESSION SAFE] Automatisering bevroren:', reason); } catch(_) {}
         try { unsafeWindow.mrbFlightRecorder?.freeze?.(reason); } catch(_) {}
         try { unsafeWindow.mrbNavigationGate?.reset?.(); } catch(_) {}
-        try { unsafeWindow.mrbRaceTransaction?.release?.('session-safe'); } catch(_) {}
+        // Een echte logout mag stale Race-ownership opruimen. Cloudflare is slechts
+        // een tijdelijke beveiligingslaag: daar bewaren we de lopende module-state.
+        if(!preserveTransactions){
+          try { unsafeWindow.mrbRaceTransaction?.release?.('session-safe'); } catch(_) {}
+        }
         try { window.dispatchEvent(new CustomEvent('mrb:session-safe-change',{detail:state()})); } catch(_) {}
       } else if (why) reason = String(why);
       setMenuHidden(true);
@@ -450,6 +456,12 @@
       const cloudflare = cloudflareVisible();
       const shell = authenticatedShell(login, cloudflare);
       if (shell) { everAuthenticated = true; missingSince = 0; }
+
+      if (cloudflare) {
+        healthySince = 0; missingSince = 0;
+        enter('Cloudflare security verification', {preserveTransactions:true});
+        return true;
+      }
 
       if (login) {
         healthySince = 0; missingSince = 0; enter('Login/Signup zichtbaar'); return true;
@@ -814,11 +826,19 @@
       const popup=document.querySelector('#recaptcha-popup');
       if(shown(popup))return true;
       const challengeFrames=[
-        ...document.querySelectorAll('iframe[src*="/bframe" i],iframe[title*="challenge" i],iframe[src*="hcaptcha" i],iframe[src*="challenges.cloudflare.com" i]')
+        ...document.querySelectorAll('iframe[src*="/bframe" i],iframe[title*="challenge" i],iframe[src*="hcaptcha" i]')
       ];
       return challengeFrames.some(shown);
     }
     function tick(){
+      // Cloudflare/security-verification wordt volledig door Session Safe Mode beheerd.
+      // De gewone captcha-pauze mag daar geen tweede state/timer bovenop leggen.
+      try{
+        if(unsafeWindow.mrbSessionSafeMode?.active?.()){
+          lastCaptcha=false;
+          return;
+        }
+      }catch(_){}
       const active=captchaVisible();
       if(active){
         const ctl=unsafeWindow.mrbManualControl;
@@ -997,7 +1017,7 @@
       const popup=document.querySelector('#recaptcha-popup');
       if(shown(popup))return true;
       const challengeFrames=[
-        ...document.querySelectorAll('iframe[src*="/bframe" i],iframe[title*="challenge" i],iframe[src*="hcaptcha" i],iframe[src*="challenges.cloudflare.com" i]')
+        ...document.querySelectorAll('iframe[src*="/bframe" i],iframe[title*="challenge" i],iframe[src*="hcaptcha" i]')
       ];
       return challengeFrames.some(shown);
     }
