@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MRB Gold Edition
-// @version      6.0.0-test27Z-travel-recovery-cleanup
+// @version      6.0.0-test28A-captcha-pause-travel-logger
 // @description  MRB Gold: centrale Unified Scheduler, navigatie-owner, retry-circuitbreaker en strikte actieguards.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -18,6 +18,7 @@
 // @run-at       document-end
 // ==/UserScript==
 
+// Release 6.0.0-test28A: Captcha gebruikt de bestaande 60s handmatige pauze-engine; zolang een echte captcha zichtbaar blijft wordt de pauze automatisch verlengd zonder module-state te resetten. Travel-lockstep/Leider+Driver halfuurstad volledig verwijderd. Travel krijgt een compacte diagnostische logger voor pagina, reistimer, Heist-context, bestemming, pending handoff, group-blocker, navigatie, city-control en bevestiging.
 // Release 6.0.0-test27Z: Travel-herstel en legacy-cleanup. Travel gebruikt nu DOM-first pagina-detectie zodat een stale SPA-URL na een eerdere reis de tweede/volgende reis niet meer kan vasthouden. Travel wacht bovendien zolang een echte Race/Heist/Spot group-transaction actief is. Freeze Recovery mag na 15s bevestigde verweesde overlay een veilige force-refresh doen zonder door een stale planner/module-busy state te worden tegengehouden. Oude MasterControl_GAS polling, Opt-out Master UI en Master-only shop/travel hooks verwijderd; raceSet/ocSet blijven als compatibele externe hooks bestaan.
 // Release 6.0.0-test27Y: Travel Mijn Account-herkenning structureel hersteld. Alleen Travel onInfo() is aangepast: URL route (pathname/search/hash/href) plus zichtbare Mijn Account-DOM/timerlabels zijn nu geldig, terwijl een zichtbare Travelmodule expliciet geen Mijn Account is. Geen Heist-, bestemmings-, scheduler-, interval- of navigatielogica gewijzigd.
 // Release 6.0.0-test27W: Travel-Heist voorbereiding gebruikt nu echte Heist-stadbeschikbaarheid uit Groepsmisdaden. Binnen de Heistbuffer doet Travel, zodra de vluchttimer vrij is, eerst een begrensde GroupCrimes-probe om geblokkeerde/beschikbare steden te lezen. Staat de Leider in een ongeschikte stad (zoals Chicago wanneer Feds die blokkeren), dan kiest Travel direct een toegestane beschikbare Heiststad in plaats van de volledige 30 minuten te blijven staan. De probe wordt kort gecachet en na gebruik teruggegeven aan Mijn Account; geen extra loop toegevoegd.
@@ -780,6 +781,29 @@
     unsafeWindow.mrbManualControl = Object.freeze({
       version:'5.8.23', pause, resume, isPaused, remaining, state
     });
+  })();
+
+  (function installCaptchaManualPauseBridge(){
+    const CHECK_MS=2000, PAUSE_MS=60000;
+    let lastCaptcha=false;
+    function visible(el){return !!(el&&(el.offsetParent!==null||el.getClientRects?.().length));}
+    function captchaVisible(){
+      const sels=['#recaptcha-popup','.g-recaptcha','iframe[src*="recaptcha" i]','iframe[src*="hcaptcha" i]','iframe[src*="challenges.cloudflare.com" i]','img[src*="captcha" i]','input[name*="captcha" i]'];
+      for(const sel of sels){try{if([...document.querySelectorAll(sel)].some(visible))return true;}catch(_){}}
+      return false;
+    }
+    function tick(){
+      const active=captchaVisible();
+      if(active){
+        const ctl=unsafeWindow.mrbManualControl;
+        const remain=Number(ctl?.remaining?.()||0);
+        if(!lastCaptcha || remain<10000) ctl?.pause?.('Captcha actief · resolver krijgt 60s rust',PAUSE_MS);
+      }
+      lastCaptcha=active;
+    }
+    mrbSetInterval(tick,CHECK_MS);
+    mrbSetTimeout(tick,500);
+    unsafeWindow.mrbCaptchaPauseBridge=Object.freeze({active:captchaVisible});
   })();
 
   // ---------- SPRINT 4.9: CENTRALE NAVIGATIEPOORT ----------
@@ -11427,7 +11451,6 @@ paint();
   const K_HEIST_PRIORITY='mrb_travel_heist_priority_v1';
   const K_HEIST_BUFFER='mrb_travel_heist_buffer_minutes_v1';
   const K_NEXT_CHECK='mrb_travel_roundtrip_next_check_v1';
-  const K_SYNC='mrb_travel_lockstep_sync_v1';
   const K_HEIST_CITIES='mrb_heist_p1_leader_cities';
   const K_LAST_MODE='mrb_travel_last_mode_v1';
   const K_PENDING_CITY='mrb_travel_pending_city_v2';
@@ -11449,9 +11472,33 @@ paint();
   let heistPriority=GM_Get(K_HEIST_PRIORITY,true)!==false;
   // TEST27T: 30 minuten is de veilige standaard. 0 blijft toegestaan voor handmatig uitschakelen.
   let heistBuffer=Math.max(0,Math.min(180,Number(GM_Get(K_HEIST_BUFFER,30))||30));
-  let syncTravel=GM_Get(K_SYNC,false)===true;
   let nextCheck=Math.max(0,Number(GM_Get(K_NEXT_CHECK,0))||0);
   let busy=false;
+
+  const K_LOG='mrb_travel_diag_log_v1';
+  const MAX_LOG=40;
+  let lastLogSig='';
+  function travelLogs(){
+    try{const raw=GM_Get(K_LOG,[]);return Array.isArray(raw)?raw:[];}catch(_){return [];}
+  }
+  function travelLog(event,data={}){
+    const sig=event+'|'+JSON.stringify(data);
+    if(sig===lastLogSig)return;
+    lastLogSig=sig;
+    const list=travelLogs();
+    list.push({t:Date.now(),event,...data});
+    while(list.length>MAX_LOG)list.shift();
+    GM_Set(K_LOG,list);
+    try{console.info('[MRB Travel]',event,data);}catch(_){}
+    renderTravelLog();
+  }
+  function fmtLogTime(ts){try{return new Date(ts).toLocaleTimeString('nl-NL',{hour12:false});}catch(_){return '';}}
+  function renderTravelLog(){
+    const el=block?.querySelector?.('#trDiagLog');
+    if(!el)return;
+    const rows=travelLogs().slice(-10).reverse();
+    el.textContent=rows.length?rows.map(x=>{const data=Object.fromEntries(Object.entries(x).filter(([k])=>!['t','event'].includes(k)));return `${fmtLogTime(x.t)} ${x.event}${Object.keys(data).length?' '+JSON.stringify(data):''}`;}).join('\n'):'Nog geen Travel-events';
+  }
 
   function clean(value){return String(value||'').replace(/\s+/g,' ').trim();}
   function loadCities(){
@@ -11615,27 +11662,11 @@ paint();
     return {mode:'rank',blocked:false,wait,raw,reason:`Heist over ${raw} · rank-Travel toegestaan`};
   }
 
-  // Beide accounts kunnen zonder gedeelde opslag dezelfde bestemming kiezen.
-  // Het absolute halfuurslot is op elke computer gelijk. De lijst moet op beide
-  // accounts hetzelfde zijn aangevinkt voor echte lockstep.
-  function halfHourSlot(){return Math.floor(Date.now()/1800000);}
-  function deterministicDestination(list){
-    if(!list.length)return '';
-    return list[halfHourSlot()%list.length];
-  }
 
   function nextRankDestination(){
     const list=allowedCities();
     if(!list.length)return {city:'',nextIndex:routeIndex,reason:'Geen steden aangevinkt'};
     const here=currentCity();
-    if(syncTravel){
-      const city=deterministicDestination(list);
-      if(!city)return {city:'',nextIndex:routeIndex,reason:'Geen lockstep-bestemming'};
-      // Als dit account al in het slotdoel staat, bewust wachten. Zo convergeert
-      // een achterlopende Leader/Driver zonder dat de ander naar een andere stad vliegt.
-      if(city===here)return {city:'',nextIndex:routeIndex,reason:`Lockstep-doel ${city}; al aanwezig, wachten op volgend halfuurslot`};
-      return {city,nextIndex:routeIndex,reason:`Lockstep halfuursdoel ${city}`};
-    }
     for(let step=0;step<list.length;step++){
       const index=(routeIndex+step)%list.length;
       const city=list[index];
@@ -11651,7 +11682,7 @@ paint();
     const here=currentCity();
     if(!list.length)return {city:'',nextIndex:routeIndex,reason:'Geen stad is zowel voor Travel als Heist toegestaan'};
     if(here && list.includes(here))return {city:'',nextIndex:routeIndex,reason:`Heist-voorbereiding: ${here} is aantoonbaar geschikt; niet meer reizen`};
-    const city=syncTravel?deterministicDestination(list):list[0];
+    const city=list[0];
     return {city,nextIndex:routeIndex,reason:`Heist-voorbereiding: naar ${city}${verified.length?' (geverifieerd)':''}`};
   }
 
@@ -11670,9 +11701,12 @@ paint();
     <div style="margin-top:4px">${cityHtml}</div>
     <label style="display:flex;align-items:center;gap:6px;margin-top:7px"><input id="trHeistPriority" type="checkbox" ${heistPriority?'checked':''}> Heist heeft voorrang</label>
     <div class="gm-row" style="margin-top:5px;align-items:center;gap:6px"><label>Heist-voorbereiding binnen</label><input id="trHeistBuffer" type="number" min="0" max="180" step="5" value="${heistBuffer}" style="width:54px"><span>min</span></div>
-    <label style="display:flex;align-items:center;gap:6px;margin-top:7px"><input id="trSync" type="checkbox" ${syncTravel?'checked':''}> Leider + Driver zelfde halfuursstad</label>
-    <div style="font-size:10px;opacity:.8;margin-top:3px">Voor lockstep moeten op beide accounts dezelfde Travel- en Heiststeden aangevinkt zijn.</div>
     <div id="trRoundInfo" style="font-size:11px;line-height:1.35;margin-top:6px"></div>
+    <details style="margin-top:7px">
+      <summary style="cursor:pointer;font-size:11px;font-weight:700">Travel diagnose</summary>
+      <div class="gm-row" style="gap:6px;margin-top:5px"><button id="trDiagClear" class="gm-btn">Wis log</button></div>
+      <pre id="trDiagLog" style="white-space:pre-wrap;max-height:180px;overflow:auto;font-size:9px;line-height:1.3;margin-top:5px;background:rgba(0,0,0,.25);padding:5px;border-radius:6px"></pre>
+    </details>
   `,'04-travel');
 
   function paint(message=''){
@@ -11688,9 +11722,9 @@ paint();
       `Modus: <b>${ctx.mode==='prep'?'Heist voorbereiden':ctx.mode==='hold'?'Wachten op timer':'Rank-Travel'}</b>`,
       `Volgende bestemming: <b>${destination.city||'-'}</b>`,
       `Travel toegestaan: ${allowedCities().join(', ')||'geen'}`,
-      `Heist toegestaan: ${heistAllowedCities().join(', ')||'geen'}`,
-      syncTravel?'Lockstep: aan':'Lockstep: uit'
+      `Heist toegestaan: ${heistAllowedCities().join(', ')||'geen'}`
     ].join('<br>');
+    renderTravelLog();
   }
 
   function findCityControl(city){
@@ -11702,17 +11736,20 @@ paint();
 
   async function executeTravel(city,nextIndex,mode='rank'){
     if(!city)return;
+    travelLog('execute',{city,mode,onInfo:onInfo(),onTravel:onTravel(),nextIndex});
     setPendingTravel(city,mode,nextIndex);
     if(!onTravel()){
       // TEST27U: een true-return van de centrale navigator betekent alleen dat het
       // verzoek is geaccepteerd/gesuppressed; de echte SPA-overgang wordt pas op
       // de volgende bestaande Travel-tick bewezen met onTravel().
-      loadPage(TRAVEL);
+      const navOk=loadPage(TRAVEL);
+      travelLog('nav-travel',{city,accepted:navOk,href:String(location.href||'')});
       nextCheck=Date.now()+1800;GM_Set(K_NEXT_CHECK,nextCheck);
       paint(`Travelpagina openen voor ${city}`);
       return;
     }
     const control=findCityControl(city);
+    travelLog('city-control',{city,found:!!control,onTravel:onTravel()});
     if(!control){
       // Een half geladen/verkeerde Travel-DOM nooit als succes behandelen.
       nextCheck=Date.now()+2200;GM_Set(K_NEXT_CHECK,nextCheck);paint(`${city} nog niet klikbaar; Travelpagina opnieuw verifiëren`);return;
@@ -11723,9 +11760,11 @@ paint();
     }catch(_){control.click();}
     await sleep(800);
     const button=travelButton();
+    travelLog('confirm-button',{city,found:!!button});
     if(!button){nextCheck=Date.now()+1200;GM_Set(K_NEXT_CHECK,nextCheck);paint(`Bevestiging voor ${city} afwachten`);return;}
     button.click();
-    if(!syncTravel && mode==='rank'){routeIndex=nextIndex;GM_Set(K_INDEX,routeIndex);}
+    travelLog('confirmed',{city,mode});
+    if(mode==='rank'){routeIndex=nextIndex;GM_Set(K_INDEX,routeIndex);}
     clearPendingTravel();
     nextCheck=Date.now()+3000;GM_Set(K_NEXT_CHECK,nextCheck);GM_Set(K_LAST_MODE,mode);
     paint(`${mode==='prep'?'Heist-positionering':'Rank-reis'} naar ${city} bevestigd`);
@@ -11734,6 +11773,7 @@ paint();
 
   async function tick(){
     if(!enabled||busy)return;
+    travelLog('tick',{onInfo:onInfo(),onTravel:onTravel(),nextCheckIn:Math.max(0,nextCheck-Date.now()),pending:pendingTravel().city||''});
 
     // TEST27U: lokale deadlines zijn alleen een optimalisatie. Als Mijn Account
     // ondertussen server-side Volgende vlucht=Nu toont, is die serverwaarde leidend
@@ -11775,14 +11815,16 @@ paint();
       if(ctx.blocked){nextCheck=Date.now()+5000;GM_Set(K_NEXT_CHECK,nextCheck);paint(ctx.reason);return;}
 
       const raw=readTravelTimer();
-      if(!raw){nextCheck=Date.now()+5000;GM_Set(K_NEXT_CHECK,nextCheck);paint('Reistimer niet gevonden');return;}
+      if(!raw){travelLog('timer-missing',{href:String(location.href||'')});nextCheck=Date.now()+5000;GM_Set(K_NEXT_CHECK,nextCheck);paint('Reistimer niet gevonden');return;}
       const wait=parseDuration(raw);
+      travelLog('timer',{raw,waitMs:wait,heistMode:ctx.mode,heistReason:ctx.reason});
       if(wait>0){nextCheck=Date.now()+wait+1000;GM_Set(K_NEXT_CHECK,nextCheck);paint(`Reistimer: ${raw}`);return;}
 
       const groupBlocker=activeGroupTravelBlocker();
       if(groupBlocker){
         clearPendingTravel();
         nextCheck=Date.now()+2000;GM_Set(K_NEXT_CHECK,nextCheck);
+        travelLog('blocked-group',{groupBlocker});
         paint(`Travel wacht tot ${groupBlocker} is afgerond`);
         return;
       }
@@ -11796,11 +11838,13 @@ paint();
       }
 
       const destination=chooseDestination(ctx);
+      travelLog('destination',{city:destination.city||'',reason:destination.reason,mode:ctx.mode,currentCity:currentCity()});
       if(!destination.city){
         clearPendingTravel();nextCheck=Date.now()+5000;GM_Set(K_NEXT_CHECK,nextCheck);GM_Set(K_LAST_MODE,ctx.mode);
         paint(destination.reason);return;
       }
       setPendingTravel(destination.city,ctx.mode,destination.nextIndex);
+      travelLog('pending-set',{city:destination.city,mode:ctx.mode,nextIndex:destination.nextIndex});
       await executeTravel(destination.city,destination.nextIndex,ctx.mode);
     }finally{busy=false;}
   }
@@ -11817,12 +11861,11 @@ paint();
   block.querySelector('#trHeistBuffer')?.addEventListener('change',event=>{
     heistBuffer=Math.max(0,Math.min(180,Number(event.target.value)||0));event.target.value=heistBuffer;GM_Set(K_HEIST_BUFFER,heistBuffer);nextCheck=0;GM_Set(K_NEXT_CHECK,0);GM_Set(K_LAST_MODE,'');paint('Heistbuffer opgeslagen');
   });
-  block.querySelector('#trSync')?.addEventListener('change',event=>{
-    syncTravel=!!event.target.checked;GM_Set(K_SYNC,syncTravel);routeIndex=0;GM_Set(K_INDEX,0);nextCheck=0;GM_Set(K_NEXT_CHECK,0);GM_Set(K_LAST_MODE,'');paint(syncTravel?'Lockstep reizen aangezet':'Lockstep reizen uitgezet');
-  });
+
+  block.querySelector('#trDiagClear')?.addEventListener('click',()=>{GM_Set(K_LOG,[]);lastLogSig='';renderTravelLog();});
 
   unsafeWindow.mrbTravelControl=Object.freeze({
-    state:()=>({enabled,busy,nextCheck,heistBuffer,syncTravel,pending:pendingTravel(),allowed:allowedCities(),heistAllowed:heistAllowedCities()}),
+    state:()=>({enabled,busy,nextCheck,heistBuffer,pending:pendingTravel(),allowed:allowedCities(),heistAllowed:heistAllowedCities(),logs:travelLogs()}),
     wake:()=>{if(!enabled||busy)return false;nextCheck=0;GM_Set(K_NEXT_CHECK,0);return true;}
   });
 
