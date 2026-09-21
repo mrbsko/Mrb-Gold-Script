@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MRB Gold Edition
-// @version      6.0.0-test27W-travel-heist-city-prep
+// @version      6.0.0-test27Y-travel-info-detection-fix
 // @description  MRB Gold: centrale Unified Scheduler, navigatie-owner, retry-circuitbreaker en strikte actieguards.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -18,6 +18,7 @@
 // @run-at       document-end
 // ==/UserScript==
 
+// Release 6.0.0-test27Y: Travel Mijn Account-herkenning structureel hersteld. Alleen Travel onInfo() is aangepast: URL route (pathname/search/hash/href) plus zichtbare Mijn Account-DOM/timerlabels zijn nu geldig, terwijl een zichtbare Travelmodule expliciet geen Mijn Account is. Geen Heist-, bestemmings-, scheduler-, interval- of navigatielogica gewijzigd.
 // Release 6.0.0-test27W: Travel-Heist voorbereiding gebruikt nu echte Heist-stadbeschikbaarheid uit Groepsmisdaden. Binnen de Heistbuffer doet Travel, zodra de vluchttimer vrij is, eerst een begrensde GroupCrimes-probe om geblokkeerde/beschikbare steden te lezen. Staat de Leider in een ongeschikte stad (zoals Chicago wanneer Feds die blokkeren), dan kiest Travel direct een toegestane beschikbare Heiststad in plaats van de volledige 30 minuten te blijven staan. De probe wordt kort gecachet en na gebruik teruggegeven aan Mijn Account; geen extra loop toegevoegd.
 // Release 6.0.0-test27V: Travel las de verkeerde timerlabels. Mijn Account toont in NL 'Volgende vlucht', terwijl de Travel-module alleen 'Reis/Travel/Volgende reis' accepteerde. Daardoor bleef readTravelTimer() leeg en werd de reis nooit uitgevoerd, ook al stond de serverwaarde zichtbaar op Nu. De timerherkenning gebruikt nu expliciet Volgende vlucht/Next flight naast de oude labels. Geen nieuwe loop of scheduler toegevoegd.
 // Release 6.0.0-test27U: Travel-wake structureel hersteld. Een live Mijn Account-serverwaarde Volgende vlucht=Nu doorbreekt nu een eventueel stale lokale nextCheck-deadline. Zodra een reis werkelijk uitvoerbaar is wordt de gekozen stad als pending handoff opgeslagen; de bestaande Travel-tick verifieert vervolgens dat de Travelpagina echt zichtbaar is voordat de stad wordt aangeklikt. mrbNavigate-return=true wordt dus niet meer als bewijs gezien dat de SPA daadwerkelijk is overgegaan. Geen extra loop toegevoegd; bestaande 1s Travel-task blijft de enige runtime-aansturing.
@@ -11719,7 +11720,19 @@ paint();
     if (unsafeWindow.mrbSessionSafeMode?.active?.()) return false;
     try { return unsafeWindow.mrbNavigate?.(path,{source:'travel-roundtrip'}) === true; } catch(_) { return false; }
   }
-  function onInfo(){return /information\.php/i.test(String(location.pathname||location.href));}
+  function onInfo(){
+    const route=[location.pathname||'',location.search||'',location.hash||'',location.href||''].join(' ');
+    const root=document.querySelector('#game_container')||document.body;
+    const cls=String(root?.className||'');
+    const txt=clean(root?.innerText||root?.textContent||'');
+    // Een zichtbaar Travel-scherm wint altijd van een achterlopende information.php-route.
+    if(document.querySelector('#module_Travel,.moduleTravel')||/moduletravel/i.test(cls)||/module=Travel/i.test(String(location.href||'')))return false;
+    if(/information\.php/i.test(route)||/[?&]module=Information\b/i.test(route))return true;
+    if(/moduleInformation|information/i.test(cls))return true;
+    // SPA fallback: Mijn Account is betrouwbaar herkenbaar aan het wachttijdenblok.
+    return /Volgende\s+vlucht|Next\s+flight/i.test(txt)
+      && /Volgende\s+(?:misdaadpoging|autojatpoging|heist)|Next\s+(?:crime|car|heist)/i.test(txt);
+  }
   function onTravel(){return /module=Travel/i.test(String(location.href||''));}
   function visible(el){return !!(el&&!el.disabled&&(el.offsetParent!==null||el.getClientRects?.().length));}
 
