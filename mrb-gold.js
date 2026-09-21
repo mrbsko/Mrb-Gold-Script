@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MRB Gold Edition
-// @version      6.0.0-test27T-travel-heist-prep-sync
+// @version      6.0.0-test27U-travel-server-ready-handoff
 // @description  MRB Gold: centrale Unified Scheduler, navigatie-owner, retry-circuitbreaker en strikte actieguards.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -18,6 +18,7 @@
 // @run-at       document-end
 // ==/UserScript==
 
+// Release 6.0.0-test27U: Travel-wake structureel hersteld. Een live Mijn Account-serverwaarde Volgende vlucht=Nu doorbreekt nu een eventueel stale lokale nextCheck-deadline. Zodra een reis werkelijk uitvoerbaar is wordt de gekozen stad als pending handoff opgeslagen; de bestaande Travel-tick verifieert vervolgens dat de Travelpagina echt zichtbaar is voordat de stad wordt aangeklikt. mrbNavigate-return=true wordt dus niet meer als bewijs gezien dat de SPA daadwerkelijk is overgegaan. Geen extra loop toegevoegd; bestaande 1s Travel-task blijft de enige runtime-aansturing.
 // Release 6.0.0-test27T: Travel is uitgebreid met een 30-minuten Heist-voorbereidingsmodus en optionele Leader/Driver lockstep-bestemming. Buiten de buffer blijft rank-Travel actief; binnen 30 minuten voor Heist reist Travel alleen nog naar een Heist-toegestane stad of blijft staan wanneer de huidige stad al geschikt is. In lockstep-modus kiezen beide accounts deterministisch dezelfde routestad per halfuurslot, zonder extra server-endpoint. Bestaande Travel-module hergebruikt; geen tweede Travel-loop toegevoegd.
 // Release 6.0.0-test27S: structurele Race wake/ownership-fix. Een verlopen opgeslagen Race-startplan wordt nu uitgevoerd i.p.v. opnieuw vooruit gepland; de Unified Dispatcher beschouwt een ontbrekende Race-wake niet langer als succes; Race exporteert daarom een echte centrale wake-functie. WAITING_DRIVER is passief en geeft de group-owner vrij. Session Manager beschouwt uitsluitend passieve Race-wachtstaten als refresh-veilig, zodat een stale Race de Smart Idle Refresh niet meer onbeperkt blokkeert. Geen extra Race-loop toegevoegd.
 // Release 6.0.0-test27R: minimale Race-responsivenessfix op de teruggerolde stabiele Race-basis. Driver startplan verkort van 25-30s naar 8-12s zodat een verse uitnodiging ook zonder Crimes/Cars snel wordt geopend. Leider herkent nu ook de Nederlandse eindtekst 'De Race is afgelopen, controleer je postbus voor de resultaten' en verlaat een afgeronde Race binnen circa 1-2s naar Mijn Account, zodat andere modules direct weer timers kunnen lezen. Geen nieuwe Race-state-machine, watchdog of extra moduleloop toegevoegd. Zichtbare scriptnaam is MRB Gold Edition.
@@ -11617,6 +11618,9 @@ paint();
   const K_SYNC='mrb_travel_lockstep_sync_v1';
   const K_HEIST_CITIES='mrb_heist_p1_leader_cities';
   const K_LAST_MODE='mrb_travel_last_mode_v1';
+  const K_PENDING_CITY='mrb_travel_pending_city_v2';
+  const K_PENDING_MODE='mrb_travel_pending_mode_v2';
+  const K_PENDING_INDEX='mrb_travel_pending_index_v2';
 
   const INFO='/information.php';
   const TRAVEL='/?module=Travel';
@@ -11655,6 +11659,19 @@ paint();
     const hs=loadHeistCities();
     return CITIES.filter(city=>allowed[city]!==false && hs[city]!==false);
   }
+  function pendingTravel(){
+    const city=clean(GM_Get(K_PENDING_CITY,''));
+    const mode=clean(GM_Get(K_PENDING_MODE,''));
+    const index=Math.max(0,Number(GM_Get(K_PENDING_INDEX,routeIndex))||0);
+    return {city:CITIES.includes(city)?city:'',mode:/^(?:rank|prep)$/.test(mode)?mode:'',nextIndex:index};
+  }
+  function setPendingTravel(city,mode='rank',nextIndex=routeIndex){
+    if(!CITIES.includes(city))return false;
+    GM_Set(K_PENDING_CITY,city);GM_Set(K_PENDING_MODE,mode==='prep'?'prep':'rank');GM_Set(K_PENDING_INDEX,Math.max(0,Number(nextIndex)||0));
+    GM_Set(K_LAST_MODE,mode==='prep'?'prep':'rank');
+    return true;
+  }
+  function clearPendingTravel(){GM_Set(K_PENDING_CITY,'');GM_Set(K_PENDING_MODE,'');GM_Set(K_PENDING_INDEX,0);}
 
   function loadPage(path){
     if (unsafeWindow.mrbSessionSafeMode?.active?.()) return false;
@@ -11799,25 +11816,51 @@ paint();
 
   async function executeTravel(city,nextIndex,mode='rank'){
     if(!city)return;
-    if(!onTravel()){loadPage(TRAVEL);nextCheck=Date.now()+1800;GM_Set(K_NEXT_CHECK,nextCheck);GM_Set(K_LAST_MODE,mode);paint(`Travelpagina openen voor ${city}`);return;}
+    setPendingTravel(city,mode,nextIndex);
+    if(!onTravel()){
+      // TEST27U: een true-return van de centrale navigator betekent alleen dat het
+      // verzoek is geaccepteerd/gesuppressed; de echte SPA-overgang wordt pas op
+      // de volgende bestaande Travel-tick bewezen met onTravel().
+      loadPage(TRAVEL);
+      nextCheck=Date.now()+1800;GM_Set(K_NEXT_CHECK,nextCheck);
+      paint(`Travelpagina openen voor ${city}`);
+      return;
+    }
     const control=findCityControl(city);
-    if(!control){nextCheck=Date.now()+5000;GM_Set(K_NEXT_CHECK,nextCheck);paint(`${city} is niet klikbaar; later opnieuw`);return;}
+    if(!control){
+      // Een half geladen/verkeerde Travel-DOM nooit als succes behandelen.
+      nextCheck=Date.now()+2200;GM_Set(K_NEXT_CHECK,nextCheck);paint(`${city} nog niet klikbaar; Travelpagina opnieuw verifiëren`);return;
+    }
     try{
       if(typeof unsafeWindow.onTravelData==='function')unsafeWindow.onTravelData(CITY_TO_ID[city]);
       else control.click();
     }catch(_){control.click();}
     await sleep(800);
     const button=travelButton();
-    if(!button){nextCheck=Date.now()+2500;GM_Set(K_NEXT_CHECK,nextCheck);paint(`Bevestiging voor ${city} afwachten`);return;}
+    if(!button){nextCheck=Date.now()+1200;GM_Set(K_NEXT_CHECK,nextCheck);paint(`Bevestiging voor ${city} afwachten`);return;}
     button.click();
     if(!syncTravel && mode==='rank'){routeIndex=nextIndex;GM_Set(K_INDEX,routeIndex);}
+    clearPendingTravel();
     nextCheck=Date.now()+3000;GM_Set(K_NEXT_CHECK,nextCheck);GM_Set(K_LAST_MODE,mode);
     paint(`${mode==='prep'?'Heist-positionering':'Rank-reis'} naar ${city} bevestigd`);
     mrbSetTimeout(()=>{if(enabled)loadPage(INFO);},1500);
   }
 
   async function tick(){
-    if(!enabled||busy||Date.now()<nextCheck)return;
+    if(!enabled||busy)return;
+
+    // TEST27U: lokale deadlines zijn alleen een optimalisatie. Als Mijn Account
+    // ondertussen server-side Volgende vlucht=Nu toont, is die serverwaarde leidend
+    // en mag een oude/stale nextCheck de reis niet minutenlang tegenhouden.
+    if(Date.now()<nextCheck){
+      let liveReady=false;
+      if(onInfo()){
+        const liveRaw=readTravelTimer();
+        liveReady=!!liveRaw && parseDuration(liveRaw)===0;
+      }
+      if(!liveReady)return;
+      nextCheck=0;GM_Set(K_NEXT_CHECK,0);
+    }
     try{if(typeof gm_isGateVisible==='function'&&gm_isGateVisible())return;}catch(_){}
     busy=true;
     try{
@@ -11825,18 +11868,15 @@ paint();
         loadPage(INFO);nextCheck=Date.now()+2000;GM_Set(K_NEXT_CHECK,nextCheck);paint('Mijn Account openen voor timers');return;
       }
 
-      // Op Travel mag nooit blind de oude rankbestemming worden uitgevoerd.
-      // Eerst terug naar Mijn Account als de Heistmodus niet recent bevestigd is.
+      // TEST27U: op de Travelpagina wordt uitsluitend de bestemming uitgevoerd die
+      // op Mijn Account al server-side is vrijgegeven. Niet opnieuw berekenen na
+      // een SPA-overgang; zo blijft de handoff single-source-of-truth.
       if(onTravel()){
-        const lastMode=String(GM_Get(K_LAST_MODE,'')||'');
-        if(!lastMode){loadPage(INFO);nextCheck=Date.now()+1800;GM_Set(K_NEXT_CHECK,nextCheck);paint('Travel zonder verse besliscontext; eerst timers lezen');return;}
-        const list=lastMode==='prep'?heistAllowedCities():allowedCities();
-        let city='';
-        if(lastMode==='prep') city=syncTravel?deterministicDestination(list):(list[0]||'');
-        else if(syncTravel) city=deterministicDestination(list);
-        else city=nextRankDestination().city;
-        if(!city){loadPage(INFO);nextCheck=Date.now()+2000;GM_Set(K_NEXT_CHECK,nextCheck);paint('Geen geldige bestemming; terug naar Mijn Account');return;}
-        await executeTravel(city,routeIndex,lastMode);return;
+        const pending=pendingTravel();
+        if(!pending.city||!pending.mode){
+          clearPendingTravel();loadPage(INFO);nextCheck=Date.now()+1800;GM_Set(K_NEXT_CHECK,nextCheck);paint('Travel zonder geldige pending bestemming; eerst timers opnieuw lezen');return;
+        }
+        await executeTravel(pending.city,pending.nextIndex,pending.mode);return;
       }
 
       const ctx=heistContext();
@@ -11849,15 +11889,16 @@ paint();
 
       const destination=chooseDestination(ctx);
       if(!destination.city){
-        nextCheck=Date.now()+5000;GM_Set(K_NEXT_CHECK,nextCheck);GM_Set(K_LAST_MODE,ctx.mode);
+        clearPendingTravel();nextCheck=Date.now()+5000;GM_Set(K_NEXT_CHECK,nextCheck);GM_Set(K_LAST_MODE,ctx.mode);
         paint(destination.reason);return;
       }
+      setPendingTravel(destination.city,ctx.mode,destination.nextIndex);
       await executeTravel(destination.city,destination.nextIndex,ctx.mode);
     }finally{busy=false;}
   }
 
   block.querySelector('#trRoundToggle')?.addEventListener('click',()=>{
-    enabled=!enabled;GM_Set(K_ON,enabled);nextCheck=0;GM_Set(K_NEXT_CHECK,0);GM_Set(K_LAST_MODE,'');paint(enabled?'Travel gestart':'Travel gestopt');
+    enabled=!enabled;GM_Set(K_ON,enabled);nextCheck=0;GM_Set(K_NEXT_CHECK,0);GM_Set(K_LAST_MODE,'');clearPendingTravel();paint(enabled?'Travel gestart':'Travel gestopt');
   });
   block.querySelectorAll('[data-travel-city]').forEach(input=>input.addEventListener('change',()=>{
     allowed[input.dataset.travelCity]=!!input.checked;saveCities();routeIndex=0;GM_Set(K_INDEX,0);nextCheck=0;GM_Set(K_NEXT_CHECK,0);GM_Set(K_LAST_MODE,'');paint('Stedenlijst opgeslagen');
@@ -11873,7 +11914,7 @@ paint();
   });
 
   unsafeWindow.mrbTravelControl=Object.freeze({
-    state:()=>({enabled,busy,nextCheck,heistBuffer,syncTravel,allowed:allowedCities(),heistAllowed:heistAllowedCities()}),
+    state:()=>({enabled,busy,nextCheck,heistBuffer,syncTravel,pending:pendingTravel(),allowed:allowedCities(),heistAllowed:heistAllowedCities()}),
     wake:()=>{if(!enabled||busy)return false;nextCheck=0;GM_Set(K_NEXT_CHECK,0);return true;}
   });
 
