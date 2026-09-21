@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MRB Gold Edition
-// @version      6.0.0-test27Y-travel-info-detection-fix
+// @version      6.0.0-test27Z-travel-recovery-cleanup
 // @description  MRB Gold: centrale Unified Scheduler, navigatie-owner, retry-circuitbreaker en strikte actieguards.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -18,6 +18,7 @@
 // @run-at       document-end
 // ==/UserScript==
 
+// Release 6.0.0-test27Z: Travel-herstel en legacy-cleanup. Travel gebruikt nu DOM-first pagina-detectie zodat een stale SPA-URL na een eerdere reis de tweede/volgende reis niet meer kan vasthouden. Travel wacht bovendien zolang een echte Race/Heist/Spot group-transaction actief is. Freeze Recovery mag na 15s bevestigde verweesde overlay een veilige force-refresh doen zonder door een stale planner/module-busy state te worden tegengehouden. Oude MasterControl_GAS polling, Opt-out Master UI en Master-only shop/travel hooks verwijderd; raceSet/ocSet blijven als compatibele externe hooks bestaan.
 // Release 6.0.0-test27Y: Travel Mijn Account-herkenning structureel hersteld. Alleen Travel onInfo() is aangepast: URL route (pathname/search/hash/href) plus zichtbare Mijn Account-DOM/timerlabels zijn nu geldig, terwijl een zichtbare Travelmodule expliciet geen Mijn Account is. Geen Heist-, bestemmings-, scheduler-, interval- of navigatielogica gewijzigd.
 // Release 6.0.0-test27W: Travel-Heist voorbereiding gebruikt nu echte Heist-stadbeschikbaarheid uit Groepsmisdaden. Binnen de Heistbuffer doet Travel, zodra de vluchttimer vrij is, eerst een begrensde GroupCrimes-probe om geblokkeerde/beschikbare steden te lezen. Staat de Leider in een ongeschikte stad (zoals Chicago wanneer Feds die blokkeren), dan kiest Travel direct een toegestane beschikbare Heiststad in plaats van de volledige 30 minuten te blijven staan. De probe wordt kort gecachet en na gebruik teruggegeven aan Mijn Account; geen extra loop toegevoegd.
 // Release 6.0.0-test27V: Travel las de verkeerde timerlabels. Mijn Account toont in NL 'Volgende vlucht', terwijl de Travel-module alleen 'Reis/Travel/Volgende reis' accepteerde. Daardoor bleef readTravelTimer() leeg en werd de reis nooit uitgevoerd, ook al stond de serverwaarde zichtbaar op Nu. De timerherkenning gebruikt nu expliciet Volgende vlucht/Next flight naast de oude labels. Geen nieuwe loop of scheduler toegevoegd.
@@ -3362,16 +3363,10 @@ Naam3"></textarea><br><br>
   const K_WE     = 'oc_we';
   const K_DR     = 'oc_dr';
 
-  // Master opt-out (per browser)
-  // true  = deze browser negeert master commands (Race/OC)
-  // false = volgt master commands
-  const K_OPTOUT = 'cc.local.optOutAll';
-
   let partnerName  = GM_Get(K_NAME, 'Invullen'); // standaard Invullen
   let ocEE         = GM_Get(K_EE,   '');         // standaard leeg
   let ocWE         = GM_Get(K_WE,   '');
   let ocDR         = GM_Get(K_DR,   '');
-  let optOutMaster = GM_Get(K_OPTOUT, false);
 
   // UI — Settings blok (Partner/OC rechtsboven grid, Save onderaan)
   const block = addBlock(`
@@ -3405,12 +3400,6 @@ Naam3"></textarea><br><br>
         <input id="ocDR" type="text" maxlength="12" value="${ocDR}"
                style="width:12ch; height:22px; padding:2px 6px;">
 
-        <!-- Opt-out Master (volledige breedte, rechts uitgelijnd) -->
-        <label style="grid-column:1 / span 2; justify-self:end; display:flex; align-items:center; gap:8px; margin-top:2px;">
-          <input id="optOutMaster" type="checkbox" ${optOutMaster ? 'checked' : ''}>
-          Opt-out Master
-        </label>
-
         <!-- Save onderaan (volledige breedte, rechts uitgelijnd) -->
         <button id="grpsSave" class="gm-btn"
                 style="grid-column:1 / span 2; justify-self:end; margin-top:2px;">Save</button>
@@ -3423,14 +3412,7 @@ Naam3"></textarea><br><br>
   const eeInp     = block.querySelector('#ocEE');
   const weInp     = block.querySelector('#ocWE');
   const drInp     = block.querySelector('#ocDR');
-  const optOutInp = block.querySelector('#optOutMaster');
   const saveBtn   = block.querySelector('#grpsSave');
-
-  // Opt-out direct opslaan bij toggle (staat los van Save)
-  optOutInp.addEventListener('change', ()=>{
-    optOutMaster = !!optOutInp.checked;
-    GM_Set(K_OPTOUT, optOutMaster);
-  });
 
   // Opslaan
   function doSave(){
@@ -5991,14 +5973,6 @@ Naam3"></textarea><br><br>
       lockRelease();
     }
   }
-  // -------------------------
-  // Public API voor MasterControl
-  // -------------------------
-unsafeWindow.cc_api = unsafeWindow.cc_api || {};
-unsafeWindow.cc_api.shopBuyHandgun = ()=>buyHandgun();
-unsafeWindow.cc_api.shopBuyArmor   = ()=>buyArmor();
-unsafeWindow.cc_api.travelDetroit  = ()=>travelTo('Det');
-unsafeWindow.cc_api.travelChicago  = ()=>travelTo('Chi');
 
 // Centrale menuhelpers beschikbaar maken voor alle latere module-IIFE's.
 // Deze modules staan bewust buiten de basis-IIFE en konden addBlock anders
@@ -6014,171 +5988,6 @@ try {
   }
 } catch (_) {}
 })();
-
-// =====================================================================
-// MASTER CONTROL 
-// =====================================================================
-
-    ;(function MasterControl_GAS(){
-  'use strict';
-
-  const FEED_URL = 'https://script.google.com/macros/s/AKfycbyCQ-VYbfhJunqM8ucDExXtRUrbNCLJMcic1sGCHO97djelQPtNLqmFXeNw8NYqNQzD/exec?token=MRB Gold';
-  const POLL_MS = 40_000;
-
-  const MODULES = {
-    race:    { enabledKey:'race_scriptAan'    },
-    oc:      { enabledKey:'oc_scriptAan'      },
-  };
-
-  // ✅ NIEUW: one-shot tasks (geen enabledKey, alleen uitvoeren)
-  const TASKS = {
-    buy_handgun:    { apiFn: 'shopBuyHandgun' },
-    buy_armor:      { apiFn: 'shopBuyArmor'   },
-    travel_detroit: { apiFn: 'travelDetroit'  },
-    travel_chicago: { apiFn: 'travelChicago'  },
-  };
-
-  const K = {
-    optOutAll: 'cc.local.optOutAll',
-    lastSeen:  (m)=>`cc.local.${m}.lastSeenCmdId`,
-    latch:     (m)=>`cc.local.${m}.stopLatch`,
-    reason:    (m)=>`cc.local.${m}.stopReason`,
-  };
-
-  // Gebruik jouw GM helpers als ze bestaan
-  const GM_Get_ = (unsafeWindow.GM_Get || ((k,d)=>GM_getValue(k,d)));
-  const GM_Set_ = (unsafeWindow.GM_Set || ((k,v)=>GM_setValue(k,v)));
-
-  const isOptedOut  = ()=> !!GM_Get_(K.optOutAll, false);
-  const getLastSeen = (m)=> String(GM_Get_(K.lastSeen(m), '')||'');
-  const setLastSeen = (m,id)=> GM_Set_(K.lastSeen(m), String(id||''));
-  const setLatch    = (m,on,reason='')=>{
-    GM_Set_(K.latch(m), !!on);
-    GM_Set_(K.reason(m), on ? String(reason||'').slice(0,200) : '');
-  };
-
-  const normalizeAction = (a)=>{
-    a = String(a||'').trim().toUpperCase();
-    if (['ON','TRUE','1','START','RUN','DO','GO','TRIGGER'].includes(a)) return 'ON';
-    if (['OFF','FALSE','0','STOP'].includes(a)) return 'OFF';
-    return '';
-  };
-
-  // Public hook: modules kunnen zichzelf “latchen” (= blijft uit tot nieuw command-id)
-  unsafeWindow.cc_localStop = function(module, reason){
-    module = String(module||'').toLowerCase();
-    if (!MODULES[module]) return;
-    setLatch(module, true, reason || 'local stop');
-    GM_Set_(MODULES[module].enabledKey, false);
-  };
-
-  function applyCommand(module, cmd){
-    if (!cmd || !cmd.id) return;
-    if (isOptedOut()) return;
-
-    const api = unsafeWindow.cc_api || {};
-    const isTask = !!TASKS[module];
-
-    // --- bepaal actie ---
-    let action = normalizeAction(cmd.action);
-
-    // ✅ Tasks: als action niet ON/OFF is maar wel gevuld -> behandel als ON (execute)
-    if (!action && isTask && String(cmd.action||'').trim()){
-      action = 'ON';
-    }
-    if (!action) return;
-
-    // ✅ Tasks: als functie nog niet bestaat, NIET lastSeen zetten (anders verlies je command)
-    if (isTask){
-      const fnName = TASKS[module].apiFn;
-      if (typeof api?.[fnName] !== 'function'){
-        return;
-      }
-    }
-
-    const id = String(cmd.id);
-    if (getLastSeen(module) === id) return; // one-shot
-    setLastSeen(module, id);
-
-    // -------------------------
-    // TASKS (one-shot execute)
-    // -------------------------
-    if (isTask){
-      const fnName = TASKS[module].apiFn;
-      try{ api[fnName]?.(); }catch(e){}
-      return;
-    }
-
-    // -------------------------
-    // MODULES (start/stop)
-    // -------------------------
-    if (action === 'OFF'){
-      GM_Set_(MODULES[module].enabledKey, false);
-
-      // DIRECT stop zonder refresh
-      if (module === 'race')    api.raceSet?.(false, 'master OFF');
-      if (module === 'oc')      api.ocSet?.(false, 'master OFF');
-
-      return;
-    }
-
-    if (action === 'ON'){
-      // reset latch zodat ook eerder gestopte browsers weer 1x proberen
-      setLatch(module, false, '');
-      GM_Set_(MODULES[module].enabledKey, true);
-
-      // DIRECT start zonder refresh
-      if (module === 'race')    api.raceSet?.(true, 'master ON');
-      if (module === 'oc')      api.ocSet?.(true, 'master ON');
-
-      return;
-    }
-  }
-
-  function fetchFeed(){
-    return new Promise((resolve, reject)=>{
-      GM_xmlhttpRequest({
-        method: 'GET',
-        url: FEED_URL,
-        headers: { 'Accept': 'application/json' },
-        timeout: 10_000,
-        onload: (res)=>{
-          try{ resolve(JSON.parse(res.responseText || '{}')); }
-          catch(e){ reject(e); }
-        },
-        onerror: reject,
-        ontimeout: ()=>reject(new Error('timeout')),
-      });
-    });
-  }
-
-async function poll(){
-  try{
-    if (isOptedOut()) return;
-
-    const j = await fetchFeed();
-    if (!j || j.ok === false) return;
-
-    // modules
-    for (const m of Object.keys(MODULES)){
-      if (j[m]) applyCommand(m, j[m]);
-    }
-    // tasks
-    for (const t of Object.keys(TASKS)){
-      if (j[t]) applyCommand(t, j[t]);
-    }
-
-  } catch(e){
-    // stil falen
-  }
-}
-
-  // Init
-  poll();
-  mrbSetInterval(poll, POLL_MS);
-
-})();
-
 
 // ==========================================================
 // 5.8.46 HEIST SERVER-TIMER RACE UNLOCK
@@ -11720,21 +11529,44 @@ paint();
     if (unsafeWindow.mrbSessionSafeMode?.active?.()) return false;
     try { return unsafeWindow.mrbNavigate?.(path,{source:'travel-roundtrip'}) === true; } catch(_) { return false; }
   }
-  function onInfo(){
-    const route=[location.pathname||'',location.search||'',location.hash||'',location.href||''].join(' ');
+  function travelVisibleDom(){
+    const root=document.querySelector('#game_container')||document.body;
+    const cls=String(root?.className||'');
+    if(document.querySelector('#module_Travel,.moduleTravel')||/moduletravel/i.test(cls))return true;
+    const heading=clean(root?.querySelector('h1,h2,h3,.title,.moduleTitle')?.textContent||'');
+    return /^(?:Reis|Travel)$/i.test(heading);
+  }
+  function infoVisibleDom(){
     const root=document.querySelector('#game_container')||document.body;
     const cls=String(root?.className||'');
     const txt=clean(root?.innerText||root?.textContent||'');
-    // Een zichtbaar Travel-scherm wint altijd van een achterlopende information.php-route.
-    if(document.querySelector('#module_Travel,.moduleTravel')||/moduletravel/i.test(cls)||/module=Travel/i.test(String(location.href||'')))return false;
-    if(/information\.php/i.test(route)||/[?&]module=Information\b/i.test(route))return true;
     if(/moduleInformation|information/i.test(cls))return true;
-    // SPA fallback: Mijn Account is betrouwbaar herkenbaar aan het wachttijdenblok.
     return /Volgende\s+vlucht|Next\s+flight/i.test(txt)
       && /Volgende\s+(?:misdaadpoging|autojatpoging|heist)|Next\s+(?:crime|car|heist)/i.test(txt);
   }
-  function onTravel(){return /module=Travel/i.test(String(location.href||''));}
+  function onInfo(){
+    if(infoVisibleDom())return true;
+    if(travelVisibleDom())return false;
+    const route=[location.pathname||'',location.search||'',location.hash||'',location.href||''].join(' ');
+    return /information\.php/i.test(route)||/[?&]module=Information\b/i.test(route);
+  }
+  function onTravel(){
+    if(travelVisibleDom())return true;
+    if(infoVisibleDom())return false;
+    const route=[location.pathname||'',location.search||'',location.hash||'',location.href||''].join(' ');
+    return /module=Travel/i.test(route);
+  }
   function visible(el){return !!(el&&!el.disabled&&(el.offsetParent!==null||el.getClientRects?.().length));}
+
+  function activeGroupTravelBlocker(){
+    try{
+      const tx=unsafeWindow.mrbGroupTransaction?.state?.();
+      if(tx?.active && /^(?:race|heist|spot)$/i.test(String(tx.owner||''))){
+        return `${String(tx.owner||'groep')} ${String(tx.phase||'actief')}`.trim();
+      }
+    }catch(_){}
+    return '';
+  }
 
   function parseDuration(raw){
     const value=clean(raw);
@@ -11946,6 +11778,14 @@ paint();
       if(!raw){nextCheck=Date.now()+5000;GM_Set(K_NEXT_CHECK,nextCheck);paint('Reistimer niet gevonden');return;}
       const wait=parseDuration(raw);
       if(wait>0){nextCheck=Date.now()+wait+1000;GM_Set(K_NEXT_CHECK,nextCheck);paint(`Reistimer: ${raw}`);return;}
+
+      const groupBlocker=activeGroupTravelBlocker();
+      if(groupBlocker){
+        clearPendingTravel();
+        nextCheck=Date.now()+2000;GM_Set(K_NEXT_CHECK,nextCheck);
+        paint(`Travel wacht tot ${groupBlocker} is afgerond`);
+        return;
+      }
 
       if(ctx.mode==='prep' && !cachedHeistAvailable().length){
         GM_Set(K_HEIST_PROBE,true);
@@ -12356,8 +12196,8 @@ paint();
       if(state.orphan){
         if(state.signature!==lastOverlaySignature){ lastOverlaySignature=state.signature; overlaySince=Date.now(); }
         if(!overlaySince) overlaySince=Date.now();
-        if(Date.now()-overlaySince>=FREEZE_CONFIRM_MS && safeToRefresh()){
-          if(doSafeRefresh('verweesde schermoverlay')) return {delayMs:PERIOD_MS,status:'freeze recovery refresh'};
+        if(Date.now()-overlaySince>=FREEZE_CONFIRM_MS && safeForForcedPeriodicRefresh()){
+          if(doSafeRefresh('verweesde schermoverlay', true)) return {delayMs:PERIOD_MS,status:'freeze recovery refresh'};
         }
         nextTs=Date.now()+3000; GM_Set(K_NEXTTS,nextTs);
         ui(`Mogelijke freeze controleren (${fmt(FREEZE_CONFIRM_MS-(Date.now()-overlaySince))})`);
