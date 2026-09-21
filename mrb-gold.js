@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MRB Gold Edition
-// @version      6.0.0-test28C-captcha-release-fix
+// @version      6.0.0-test28D-travel-event-logger-cleanup
 // @description  MRB Gold: centrale Unified Scheduler, navigatie-owner, retry-circuitbreaker en strikte actieguards.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -18,6 +18,7 @@
 // @run-at       document-end
 // ==/UserScript==
 
+// Release 6.0.0-test28D: Travel-diagnose opgeschoond zonder functionele Travel-logica te wijzigen. De seconde-per-seconde tick-logging is verwijderd; alleen relevante state changes en beslismomenten blijven gelogd. Geen extra navigatie, clicks, timers of module-state toegevoegd.
 // Release 6.0.0-test28C: Captcha-release structureel hersteld. De oude detectie zag ook een opgeloste maar nog in de DOM aanwezige reCAPTCHA/g-reCAPTCHA als actief en verlengde daardoor de 60s pauze eindeloos. Nieuwe centrale detectie vereist een echt zichtbare/actieve challenge en negeert widgets met een ingevulde g-recaptcha-response/h-captcha-response. Dezelfde detectie wordt gebruikt door de captcha-pauzebrug en de centrale navigatiepoort, zodat MRB na oplossen weer vrij kan navigeren. Geen module-state reset.
 // Release 6.0.0-test28B: Travel-Heistbuffer leest voortaan uitsluitend de echte Wachttijden-rij uit #game_container met exact label 'Volgende heist/Next heist'. Geen globale tr-fallback meer die een andere/verkorte waarde kon oppakken. De volledige timertekst na het label wordt samengevoegd en gelogd, zodat 2H 3M 22S ook echt als ruim 2 uur wordt geïnterpreteerd. GroupCrimes-probe blijft alleen toegestaan wanneer de correct gelezen Heisttimer binnen de ingestelde voorbereidingsbuffer valt.
 // Release 6.0.0-test28A: Captcha gebruikt de bestaande 60s handmatige pauze-engine; zolang een echte captcha zichtbaar blijft wordt de pauze automatisch verlengd zonder module-state te resetten. Travel-lockstep/Leider+Driver halfuurstad volledig verwijderd. Travel krijgt een compacte diagnostische logger voor pagina, reistimer, Heist-context, bestemming, pending handoff, group-blocker, navigatie, city-control en bevestiging.
@@ -11528,6 +11529,7 @@ paint();
   const K_LOG='mrb_travel_diag_log_v1';
   const MAX_LOG=40;
   let lastLogSig='';
+  let lastRuntimeStateSig='';
   function travelLogs(){
     try{const raw=GM_Get(K_LOG,[]);return Array.isArray(raw)?raw:[];}catch(_){return [];}
   }
@@ -11548,6 +11550,18 @@ paint();
     if(!el)return;
     const rows=travelLogs().slice(-10).reverse();
     el.textContent=rows.length?rows.map(x=>{const data=Object.fromEntries(Object.entries(x).filter(([k])=>!['t','event'].includes(k)));return `${fmtLogTime(x.t)} ${x.event}${Object.keys(data).length?' '+JSON.stringify(data):''}`;}).join('\n'):'Nog geen Travel-events';
+  }
+  function logRuntimeStateChange(){
+    const pending=pendingTravel();
+    const state={
+      page:onInfo()?'info':(onTravel()?'travel':'other'),
+      pendingCity:pending.city||'',
+      pendingMode:pending.mode||''
+    };
+    const sig=JSON.stringify(state);
+    if(sig===lastRuntimeStateSig)return;
+    lastRuntimeStateSig=sig;
+    travelLog('state',state);
   }
 
   function clean(value){return String(value||'').replace(/\s+/g,' ').trim();}
@@ -11833,7 +11847,7 @@ paint();
 
   async function tick(){
     if(!enabled||busy)return;
-    travelLog('tick',{onInfo:onInfo(),onTravel:onTravel(),nextCheckIn:Math.max(0,nextCheck-Date.now()),pending:pendingTravel().city||''});
+    logRuntimeStateChange();
 
     // TEST27U: lokale deadlines zijn alleen een optimalisatie. Als Mijn Account
     // ondertussen server-side Volgende vlucht=Nu toont, is die serverwaarde leidend
