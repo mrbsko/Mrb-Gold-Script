@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MRB Gold Edition
-// @version      6.0.0-test28B-travel-timer-source-fix
+// @version      6.0.0-test28C-captcha-release-fix
 // @description  MRB Gold: centrale Unified Scheduler, navigatie-owner, retry-circuitbreaker en strikte actieguards.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -18,6 +18,7 @@
 // @run-at       document-end
 // ==/UserScript==
 
+// Release 6.0.0-test28C: Captcha-release structureel hersteld. De oude detectie zag ook een opgeloste maar nog in de DOM aanwezige reCAPTCHA/g-reCAPTCHA als actief en verlengde daardoor de 60s pauze eindeloos. Nieuwe centrale detectie vereist een echt zichtbare/actieve challenge en negeert widgets met een ingevulde g-recaptcha-response/h-captcha-response. Dezelfde detectie wordt gebruikt door de captcha-pauzebrug en de centrale navigatiepoort, zodat MRB na oplossen weer vrij kan navigeren. Geen module-state reset.
 // Release 6.0.0-test28B: Travel-Heistbuffer leest voortaan uitsluitend de echte Wachttijden-rij uit #game_container met exact label 'Volgende heist/Next heist'. Geen globale tr-fallback meer die een andere/verkorte waarde kon oppakken. De volledige timertekst na het label wordt samengevoegd en gelogd, zodat 2H 3M 22S ook echt als ruim 2 uur wordt geïnterpreteerd. GroupCrimes-probe blijft alleen toegestaan wanneer de correct gelezen Heisttimer binnen de ingestelde voorbereidingsbuffer valt.
 // Release 6.0.0-test28A: Captcha gebruikt de bestaande 60s handmatige pauze-engine; zolang een echte captcha zichtbaar blijft wordt de pauze automatisch verlengd zonder module-state te resetten. Travel-lockstep/Leider+Driver halfuurstad volledig verwijderd. Travel krijgt een compacte diagnostische logger voor pagina, reistimer, Heist-context, bestemming, pending handoff, group-blocker, navigatie, city-control en bevestiging.
 // Release 6.0.0-test27Z: Travel-herstel en legacy-cleanup. Travel gebruikt nu DOM-first pagina-detectie zodat een stale SPA-URL na een eerdere reis de tweede/volgende reis niet meer kan vasthouden. Travel wacht bovendien zolang een echte Race/Heist/Spot group-transaction actief is. Freeze Recovery mag na 15s bevestigde verweesde overlay een veilige force-refresh doen zonder door een stale planner/module-busy state te worden tegengehouden. Oude MasterControl_GAS polling, Opt-out Master UI en Master-only shop/travel hooks verwijderd; raceSet/ocSet blijven als compatibele externe hooks bestaan.
@@ -787,11 +788,32 @@
   (function installCaptchaManualPauseBridge(){
     const CHECK_MS=2000, PAUSE_MS=60000;
     let lastCaptcha=false;
-    function visible(el){return !!(el&&(el.offsetParent!==null||el.getClientRects?.().length));}
+    function shown(el){
+      if(!el)return false;
+      try{
+        const cs=getComputedStyle(el);
+        if(cs.display==='none'||cs.visibility==='hidden'||Number(cs.opacity)===0)return false;
+      }catch(_){}
+      const r=el.getBoundingClientRect?.();
+      return !!(r&&r.width>8&&r.height>8);
+    }
+    function solvedResponse(){
+      const vals=[
+        document.querySelector('textarea[name="g-recaptcha-response"]')?.value,
+        document.querySelector('textarea[name="h-captcha-response"]')?.value,
+        document.querySelector('input[name="g-recaptcha-response"]')?.value,
+        document.querySelector('input[name="h-captcha-response"]')?.value
+      ];
+      return vals.some(v=>String(v||'').trim().length>20);
+    }
     function captchaVisible(){
-      const sels=['#recaptcha-popup','.g-recaptcha','iframe[src*="recaptcha" i]','iframe[src*="hcaptcha" i]','iframe[src*="challenges.cloudflare.com" i]','img[src*="captcha" i]','input[name*="captcha" i]'];
-      for(const sel of sels){try{if([...document.querySelectorAll(sel)].some(visible))return true;}catch(_){}}
-      return false;
+      if(solvedResponse())return false;
+      const popup=document.querySelector('#recaptcha-popup');
+      if(shown(popup))return true;
+      const challengeFrames=[
+        ...document.querySelectorAll('iframe[src*="/bframe" i],iframe[title*="challenge" i],iframe[src*="hcaptcha" i],iframe[src*="challenges.cloudflare.com" i]')
+      ];
+      return challengeFrames.some(shown);
     }
     function tick(){
       const active=captchaVisible();
@@ -799,6 +821,9 @@
         const ctl=unsafeWindow.mrbManualControl;
         const remain=Number(ctl?.remaining?.()||0);
         if(!lastCaptcha || remain<10000) ctl?.pause?.('Captcha actief · resolver krijgt 60s rust',PAUSE_MS);
+      }else if(lastCaptcha){
+        // Geen geforceerde resume: de reeds gegeven pauze mag rustig uitlopen.
+        try{console.info('[MRB Captcha] challenge opgelost; pauze wordt niet meer verlengd');}catch(_){}
       }
       lastCaptcha=active;
     }
@@ -947,7 +972,31 @@
       try { return typeof gm_isGateVisible === 'function' && gm_isGateVisible(); } catch(_) { return false; }
     }
     function captchaVisible(){
-      return !!document.querySelector('#recaptcha-popup, .g-recaptcha, iframe[src*="recaptcha"], iframe[src*="hcaptcha"], iframe[src*="challenges.cloudflare.com"]');
+      function shown(el){
+        if(!el)return false;
+        try{
+          const cs=getComputedStyle(el);
+          if(cs.display==='none'||cs.visibility==='hidden'||Number(cs.opacity)===0)return false;
+        }catch(_){}
+        const r=el.getBoundingClientRect?.();
+        return !!(r&&r.width>8&&r.height>8);
+      }
+      function solvedResponse(){
+        const vals=[
+          document.querySelector('textarea[name="g-recaptcha-response"]')?.value,
+          document.querySelector('textarea[name="h-captcha-response"]')?.value,
+          document.querySelector('input[name="g-recaptcha-response"]')?.value,
+          document.querySelector('input[name="h-captcha-response"]')?.value
+        ];
+        return vals.some(v=>String(v||'').trim().length>20);
+      }
+      if(solvedResponse())return false;
+      const popup=document.querySelector('#recaptcha-popup');
+      if(shown(popup))return true;
+      const challengeFrames=[
+        ...document.querySelectorAll('iframe[src*="/bframe" i],iframe[title*="challenge" i],iframe[src*="hcaptcha" i],iframe[src*="challenges.cloudflare.com" i]')
+      ];
+      return challengeFrames.some(shown);
     }
     function future(ts, margin=1500){
       const n = Number(ts || 0);
