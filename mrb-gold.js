@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MRB Gold Edition
-// @version      6.0.0-test28E-freeze-diag
+// @version      6.0.0-test28F-heist-payout-order-fix
 // @description  MRB Gold: centrale Unified Scheduler, navigatie-owner, retry-circuitbreaker en strikte actieguards.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -18,6 +18,7 @@
 // @run-at       document-end
 // ==/UserScript==
 
+// Release 6.0.0-test28F: Heist-uitbetaling volgorde hersteld. Na een afgeronde Heist controleert de Leider op Groepsmisdaden nu EERST of de winst-transfer zichtbaar is en pas daarna of de nieuwe Heist-cooldown actief is. Voorheen kon de cooldown direct na afronding de flow hard stoppen en de Leider naar Mijn Account sturen voordat transferLink() kon klikken. Geen wijziging aan Driver-, Travel-, Race- of captcha-logica.
 // Release 6.0.0-test28E: handmatige Freeze diagnose toegevoegd. Geen continue logger en geen wijziging aan Race/Heist/Travel/refresh-beslissingen. Typ mrbFreezeDiag() in de console tijdens een grijs scherm; mrbFreezeDiag(true) toont daarnaast de gevonden overlay-elementen.
 // Release 6.0.0-test28D: Travel-diagnose opgeschoond zonder functionele Travel-logica te wijzigen. De seconde-per-seconde tick-logging is verwijderd; alleen relevante state changes en beslismomenten blijven gelogd. Geen extra navigatie, clicks, timers of module-state toegevoegd.
 // Release 6.0.0-test28C: Captcha-release structureel hersteld. De oude detectie zag ook een opgeloste maar nog in de DOM aanwezige reCAPTCHA/g-reCAPTCHA als actief en verlengde daardoor de 60s pauze eindeloos. Nieuwe centrale detectie vereist een echt zichtbare/actieve challenge en negeert widgets met een ingevulde g-recaptcha-response/h-captcha-response. Dezelfde detectie wordt gebruikt door de captcha-pauzebrug en de centrale navigatiepoort, zodat MRB na oplossen weer vrij kan navigeren. Geen module-state reset.
@@ -15125,9 +15126,21 @@ paint();
   function inspectLeaderGroup(initial=false){
     if(!enabled()||role()!=='leader')return;
     if(waitForRaceBefore(()=>inspectLeaderGroup(initial),'Heist Leider-controle'))return;
-    // 5.8.41: GroupCrimes zelf kan al aantonen dat de vorige Heist is afgerond.
-    // Stop dan onmiddellijk de stale Leider-flow voordat enige hernavigatie plaatsvindt.
+
+    // TEST28F: na een geslaagde Heist kan BaraFranca tegelijk al de nieuwe
+    // cooldown tonen én de winst-transfer aanbieden. Uitbetaling heeft dan
+    // absolute voorrang; pas als er geen transfer meer zichtbaar is mag de
+    // cooldown de flow afsluiten en terug naar Mijn Account sturen.
     if(onGroup()){
+      const transfer=transferLink();
+      if(transfer){
+        setInvitePending(false);
+        phase='payout';
+        status(`Heist winst versturen naar ${driverName()}`);
+        transfer.click();
+        next(()=>inspectLeaderGroup(false),rand(2500,4500));
+        return;
+      }
       const cooldownRaw=readGroupHeistCooldown();
       if(cooldownRaw&&hardStopHeistCooldown(cooldownRaw,'Groepsmisdaden'))return;
     }
@@ -15145,8 +15158,6 @@ paint();
       return;
     }
     heistLastGroupNavAt=0;
-    const transfer=transferLink();
-    if(transfer){setInvitePending(false);status(`Heist winst versturen naar ${driverName()}`);transfer.click();next(goInfo,rand(5000,10000));return;}
     const start=finalStart();
     if(start){setInvitePending(false);status('Driver gereed · Heist starten');start.click();phase='started';next(()=>inspectLeaderGroup(false),rand(5000,8000));return;}
     if(/Wanna kick him out for his lazy behaviour|wachten op.*(?:driver|bestuurder)|driver.*(?:accepted|geaccepteerd)|verwijder(?:en|d)?\s+als\s+bestuurder|remove.*driver|huidige\s+bestuurder/i.test(text())){phase='waiting';scheduleLeaderCheck();return;}
