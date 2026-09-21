@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MRB Gold Edition
-// @version      6.0.0-test27V-travel-timer-label-fix
+// @version      6.0.0-test27W-travel-heist-city-prep
 // @description  MRB Gold: centrale Unified Scheduler, navigatie-owner, retry-circuitbreaker en strikte actieguards.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -18,6 +18,7 @@
 // @run-at       document-end
 // ==/UserScript==
 
+// Release 6.0.0-test27W: Travel-Heist voorbereiding gebruikt nu echte Heist-stadbeschikbaarheid uit Groepsmisdaden. Binnen de Heistbuffer doet Travel, zodra de vluchttimer vrij is, eerst een begrensde GroupCrimes-probe om geblokkeerde/beschikbare steden te lezen. Staat de Leider in een ongeschikte stad (zoals Chicago wanneer Feds die blokkeren), dan kiest Travel direct een toegestane beschikbare Heiststad in plaats van de volledige 30 minuten te blijven staan. De probe wordt kort gecachet en na gebruik teruggegeven aan Mijn Account; geen extra loop toegevoegd.
 // Release 6.0.0-test27V: Travel las de verkeerde timerlabels. Mijn Account toont in NL 'Volgende vlucht', terwijl de Travel-module alleen 'Reis/Travel/Volgende reis' accepteerde. Daardoor bleef readTravelTimer() leeg en werd de reis nooit uitgevoerd, ook al stond de serverwaarde zichtbaar op Nu. De timerherkenning gebruikt nu expliciet Volgende vlucht/Next flight naast de oude labels. Geen nieuwe loop of scheduler toegevoegd.
 // Release 6.0.0-test27U: Travel-wake structureel hersteld. Een live Mijn Account-serverwaarde Volgende vlucht=Nu doorbreekt nu een eventueel stale lokale nextCheck-deadline. Zodra een reis werkelijk uitvoerbaar is wordt de gekozen stad als pending handoff opgeslagen; de bestaande Travel-tick verifieert vervolgens dat de Travelpagina echt zichtbaar is voordat de stad wordt aangeklikt. mrbNavigate-return=true wordt dus niet meer als bewijs gezien dat de SPA daadwerkelijk is overgegaan. Geen extra loop toegevoegd; bestaande 1s Travel-task blijft de enige runtime-aansturing.
 // Release 6.0.0-test27T: Travel is uitgebreid met een 30-minuten Heist-voorbereidingsmodus en optionele Leader/Driver lockstep-bestemming. Buiten de buffer blijft rank-Travel actief; binnen 30 minuten voor Heist reist Travel alleen nog naar een Heist-toegestane stad of blijft staan wanneer de huidige stad al geschikt is. In lockstep-modus kiezen beide accounts deterministisch dezelfde routestad per halfuurslot, zonder extra server-endpoint. Bestaande Travel-module hergebruikt; geen tweede Travel-loop toegevoegd.
@@ -11622,6 +11623,10 @@ paint();
   const K_PENDING_CITY='mrb_travel_pending_city_v2';
   const K_PENDING_MODE='mrb_travel_pending_mode_v2';
   const K_PENDING_INDEX='mrb_travel_pending_index_v2';
+  const K_HEIST_AVAIL='mrb_travel_heist_available_cities_v1';
+  const K_HEIST_AVAIL_AT='mrb_travel_heist_available_at_v1';
+  const K_HEIST_PROBE='mrb_travel_heist_probe_pending_v1';
+  const HEIST_AVAIL_TTL=5*60*1000;
 
   const INFO='/information.php';
   const TRAVEL='/?module=Travel';
@@ -11659,6 +11664,42 @@ paint();
   function heistAllowedCities(){
     const hs=loadHeistCities();
     return CITIES.filter(city=>allowed[city]!==false && hs[city]!==false);
+  }
+  function cachedHeistAvailable(){
+    try{
+      const at=Math.max(0,Number(GM_Get(K_HEIST_AVAIL_AT,0))||0);
+      if(!at||Date.now()-at>HEIST_AVAIL_TTL)return [];
+      let raw=GM_Get(K_HEIST_AVAIL,'[]');
+      if(typeof raw==='string')raw=JSON.parse(raw||'[]');
+      if(!Array.isArray(raw))return [];
+      const allowedSet=new Set(heistAllowedCities());
+      return raw.filter(city=>CITIES.includes(city)&&allowedSet.has(city));
+    }catch(_){return [];}
+  }
+  function saveHeistAvailable(list){
+    const cleanList=[...new Set((list||[]).filter(city=>CITIES.includes(city)))];
+    GM_Set(K_HEIST_AVAIL,JSON.stringify(cleanList));GM_Set(K_HEIST_AVAIL_AT,Date.now());
+    return cleanList;
+  }
+  function onGroup(){return /module=GroupCrimes/i.test(String(location.href||''));}
+  function parseHeistAvailableFromGroup(){
+    const root=document.querySelector('#game_container')||document.body;
+    const t=clean(root?.innerText||root?.textContent||'');
+    const allowedSet=new Set(heistAllowedCities());
+    const explicit=t.match(/(?:You might want to try your luck in|Je kunt je geluk proberen in)\s*[:\-]?\s*([^|]+?)(?=(?:Georganiseerde Misdaad|Mega OC|Overval een zaak|$))/i);
+    if(explicit){
+      const arr=CITIES.filter(city=>allowedSet.has(city)&&new RegExp('\\b'+city.replace(/[.*+?^${}()|[\]\\]/g,'\\$&').replace(' ','\\s+')+'\\b','i').test(explicit[1]));
+      if(arr.length)return arr;
+    }
+    const blockedMatch=t.match(/(?:may not do an? heist in the following cities|mag(?:\s+je)?(?:\s+geen)?\s+heist(?:\s+doen)?\s+in(?:\s+de)?\s+volgende\s+steden)\s*[:\-]?\s*([^|]+?)(?=(?:Georganiseerde Misdaad|Mega OC|Overval een zaak|$))/i);
+    const blocked=new Set();
+    if(blockedMatch){
+      for(const city of CITIES){
+        const re=new RegExp('\\b'+city.replace(/[.*+?^${}()|[\]\\]/g,'\\$&').replace(' ','\\s+')+'\\b','i');
+        if(re.test(blockedMatch[1]))blocked.add(city);
+      }
+    }
+    return CITIES.filter(city=>allowedSet.has(city)&&!blocked.has(city));
   }
   function pendingTravel(){
     const city=clean(GM_Get(K_PENDING_CITY,''));
@@ -11759,15 +11800,14 @@ paint();
   }
 
   function heistPrepDestination(){
-    const list=heistAllowedCities();
+    const configured=heistAllowedCities();
+    const verified=cachedHeistAvailable();
+    const list=verified.length?verified:configured;
     const here=currentCity();
     if(!list.length)return {city:'',nextIndex:routeIndex,reason:'Geen stad is zowel voor Travel als Heist toegestaan'};
-    if(here && list.includes(here))return {city:'',nextIndex:routeIndex,reason:`Heist-voorbereiding: ${here} is geschikt; niet meer reizen`};
-    // In lockstep kiezen Leader en Driver onafhankelijk exact dezelfde Heiststad.
-    // Zonder lockstep kiezen we de eerste toegestane Heiststad; dit is stabiel en
-    // voorkomt rondreizen vlak voor de Heist.
+    if(here && list.includes(here))return {city:'',nextIndex:routeIndex,reason:`Heist-voorbereiding: ${here} is aantoonbaar geschikt; niet meer reizen`};
     const city=syncTravel?deterministicDestination(list):list[0];
-    return {city,nextIndex:routeIndex,reason:`Heist-voorbereiding: naar ${city}`};
+    return {city,nextIndex:routeIndex,reason:`Heist-voorbereiding: naar ${city}${verified.length?' (geverifieerd)':''}`};
   }
 
   function chooseDestination(ctx){
@@ -11865,6 +11905,12 @@ paint();
     try{if(typeof gm_isGateVisible==='function'&&gm_isGateVisible())return;}catch(_){}
     busy=true;
     try{
+      if(onGroup()&&GM_Get(K_HEIST_PROBE,false)===true){
+        const list=saveHeistAvailable(parseHeistAvailableFromGroup());
+        GM_Set(K_HEIST_PROBE,false);
+        nextCheck=Date.now()+1200;GM_Set(K_NEXT_CHECK,nextCheck);
+        loadPage(INFO);paint(`Heist-steden gecontroleerd: ${list.join(', ')||'geen geldige stad'}`);return;
+      }
       if(!onInfo()&&!onTravel()){
         loadPage(INFO);nextCheck=Date.now()+2000;GM_Set(K_NEXT_CHECK,nextCheck);paint('Mijn Account openen voor timers');return;
       }
@@ -11888,6 +11934,14 @@ paint();
       const wait=parseDuration(raw);
       if(wait>0){nextCheck=Date.now()+wait+1000;GM_Set(K_NEXT_CHECK,nextCheck);paint(`Reistimer: ${raw}`);return;}
 
+      if(ctx.mode==='prep' && !cachedHeistAvailable().length){
+        GM_Set(K_HEIST_PROBE,true);
+        loadPage('/?module=GroupCrimes');
+        nextCheck=Date.now()+1800;GM_Set(K_NEXT_CHECK,nextCheck);
+        paint('Heist-voorbereiding: beschikbare steden controleren');
+        return;
+      }
+
       const destination=chooseDestination(ctx);
       if(!destination.city){
         clearPendingTravel();nextCheck=Date.now()+5000;GM_Set(K_NEXT_CHECK,nextCheck);GM_Set(K_LAST_MODE,ctx.mode);
@@ -11899,7 +11953,7 @@ paint();
   }
 
   block.querySelector('#trRoundToggle')?.addEventListener('click',()=>{
-    enabled=!enabled;GM_Set(K_ON,enabled);nextCheck=0;GM_Set(K_NEXT_CHECK,0);GM_Set(K_LAST_MODE,'');clearPendingTravel();paint(enabled?'Travel gestart':'Travel gestopt');
+    enabled=!enabled;GM_Set(K_ON,enabled);nextCheck=0;GM_Set(K_NEXT_CHECK,0);GM_Set(K_LAST_MODE,'');GM_Set(K_HEIST_PROBE,false);clearPendingTravel();paint(enabled?'Travel gestart':'Travel gestopt');
   });
   block.querySelectorAll('[data-travel-city]').forEach(input=>input.addEventListener('change',()=>{
     allowed[input.dataset.travelCity]=!!input.checked;saveCities();routeIndex=0;GM_Set(K_INDEX,0);nextCheck=0;GM_Set(K_NEXT_CHECK,0);GM_Set(K_LAST_MODE,'');paint('Stedenlijst opgeslagen');
