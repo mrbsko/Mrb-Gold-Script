@@ -1,6 +1,6 @@
 // ==UserScript==
-// @name         MRB Gold TEST - RACE LEADER BOUNDED INSPECT
-// @version      6.0.0-test27P-race-leader-bounded-inspect
+// @name         MRB Gold Edition
+// @version      6.0.0-test27S-race-wake-owner-recovery
 // @description  MRB Gold: centrale Unified Scheduler, navigatie-owner, retry-circuitbreaker en strikte actieguards.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -18,6 +18,9 @@
 // @run-at       document-end
 // ==/UserScript==
 
+// Release 6.0.0-test27S: structurele Race wake/ownership-fix. Een verlopen opgeslagen Race-startplan wordt nu uitgevoerd i.p.v. opnieuw vooruit gepland; de Unified Dispatcher beschouwt een ontbrekende Race-wake niet langer als succes; Race exporteert daarom een echte centrale wake-functie. WAITING_DRIVER is passief en geeft de group-owner vrij. Session Manager beschouwt uitsluitend passieve Race-wachtstaten als refresh-veilig, zodat een stale Race de Smart Idle Refresh niet meer onbeperkt blokkeert. Geen extra Race-loop toegevoegd.
+// Release 6.0.0-test27R: minimale Race-responsivenessfix op de teruggerolde stabiele Race-basis. Driver startplan verkort van 25-30s naar 8-12s zodat een verse uitnodiging ook zonder Crimes/Cars snel wordt geopend. Leider herkent nu ook de Nederlandse eindtekst 'De Race is afgelopen, controleer je postbus voor de resultaten' en verlaat een afgeronde Race binnen circa 1-2s naar Mijn Account, zodat andere modules direct weer timers kunnen lezen. Geen nieuwe Race-state-machine, watchdog of extra moduleloop toegevoegd. Zichtbare scriptnaam is MRB Gold Edition.
+// Release 6.0.0-test27Q: Race-module volledig teruggezet naar de bewezen 5.8.52/5.8.12-basis in plaats van verder te patchen op 27N-27P. Hiermee verdwijnen de nieuwe Race-state/inspect/verify-lagen die Leader, Driver en post-race konden vasthouden. De structurele TEST27M Crimes/Cars jail-release fix en overige modules blijven behouden. Zichtbare menuheader opgeschoond naar 'MRB Gold Edition'.
 // Release 6.0.0-test27P: Leader partner-check is nu een strikt begrensde inspectie. Na het openen van /races.php geldt alleen een aantoonbare Start-knop/ready-status als reden om op Race te blijven; elke andere geldige niet-ready toestand (zoals Accepted zonder ingestelde auto) wordt direct WAITING_DRIVER en yieldt naar Mijn Account. De oude tekstafhankelijke fallback naar leader_raceFlow is verwijderd, zodat een onbekende/wijzigende status nooit meer de Racepagina kan vasthouden en Crimes/Cars blokkeren.
 // Release 6.0.0-test27O: Race Leider geeft direct na het versturen van de uitnodiging de atomaire LEADER_INVITE-fase vrij. De uitnodiging blijft persistent pending, maar de Leider gaat meteen naar Mijn Account en plant exact één partner-hercontrole. Hierdoor kunnen Crimes/Cars tijdens het wachten op de Driver gewoon doorlopen. Pas de korte LEADER_INSPECT en STARTING-fasen zijn atomair. Geen extra loop toegevoegd.
 // Release 6.0.0-test27N: structurele Race-state cleanup voor Leider + Driver. Eén gedeelde atomic/passive fase-definitie is nu leidend voor group ownership en preemption. Leider inspecteert /races.php kort atomair (LEADER_INSPECT) zodat Crimes/Cars de DOM niet tussen laden en Start-detectie kunnen vervangen; pas echte WAITING_DRIVER yieldt. De Race-yield watchdog mag atomaire Race-fasen niet meer naar IDLE herschrijven. Driver opent een verse Race sneller (8-12s na server-Nu i.p.v. 25-30s) en een bestaande DRIVER_READY wordt bij server-Nu begrensd op de Racepagina geverifieerd in plaats van tot 90s passief te blokkeren. Geen extra moduleloop toegevoegd; Unified Dispatcher blijft enige externe wake-owner.
@@ -1280,7 +1283,7 @@ return false;
     wrap.innerHTML = `
       <div class="gm-header">
         <div class="gm-drag-handle" title="Sleep mij">❖</div>
-        <div class="gm-title">MRB Gold Edition · UNIFIED TEST</div>
+        <div class="gm-title">MRB Gold Edition</div>
         <div class="gm-actions">
           <button id="gmCollapseAll" class="gm-icon" title="Alles minimaliseren">↧</button>
           <button id="gmExpandAll" class="gm-icon" title="Alles uitklappen">↥</button>
@@ -6205,12 +6208,6 @@ try {
   let raceCoreDetail = 'gereed';
   let raceCoreUpdatedAt = Date.now();
 
-  // TEST27N: één definitie voor actieve/atomaire Race-fasen. Dezezelfde regex
-  // stuurt group ownership, Crimes/Cars-preemption en de Race-yield watchdog.
-  // Wachtfases (WAITING_DRIVER / DRIVER_READY / DRIVER_WAIT_INVITE) zijn bewust passief.
-  const RACE_ATOMIC_PHASE_RE = /^(?:STARTING|LEADER_OPEN|LEADER_INVITE|LEADER_INSPECT|RUNNING|DRIVER_OPEN|DRIVER_ACCEPT|DRIVER_CAR|DRIVER_VERIFY|TRAVEL|CANCEL_PENDING|CANCELLING)$/;
-  const RACE_PASSIVE_PHASE_RE = /^(?:IDLE|OFF|COOLDOWN|CHECK_TIMER|WAIT_RETRY|POST_RACE_HOME|DRIVER_POST_RACE_HOME|RECOVERY_WAIT|WAITING_DRIVER|DRIVER_READY|DRIVER_READY_INFO|DRIVER_WAIT_INVITE|DRIVER_RESTART_AFTER_CANCEL)$/;
-
   function raceRegistryState(phase, detail=''){
     raceCorePhase = String(phase || 'IDLE');
     raceCoreDetail = String(detail || '');
@@ -6224,20 +6221,19 @@ try {
         role: raceRole
       });
     } catch(e) {}
-    // TEST27N: group ownership volgt exact dezelfde atomic/passive fasegrens
-    // als de centrale preemption. Geen tweede, conflicterende Race-state meer.
-    try {
-      const p=String(raceCorePhase||'').toUpperCase();
-      if(RACE_ATOMIC_PHASE_RE.test(p)) unsafeWindow.mrbGroupTransaction?.acquire?.('race',p);
-      else if(RACE_PASSIVE_PHASE_RE.test(p)) unsafeWindow.mrbGroupTransaction?.release?.('race','race '+p.toLowerCase());
-    } catch(_) {}
+
+    // TEST27S: passieve Race-fasen bezitten geen groeps-transactie. Dit voorkomt
+    // dat WAITING_DRIVER of een terugkeer naar Mijn Account de centrale dispatcher,
+    // Crimes/Cars of Session Manager onterecht blijft blokkeren.
+    if (/^(?:IDLE|CHECK_TIMER|WAITING_DRIVER|DRIVER_WAIT_INVITE|DRIVER_READY_INFO|DRIVER_POST_RACE_HOME|POST_RACE_HOME|COOLDOWN)$/i.test(raceCorePhase)) {
+      try { unsafeWindow.mrbGroupTransaction?.release?.('race', `passieve Race-fase: ${raceCorePhase}`); } catch(_) {}
+    }
   }
 
   // 5.8.40: centrale vrijgave van een afgeronde/gepauzeerde Race-actie.
   // In 5.8.38/5.8.39 werd deze helper wel aangeroepen maar nergens gedefinieerd,
   // waardoor callbacks met een ReferenceError stopten voordat Mijn Account kon openen.
   function raceReleaseAction(detail='Race-actie vrijgegeven'){
-    try { unsafeWindow.mrbGroupTransaction?.release?.('race',detail); } catch(_) {}
     raceCorePhase = 'IDLE';
     raceCoreDetail = String(detail || 'Race-actie vrijgegeven');
     raceCoreUpdatedAt = Date.now();
@@ -6250,8 +6246,8 @@ try {
     return true;
   }
 
-  // Alleen echte atomaire transactie-fasen blokkeren andere flows.
-  const RACE_ACTIVE_PHASE_RE = RACE_ATOMIC_PHASE_RE;
+  // Alleen echte transactie-fasen blokkeren Heist. Idle/cooldown/info-wacht nooit.
+  const RACE_ACTIVE_PHASE_RE = /^(?:STARTING|LEADER_OPEN|LEADER_INVITE|RUNNING|DRIVER_OPEN|DRIVER_ACCEPT|DRIVER_CAR|TRAVEL|CANCEL_PENDING|CANCELLING)$/;
   try {
     unsafeWindow.mrbRaceTransaction = Object.freeze({
       active:()=>RACE_ACTIVE_PHASE_RE.test(String(raceCorePhase||'').toUpperCase()),
@@ -6272,66 +6268,17 @@ try {
   // Na enkele bevestigde lege Race-controles synchroniseert Driver opnieuw via Mijn Account.
   let driverAcceptedWatch = false;
   let driverAcceptedMisses = 0;
-  const DRIVER_READY_STALE_MS = 90_000;
-  const DRIVER_READY_VERIFY_GAP_MS = 8_000;
-  let driverAcceptedSince = 0;
-  let driverReadyLastVerifyAt = 0;
-  function markDriverAccepted(){
-    driverAcceptedWatch = true;
-    if (!driverAcceptedSince) driverAcceptedSince = Date.now();
-    driverAcceptedMisses = 0;
-  }
-  function clearDriverAcceptedWatch(reason=''){
-    driverAcceptedWatch = false;
-    driverAcceptedSince = 0;
-    driverAcceptedMisses = 0;
-    driverReadyLastVerifyAt = 0;
-    clearDriverReadyExit();
-    if(reason){ try { unsafeWindow.mrbUnifiedDiagnostics?.add?.('RACE_DRIVER_READY_CLEAR',{reason,role:raceRole}); } catch(_) {} }
-  }
-  function driverAcceptedStale(){
-    return !!driverAcceptedWatch && driverAcceptedSince > 0 && (Date.now() - driverAcceptedSince) >= DRIVER_READY_STALE_MS;
-  }
-  function recoverStaleDriverReady(reason='oude DRIVER_READY verlopen'){
-    if (raceRole !== 'slave' || !driverAcceptedStale()) return false;
-    const ageMs = Date.now() - driverAcceptedSince;
-    clearRacePlan();
-    clearDriverAcceptedWatch(reason);
-    raceReleaseAction(reason);
-    raceRegistryState('CHECK_TIMER', reason);
-    try { unsafeWindow.mrbUnifiedDiagnostics?.add?.('RACE_DRIVER_READY_STALE_RECOVER',{reason,ageMs,role:raceRole}); } catch(_) {}
-    try { unsafeWindow.mrbFlightRecorder?.add?.('RACE_DRIVER_READY_STALE_RECOVER',{reason,ageMs}); } catch(_) {}
-    return true;
-  }
-  function planDriverReadyVerification(reason='server-Race staat Nu terwijl Driver-ready nog actief is'){
-    if (raceRole !== 'slave' || !driverAcceptedWatch) return false;
-    const now=Date.now();
-    const left=Math.max(0, DRIVER_READY_VERIFY_GAP_MS-(now-driverReadyLastVerifyAt));
-    if(left>0){
-      raceRegistryState('DRIVER_READY', `${reason} · verificatie over ${Math.ceil(left/1000)}s`);
-      saveRacePlan({type:'info',at:now+left,createdAt:now,role:raceRole});
-      armStoredRacePlan();
-      return true;
-    }
-    driverReadyLastVerifyAt=now;
-    clearRacePlan();
-    raceRegistryState('DRIVER_VERIFY', reason);
-    saveRacePlan({type:'start',at:now+randomDelay(1200,2500),createdAt:now,role:raceRole,verifyReady:true});
-    armStoredRacePlan();
-    try { unsafeWindow.mrbUnifiedDiagnostics?.add?.('RACE_DRIVER_READY_VERIFY',{reason,ageMs:now-driverAcceptedSince}); } catch(_) {}
-    return true;
-  }
   // 5.8.50: onafhankelijke Driver-exit. Na een bevestigde/ingestuurde auto mag de
   // Driver niet afhankelijk blijven van de gedeelde Race loopTimer. Die timer kan door
   // een andere Race-callback worden vervangen. Deze aparte timer keert daarom altijd
   // terug naar Mijn Account zolang de Driver nog op een Race-pagina staat.
   let driverReadyExitTimer = null;
   function clearDriverReadyExit(){
-    if (driverReadyExitTimer){ mrbClearTimeout(driverReadyExitTimer); driverReadyExitTimer = null; }
+    if (driverReadyExitTimer){ clearTimeout(driverReadyExitTimer); driverReadyExitTimer = null; }
   }
   function driverReadyHardExit(reason='Driver-race afgerond; terug naar Mijn Account'){
     clearDriverReadyExit();
-    driverReadyExitTimer = mrbSetTimeout(()=>{
+    driverReadyExitTimer = setTimeout(()=>{
       driverReadyExitTimer = null;
       if(!scriptAan || raceRole!=='slave' || isLoggedOut()) return;
       if (/information\.php/i.test(location.href)) {
@@ -6344,7 +6291,7 @@ try {
       clearRacePlan();
       raceReleaseAction(reason);
       guiLoad('/information.php');
-      mrbSetTimeout(()=>{
+      setTimeout(()=>{
         if(!scriptAan || raceRole!=='slave' || isLoggedOut()) return;
         if (/information\.php/i.test(location.href)) checkAvailability(true);
       }, randomDelay(2500,4500));
@@ -6352,12 +6299,12 @@ try {
   }
 
   const next = (fn, ms)=>{
-    if(loopTimer) mrbClearTimeout(loopTimer);
-    loopTimer = mrbSetTimeout(fn, Math.max(0, ms || 0));
+    if(loopTimer) clearTimeout(loopTimer);
+    loopTimer = setTimeout(fn, Math.max(0, ms || 0));
   };
   const clearAll = ()=>{
-    if(loopTimer) mrbClearTimeout(loopTimer);
-    if(failsafeTimer) mrbClearTimeout(failsafeTimer);
+    if(loopTimer) clearTimeout(loopTimer);
+    if(failsafeTimer) clearTimeout(failsafeTimer);
     clearDriverReadyExit();
   };
 
@@ -6387,52 +6334,10 @@ try {
 
   const $jq = ()=> (unsafeWindow.$ || unsafeWindow.jQuery || null);
 
-  // TEST10: Race mag maar EEN terugkeer naar Mijn Account tegelijk open hebben.
-  // Een mislukte/trage SPA-load kan daardoor niet meer door goInfo, PriorityWake
-  // en checkAvailability tegelijk opnieuw worden aangevraagd.
-  let raceInfoNavPendingUntil = 0;
-  let raceInfoRecoveryUntil = 0;
-  function raceInfoArrived(){
-    if (!/information\.php/i.test(location.href)) return false;
-    raceInfoNavPendingUntil=0;
-    raceInfoRecoveryUntil=0;
-    return true;
-  }
-  function raceInfoNavSuppressed(){
-    raceInfoArrived();
-    const now=Date.now();
-    return now < raceInfoNavPendingUntil || now < raceInfoRecoveryUntil;
-  }
-  function armRaceInfoSingleFlight(){
-    const now=Date.now();
-    if (raceInfoArrived()) return false;
-    if (now < raceInfoRecoveryUntil || now < raceInfoNavPendingUntil) return false;
-    raceInfoNavPendingUntil=now+10000;
-    try { unsafeWindow.mrbFlightRecorder?.add?.('RACE_INFO_NAV_START',{pendingUntil:raceInfoNavPendingUntil}); } catch(_) {}
-    mrbSetTimeout(()=>{
-      if (raceInfoArrived()) return;
-      if (Date.now() < raceInfoNavPendingUntil) return;
-      raceInfoNavPendingUntil=0;
-      raceInfoRecoveryUntil=Date.now()+45000;
-      raceRegistryState('RECOVERY_WAIT','Mijn Account niet bevestigd; Race 45s in herstelrust');
-      try { unsafeWindow.mrbFlightRecorder?.add?.('RACE_INFO_RECOVERY_WAIT',{until:raceInfoRecoveryUntil}); } catch(_) {}
-      try { unsafeWindow.mrbUnifiedDiagnostics?.add?.('RACE_INFO_RECOVERY_WAIT',{until:raceInfoRecoveryUntil,role:raceRole}); } catch(_) {}
-    },10100);
-    return true;
-  }
 
   const guiLoad = (path)=>{
-    if (unsafeWindow.mrbSessionSafeMode?.active?.()) return false;
-    const toInfo=/information\.php/i.test(String(path||''));
-    if (toInfo){
-      if (raceInfoArrived()) return true;
-      if (!armRaceInfoSingleFlight()) {
-        try { unsafeWindow.mrbFlightRecorder?.add?.('RACE_INFO_NAV_SUPPRESS',{pendingUntil:raceInfoNavPendingUntil,recoveryUntil:raceInfoRecoveryUntil}); } catch(_) {}
-        return true;
-      }
-    }
     if (unsafeWindow.mrbNavigate?.(path,{source:'race'})) return true;
-    try { return unsafeWindow.mrbNavigate?.(path,{source:'race'}) ?? false; }
+    try { unsafeWindow.omerta.GUI.container.loadPage(path); return true; }
     catch {
       // Gebruik voor Race altijd de normale pagina-URL; nooit een half geladen
       // fragment in de bestaande game-container laten staan.
@@ -6444,7 +6349,6 @@ try {
 
   function randomDelay(min,max){ return Math.floor(Math.random()*(max-min+1))+min; }
   function actionDelay(){ return (typeof unsafeWindow.mrbVarDelayMs === 'function') ? unsafeWindow.mrbVarDelayMs() : randomDelay(2000,5000); }
-
 
   function parseTimer(txt){
     const value = String(txt || '').replace(/\s+/g,' ').trim();
@@ -6526,18 +6430,8 @@ try {
       if (latest.type === 'start'){
         clearRacePlan();
         if (isLoggedOut()) return pauseForGate('Geplande racestart tijdens gate');
-        // Unified Scheduler heeft de runnable-volgorde al bepaald vóór deze
-        // geplande Race-start. De module start hier alleen zijn eigen transactie.
         if (raceRole === 'leader') leader_startRace();
         else slave_startRace();
-        return;
-      }
-
-      if (latest.type === 'partner'){
-        clearRacePlan();
-        if (isLoggedOut()) return pauseForGate('Geplande Driver-hercontrole tijdens gate');
-        if (raceRole !== 'leader') return;
-        leader_checkPartner(Number(latest.retries || 0));
         return;
       }
 
@@ -6556,8 +6450,9 @@ try {
   }
 
   function planRaceStart(){
-    // Leider blijft eerst. Driver opent daarna snel genoeg om een bestaande invite
-    // te accepteren zonder de oude 25-30s kunstmatige vertraging.
+    // Leider krijgt altijd ruim de tijd om de uitnodiging eerst aan te maken.
+    // De oude vensters overlapten (Leider 4-10s, Driver 10-15s), waardoor de
+    // Driver soms tegelijk of zelfs eerder op de racepagina aankwam.
     const delay = (raceRole === 'leader')
       ? randomDelay(3000,7000)
       : randomDelay(8000,12000);
@@ -6569,18 +6464,6 @@ try {
       role: raceRole
     });
 
-    armStoredRacePlan();
-  }
-
-  function planLeaderPartnerRecheck(waitMs, retries=0){
-    raceRegistryState('WAITING_DRIVER', 'wacht op Driver · hercontrole gepland');
-    saveRacePlan({
-      type: 'partner',
-      at: Date.now() + Math.max(0, waitMs),
-      createdAt: Date.now(),
-      role: 'leader',
-      retries: Number(retries || 0)
-    });
     armStoredRacePlan();
   }
 
@@ -6785,7 +6668,7 @@ try {
         return;
       }
       tries++;
-      mrbSetTimeout(poll, 250);
+      setTimeout(poll, 250);
     })();
   }
 
@@ -7080,8 +6963,8 @@ try {
     clearRacePlan();
     guiLoad('/races.php');
 
-    if(failsafeTimer) mrbClearTimeout(failsafeTimer);
-    failsafeTimer = mrbSetTimeout(()=>{
+    if(failsafeTimer) clearTimeout(failsafeTimer);
+    failsafeTimer = setTimeout(()=>{
       if(!scriptAan) return;
       goInfo();
     }, 60000);
@@ -7129,15 +7012,8 @@ try {
         racePrefillInviteName();
         raceSelectFirstAvailableCar();
         raceSafeClick(inviteBtn);
-        if(failsafeTimer) mrbClearTimeout(failsafeTimer);
-
-        // TEST27O: na het versturen is Race niet meer atomair. De Leider wacht
-        // op de Driver, dus geef de racepagina direct vrij voor Crimes/Cars en
-        // bewaar slechts één persistente partner-hercontrole. De volgende
-        // atomaire fase begint pas bij LEADER_INSPECT.
-        raceRegistryState('WAITING_DRIVER', 'uitnodiging verstuurd · wacht passief op Driver');
-        unsafeWindow.mrbNavigate?.('/information.php',{source:'race-invite-wait',yield:true,force:true});
-        planLeaderPartnerRecheck(randomDelay(10000,15000), 0);
+        if(failsafeTimer) clearTimeout(failsafeTimer);
+        next(()=> leader_checkPartner(0), randomDelay(10000,15000));
       }, actionDelay());
       return;
     }
@@ -7162,19 +7038,8 @@ try {
     if (isLoggedOut()) return pauseForGate('leader_checkPartner: uitgelogd');
     if(retries>=3){ goInfo(); return; }
 
-    // TEST27N: alleen het korte openen+lezen van de Racepagina is atomair.
-    // Daardoor kan Crimes/Cars de DOM niet tussen pagina-load en Start-detectie
-    // vervangen. Blijkt de Driver nog niet klaar, dan gaat Race direct terug naar
-    // de passieve WAITING_DRIVER-state en yieldt weer.
-    raceRegistryState('LEADER_INSPECT', 'Racepagina atomair controleren op Driver-ready');
     guiLoad('/races.php');
     next(()=>{
-      if (!/races\.php/i.test(location.href)) {
-        raceRegistryState('WAITING_DRIVER','Race-inspect kon pagina niet claimen; later opnieuw');
-        planLeaderPartnerRecheck(randomDelay(4000,7000), retries);
-        return;
-      }
-
       const body = document.body.innerText || '';
 
       if (raceRecoverStartedTravelBlock('Leider-wacht')) return;
@@ -7187,16 +7052,12 @@ try {
         return;
       }
 
-      // TEST27P: dit is een begrensde inspectie, geen tweede Race-flow.
-      // Als er GEEN startknop/ready-status is, is de Driver simpelweg nog niet klaar.
-      // Dat geldt ook voor layouts/statussen die anders heten (bijv. "Accepted"
-      // zonder dat de Driver al een auto heeft ingezet). Blijf daarom nooit op
-      // /races.php hangen op basis van tekstherkenning: altijd terug naar Mijn Account
-      // en exact één partner-hercontrole bewaren.
-      raceRegistryState('WAITING_DRIVER', 'Driver nog niet startklaar · Mijn Account vrijgegeven');
-      unsafeWindow.mrbNavigate?.('/information.php',{source:'race-partner-wait',yield:true,force:true});
-      planLeaderPartnerRecheck(randomDelay(10000,15000), retries+1);
-      return;
+      if (/invited|accepted|uitgenodigd|geaccepteerd|waiting|wachten/i.test(body)){
+        next(()=> leader_checkPartner(retries+1), randomDelay(10000,15000));
+        return;
+      }
+
+      next(leader_raceFlow, randomDelay(2000,4000));
     }, randomDelay(1000,2000));
   }
 
@@ -7213,7 +7074,7 @@ try {
 
     if (btn){
       raceSafeClick(btn);
-      if(failsafeTimer) mrbClearTimeout(failsafeTimer);
+      if(failsafeTimer) clearTimeout(failsafeTimer);
       next(leader_checkDone, randomDelay(5000,8000));
     } else {
       next(()=>{
@@ -7229,13 +7090,15 @@ try {
     if (isLoggedOut()) return pauseForGate('leader_checkDone: uitgelogd');
     const $ = $jq();
     const body = document.body.innerText || '';
-    const done = $ ? $('#game_container:contains("The Race has ended, check your inbox for results"), #game_container:contains("check your inbox for results"), #game_container:contains("The race has ended")').length>0 : false;
+    const done = $ ? $('#game_container:contains("The Race has ended, check your inbox for results"), #game_container:contains("check your inbox for results"), #game_container:contains("The race has ended"), #game_container:contains("De Race is afgelopen")').length>0 : false;
+    const doneText = /(?:The\s+Race\s+has\s+ended|check\s+your\s+inbox\s+for\s+results|De\s+Race\s+is\s+afgelopen|controleer\s+je\s+postbus\s+voor\s+de\s+resultaten)/i.test(body);
 
     if (raceRecoverStartedTravelBlock('Race-resultaatcontrole')) return;
 
-    if (done || body.includes("The race has ended") || body.includes("check your inbox for results")){
+    if (done || doneText){
       GM_Set("lastRaceTime", Math.floor(Date.now()/1000));
-      next(goInfo, randomDelay(5000,10000));
+      raceRegistryState('POST_RACE_HOME', 'Race afgerond; direct terug naar Mijn Account');
+      next(goInfo, randomDelay(800,1600));
     } else if (isTired(body)){
       next(goInfo, randomDelay(5000,10000));
     } else if (attempt >= 2){
@@ -7276,7 +7139,9 @@ try {
   }
 
   function raceDriverRecoverCancelledInvite(reason='oude Race-uitnodiging verdwenen'){
-    clearDriverAcceptedWatch('oude Race-uitnodiging verdwenen');
+    clearDriverReadySince();
+    driverAcceptedWatch = false;
+    driverAcceptedMisses = 0;
     clearRacePlan();
     raceReleaseAction();
     raceRegistryState('DRIVER_RESTART_AFTER_CANCEL', reason);
@@ -7325,7 +7190,8 @@ try {
     }
 
     if (alreadyAcceptedMsg(body)){
-      markDriverAccepted();
+      driverAcceptedWatch = true;
+      driverAcceptedMisses = 0;
 
       // Driver heeft zijn auto bevestigd. Vanaf dit moment niet op de oude
       // Race-pagina blijven pollen: Mijn Account is de bron van waarheid voor
@@ -7351,7 +7217,8 @@ try {
 
     const accept = $('a').filter(function(){ return /(Accepteer|Accept)/i.test($(this).text()); });
     if (accept.length){
-      markDriverAccepted();
+      driverAcceptedWatch = true;
+      driverAcceptedMisses = 0;
       accept[0].click();
       next(slave_selectCar, actionDelay());
       return;
@@ -7433,7 +7300,8 @@ try {
             try{ form.submit(); submitted = true; }catch{}
           }
 
-          markDriverAccepted();
+          driverAcceptedWatch = true;
+          driverAcceptedMisses = 0;
           // Zet direct ook de onafhankelijke hard-exit klaar. Zodra de bevestigingspagina
           // zichtbaar is, kan geen andere Race-callback deze terugkeer meer blokkeren.
           driverReadyHardExit('Auto bevestigd; Driver verlaat Race altijd naar Mijn Account');
@@ -7457,11 +7325,6 @@ try {
       if (armStoredRacePlan()) return;
 
       if (fromInfoSync){
-        const now=Date.now();
-        if (now < raceInfoRecoveryUntil){
-          next(()=>checkAvailability(true), Math.max(3000,raceInfoRecoveryUntil-now+250));
-          return;
-        }
         guiLoad('/information.php');
         next(()=>checkAvailability(true), randomDelay(3000,6000));
         return;
@@ -7504,27 +7367,21 @@ try {
     const status = readRaceStatusByLabel();
 
     if (/^(Nu|NOW|Now)$/i.test(status)){
-      // Crimes/Cars-prioriteit wordt centraal door de Unified Dispatcher bepaald.
-      // Race plant hier alleen de eigen start nadat de centrale wake is ontvangen.
-
       const existingPlan = loadRacePlan();
-      if (existingPlan && existingPlan.type === 'partner'){
-        armStoredRacePlan();
-        return;
-      }
-      if (existingPlan && existingPlan.type === 'start' && existingPlan.at > Date.now() + 250){
-        armStoredRacePlan();
-        return;
-      }
-
-      // TEST27N: server-Nu mag een oude DRIVER_READY niet meer 90s blind blokkeren.
-      // De Driver verifieert begrensd op /races.php of dezelfde ready-status nog
-      // bestaat, of dat er inmiddels een verse uitnodiging/lege pagina zichtbaar is.
-      if (raceRole === 'slave' && driverAcceptedWatch){
-        if (!recoverStaleDriverReady('Race bleef DRIVER_READY terwijl timer opnieuw Nu is')){
-          planDriverReadyVerification('Race-timer is Nu; bestaande Driver-ready verifiëren');
+      if (existingPlan && existingPlan.type === 'start'){
+        if (existingPlan.at > Date.now() + 250){
+          armStoredRacePlan();
           return;
         }
+
+        // TEST27S root cause: een startplan waarvan de deadline al verstreken was,
+        // werd voorheen opnieuw 8-12s/3-7s vooruit gepland. Als de opgeslagen
+        // callback ooit gemist was kon dit eindeloos blijven herhalen. Een verlopen
+        // plan is nu juist het bewijs dat de actie DIRECT uitgevoerd moet worden.
+        clearRacePlan();
+        if (raceRole === 'leader') leader_startRace();
+        else slave_startRace();
+        return;
       }
 
       planRaceStart();
@@ -7533,9 +7390,6 @@ try {
 
     const wait = parseTimer(status);
     if (wait > 0){
-      if (driverAcceptedWatch){
-        clearDriverAcceptedWatch('Race-servercooldown bevestigd');
-      }
       planInfoRecheck(wait + randomDelay(5000,15000));
       return;
     }
@@ -7544,71 +7398,47 @@ try {
     planInfoRecheck(10000);
   }
 
-  // TEST8: echte centrale Race-job bridge. In TEST7 werd mrbRacePriorityWake
-  // wel aangeroepen door de Unified Scheduler, maar nergens door Race geexporteerd.
-  // Daardoor kon vooral de Driver op een oud info-plan blijven slapen terwijl Race al Nu was.
-  unsafeWindow.mrbRacePriorityWake = function(source='unified'){
-    if (!scriptAan) {
-      try { unsafeWindow.mrbUnifiedDiagnostics?.add?.('RACE_WAKE_REJECT',{source,reason:'race-uit',role:raceRole}); } catch(_) {}
-      return false;
-    }
-    if (isLoggedOut()) {
-      try { unsafeWindow.mrbUnifiedDiagnostics?.add?.('RACE_WAKE_REJECT',{source,reason:'gate',role:raceRole}); } catch(_) {}
-      return false;
-    }
+  // TEST27S: echte centrale wake-entry voor de Unified Dispatcher.
+  // De dispatcher mag Race pas als geaccepteerd beschouwen wanneer deze functie
+  // daadwerkelijk bestaat en een geldige wake heeft ingepland/uitgevoerd.
+  function unifiedRaceWake(source='unified-dispatcher'){
+    if(!scriptAan || isLoggedOut()) return false;
 
-    // TEST10: als een Race->Mijn Account single-flight al loopt of in recovery
-    // staat, accepteert de bridge geen nieuwe navigatiejob.
-    if (!/information\.php/i.test(location.href) && raceInfoNavSuppressed()) {
-      try { unsafeWindow.mrbUnifiedDiagnostics?.add?.('RACE_WAKE_DEFER',{source,role:raceRole,phase:raceCorePhase,reason:'info-single-flight'}); } catch(_) {}
-      return false;
-    }
-
-    // Een reeds lopende Leider-invite-wachtfase heeft precies een eigen
-    // hercontrole-owner. Een centrale wake mag die niet veranderen in een verse start.
-    const oldPlan = loadRacePlan();
-    if (oldPlan?.type === 'partner'){
-      armStoredRacePlan();
-      try { unsafeWindow.mrbUnifiedDiagnostics?.add?.('RACE_WAKE_DEFER',{source,role:raceRole,phase:raceCorePhase,reason:'partner-single-flight'}); } catch(_) {}
-      return false;
-    }
-    // TEST27N: Driver-ready is geen reden meer om een centrale Race-wake af te
-    // wijzen. checkAvailability(true) beslist op basis van de verse server-timer
-    // en plant zo nodig een begrensde Driver-ready-verificatie op /races.php.
-    if (raceRole === 'slave' && driverAcceptedWatch){
-      recoverStaleDriverReady('centrale Race-wake trof stale DRIVER_READY');
-    }
-
-    // Een centrale wake is leidend boven een oud cooldown/info-plan. De verse
-    // Mijn Account-timer wordt direct opnieuw gelezen door checkAvailability(true).
-    if (oldPlan?.type === 'info') clearRacePlan();
-
-    try {
-      unsafeWindow.mrbUnifiedDiagnostics?.add?.('RACE_WAKE_ACCEPT',{
-        source, role:raceRole, phase:raceCorePhase, oldPlan:oldPlan?.type||'',
-        oldPlanAt:Number(oldPlan?.at||0), onInfo:/information\.php/i.test(location.href)
-      });
-    } catch(_) {}
-
-    if (/information\.php/i.test(location.href)) {
-      checkAvailability(true);
+    // Als we al op Mijn Account staan, lees de servertimer onmiddellijk opnieuw.
+    if (/information\.php/i.test(location.href)){
+      next(()=>checkAvailability(true), 100);
       return true;
     }
 
-    // Alleen vanuit een niet-atomaire fase mag de centrale scheduler Race naar
-    // Mijn Account trekken. Een echte Race-actie blijft eerst atomair afronden.
-    if (RACE_ACTIVE_PHASE_RE.test(String(raceCorePhase||'').toUpperCase())) {
-      try { unsafeWindow.mrbUnifiedDiagnostics?.add?.('RACE_WAKE_DEFER',{source,role:raceRole,phase:raceCorePhase}); } catch(_) {}
-      return false;
-    }
+    // Een echte actieve Driver/Leider-handeling niet onderbreken; die bezit zijn
+    // eigen callback. Passieve/stale pagina's keren via Mijn Account terug naar de
+    // serverwaarheid en worden daarna opnieuw ingepland.
+    const activePhase=String(raceCorePhase||'').toUpperCase();
+    if (/^(?:STARTING|LEADER_OPEN|LEADER_INVITE|RUNNING|DRIVER_OPEN|DRIVER_ACCEPT|DRIVER_CAR|TRAVEL|CANCEL_PENDING|CANCELLING)$/.test(activePhase)) return true;
 
+    clearRacePlan();
+    raceReleaseAction(`centrale Race-wake: ${source}`);
     guiLoad('/information.php');
-    next(()=>{
-      if (!scriptAan || isLoggedOut()) return;
-      checkAvailability(true);
-    }, randomDelay(1200,2200));
+    next(()=>checkAvailability(true), randomDelay(700,1300));
     return true;
-  };
+  }
+  try { unsafeWindow.mrbRacePriorityWake = unifiedRaceWake; } catch(_) {}
+
+  // Zelfstandige lokale Race-watcher.
+  let raceLocalWatchBusy = false;
+  mrbSetInterval(()=>{
+    if (!scriptAan || raceLocalWatchBusy) return;
+    if (isLoggedOut()) return;
+    if (!/information\.php/i.test(location.href)) return;
+
+    const existing = loadRacePlan();
+    if (existing && Number(existing.at) > Date.now() + 250) return;
+
+    raceLocalWatchBusy = true;
+    try { checkAvailability(true); }
+    catch(e) { try { console.warn('[Race local watcher]', e); } catch(_) {} }
+    finally { setTimeout(()=>{ raceLocalWatchBusy = false; }, 1500); }
+  }, 2000);
 
   // ------------------ UI handlers ------------------
   block.querySelectorAll('input[name="raceRole"]').forEach(r=>{
@@ -7679,7 +7509,7 @@ try {
     // Bij een harde refresh zijn Omerta GUI/jQuery soms nog een fractie te vroeg.
     // Hervat daarom vertraagd en laat een tijdelijke initfout nooit de opgeslagen
     // Race-schakelaar uitschakelen.
-    mrbSetTimeout(()=>{
+    setTimeout(()=>{
       if (!scriptAan) return;
       try {
         if (isLoggedOut()){
@@ -7695,7 +7525,7 @@ try {
           const st = block?.querySelector('#raceStatus');
           if (st) st.innerHTML = '<span class="warn">Actief - hervatten...</span>';
         } catch (_) {}
-        mrbSetTimeout(()=>{
+        setTimeout(()=>{
           if (!scriptAan || isLoggedOut()) return;
           try { bootstrapRaceIdle(); }
           catch (retryError) { try { console.warn('[Race refresh retry]', retryError); } catch (_) {} }
@@ -7781,11 +7611,6 @@ try {
 // =====================================================================
 // =====================================================================
 // =====================================================================
-// =====================================================================
-// =====================================================================
-// SHARED JAIL BUYOUT CONTROLLER - TEST19B
-// Eén gedeelde jail-afhandeling voor modules buiten de Crimes/Cars-runner.
-// De bestaande Crimes/Cars instelling cc_buyout blijft de enige schakelaar.
 // =====================================================================
 ;(function MRBSharedJailBuyoutController(){
   if (unsafeWindow.mrbJailBuyoutControl) return;
@@ -10834,9 +10659,14 @@ paint();
       try {
         if(mayWake('race') && unsafeWindow.mrbGroupTransaction?.acquire?.('race','WAKE_PENDING')){
           diag('RACE_WAKE',{timer:raceRaw},'race-wake',1200);
-          const accepted=unsafeWindow.mrbRacePriorityWake?.('unified-test20b');
-          if(accepted===false) unsafeWindow.mrbGroupTransaction?.release?.('race','race wake geweigerd');
-          else return;
+          const wake=unsafeWindow.mrbRacePriorityWake;
+          if(typeof wake!=='function'){
+            unsafeWindow.mrbGroupTransaction?.release?.('race','Race wake ontbreekt');
+          } else {
+            const accepted=wake('unified-dispatcher');
+            if(accepted!==true) unsafeWindow.mrbGroupTransaction?.release?.('race','Race wake geweigerd');
+            else return;
+          }
         }
       } catch(_) {}
     }
@@ -12201,6 +12031,10 @@ paint();
         // Oude, niet meer bijgewerkte registry-state mag een refresh niet eeuwig blokkeren.
         if(updated && now-updated>5*60_000) return false;
         const state=String(item.state||item.phase||'').trim().toUpperCase();
+        // TEST27S: passief Race-wachten is geen actieve transactie en mag een
+        // Smart Idle Refresh niet onbeperkt blokkeren. Echte start/accept/car/
+        // running-fasen blijven gewoon beschermd door de normale busy-check.
+        if(String(item.id||'').toLowerCase()==='race' && /^(?:WAITING_DRIVER|DRIVER_WAIT_INVITE|DRIVER_READY_INFO|DRIVER_POST_RACE_HOME|POST_RACE_HOME)$/.test(state)) return false;
         return !SAFE_MODULE_STATES.has(state);
       });
     }catch(e){return false;}
@@ -12273,7 +12107,7 @@ paint();
     block.querySelector('#rfToggle').textContent=active?'Stop':'Start';
     const gated=gateVisible();
     block.querySelector('#rfStatus').innerHTML=active
-      ? (gated ? '<span class="bad">⏸ Sessie/gate</span>' : '<span class="ok">✅ Actief — Unified</span>')
+      ? (gated ? '<span class="bad">⏸ Sessie/gate</span>' : '<span class="ok">✅ Actief</span>')
       : '<span class="bad">⛔</span>';
     const info=block.querySelector('#rfInfo');
     if(info){
