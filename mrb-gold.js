@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MRB Gold Edition
-// @version      6.0.0-test28D-travel-event-logger-cleanup
+// @version      6.0.0-test28E-freeze-diag
 // @description  MRB Gold: centrale Unified Scheduler, navigatie-owner, retry-circuitbreaker en strikte actieguards.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -18,6 +18,7 @@
 // @run-at       document-end
 // ==/UserScript==
 
+// Release 6.0.0-test28E: handmatige Freeze diagnose toegevoegd. Geen continue logger en geen wijziging aan Race/Heist/Travel/refresh-beslissingen. Typ mrbFreezeDiag() in de console tijdens een grijs scherm; mrbFreezeDiag(true) toont daarnaast de gevonden overlay-elementen.
 // Release 6.0.0-test28D: Travel-diagnose opgeschoond zonder functionele Travel-logica te wijzigen. De seconde-per-seconde tick-logging is verwijderd; alleen relevante state changes en beslismomenten blijven gelogd. Geen extra navigatie, clicks, timers of module-state toegevoegd.
 // Release 6.0.0-test28C: Captcha-release structureel hersteld. De oude detectie zag ook een opgeloste maar nog in de DOM aanwezige reCAPTCHA/g-reCAPTCHA als actief en verlengde daardoor de 60s pauze eindeloos. Nieuwe centrale detectie vereist een echt zichtbare/actieve challenge en negeert widgets met een ingevulde g-recaptcha-response/h-captcha-response. Dezelfde detectie wordt gebruikt door de captcha-pauzebrug en de centrale navigatiepoort, zodat MRB na oplossen weer vrij kan navigeren. Geen module-state reset.
 // Release 6.0.0-test28B: Travel-Heistbuffer leest voortaan uitsluitend de echte Wachttijden-rij uit #game_container met exact label 'Volgende heist/Next heist'. Geen globale tr-fallback meer die een andere/verkorte waarde kon oppakken. De volledige timertekst na het label wordt samengevoegd en gelogd, zodat 2H 3M 22S ook echt als ruim 2 uur wordt geïnterpreteerd. GroupCrimes-probe blijft alleen toegestaan wanneer de correct gelezen Heisttimer binnen de ingestelde voorbereidingsbuffer valt.
@@ -12232,6 +12233,85 @@ paint();
     const signature=list.map(el=>`${el.tagName}#${el.id}.${String(el.className)}`).sort().join('|');
     return {orphan:true,signature};
   }
+  // TEST28E: on-demand diagnose; doet niets totdat de gebruiker hem in de console aanroept.
+  unsafeWindow.mrbFreezeDiag=function(verbose=false){
+    const candidates=overlayCandidates();
+    const orphan=orphanOverlayState();
+    let group={};
+    let race={};
+    let manual={};
+    try{group=unsafeWindow.mrbGroupTransaction?.state?.()||{};}catch(_){}
+    try{race=unsafeWindow.mrbRaceTransaction?.state?.()||{};}catch(_){}
+    try{manual=unsafeWindow.mrbManualControl?.state?.()||{};}catch(_){}
+    const describe=el=>{
+      let cs={};
+      let r={};
+      try{cs=getComputedStyle(el);r=el.getBoundingClientRect();}catch(_){}
+      return {
+        tag:el?.tagName||'',
+        id:el?.id||'',
+        className:String(el?.className||''),
+        display:String(cs?.display||''),
+        visibility:String(cs?.visibility||''),
+        opacity:String(cs?.opacity||''),
+        zIndex:String(cs?.zIndex||''),
+        position:String(cs?.position||''),
+        width:Math.round(Number(r?.width)||0),
+        height:Math.round(Number(r?.height)||0)
+      };
+    };
+    const result={
+      time:new Date().toISOString(),
+      href:String(location.href||''),
+      overlayFound:candidates.length>0,
+      overlayCount:candidates.length,
+      overlaySignature:orphan.signature||'',
+      orphanOverlay:!!orphan.orphan,
+      realPopup:!!realPopupVisible(),
+      captcha:!!captchaVisible(),
+      gate:!!gateVisible(),
+      manualPause:manual,
+      groupOwner:String(group?.owner||''),
+      groupPhase:String(group?.phase||''),
+      racePhase:String(race?.phase||race?.state||''),
+      plannerBusy:!!plannerBusy(),
+      moduleFlowBusy:!!moduleFlowBusy(),
+      inputBusy:!!inputBusy(),
+      documentHidden:!!document.hidden,
+      idleForMs:Math.max(0,Date.now()-lastActivity),
+      safeToRefresh:!!safeToRefresh(),
+      forcedRefreshAllowed:!!safeForForcedPeriodicRefresh(),
+      overlays:candidates.map(describe)
+    };
+    try{
+      console.group('[MRB Freeze Diagnose]');
+      console.table({
+        overlayFound:result.overlayFound,
+        overlayCount:result.overlayCount,
+        orphanOverlay:result.orphanOverlay,
+        realPopup:result.realPopup,
+        captcha:result.captcha,
+        gate:result.gate,
+        groupOwner:result.groupOwner,
+        groupPhase:result.groupPhase,
+        racePhase:result.racePhase,
+        plannerBusy:result.plannerBusy,
+        moduleFlowBusy:result.moduleFlowBusy,
+        inputBusy:result.inputBusy,
+        documentHidden:result.documentHidden,
+        safeToRefresh:result.safeToRefresh,
+        forcedRefreshAllowed:result.forcedRefreshAllowed
+      });
+      if(verbose){
+        console.log('Volledige diagnose:',result);
+        console.log('Overlay DOM-elementen:',candidates);
+      }else{
+        console.log('Tip: mrbFreezeDiag(true) toont ook de overlay DOM-elementen.');
+      }
+      console.groupEnd();
+    }catch(_){}
+    return result;
+  };
   function markActivity(){ lastActivity=Date.now(); }
   ['click','keydown','pointerdown','touchstart'].forEach(type=>document.addEventListener(type,e=>{
     if(e.target?.closest?.('#mrbGoldMenu')) return;
