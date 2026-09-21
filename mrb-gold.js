@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MRB Gold Edition
-// @version      6.0.0-test28A-captcha-pause-travel-logger
+// @version      6.0.0-test28B-travel-timer-source-fix
 // @description  MRB Gold: centrale Unified Scheduler, navigatie-owner, retry-circuitbreaker en strikte actieguards.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -18,6 +18,7 @@
 // @run-at       document-end
 // ==/UserScript==
 
+// Release 6.0.0-test28B: Travel-Heistbuffer leest voortaan uitsluitend de echte Wachttijden-rij uit #game_container met exact label 'Volgende heist/Next heist'. Geen globale tr-fallback meer die een andere/verkorte waarde kon oppakken. De volledige timertekst na het label wordt samengevoegd en gelogd, zodat 2H 3M 22S ook echt als ruim 2 uur wordt geïnterpreteerd. GroupCrimes-probe blijft alleen toegestaan wanneer de correct gelezen Heisttimer binnen de ingestelde voorbereidingsbuffer valt.
 // Release 6.0.0-test28A: Captcha gebruikt de bestaande 60s handmatige pauze-engine; zolang een echte captcha zichtbaar blijft wordt de pauze automatisch verlengd zonder module-state te resetten. Travel-lockstep/Leider+Driver halfuurstad volledig verwijderd. Travel krijgt een compacte diagnostische logger voor pagina, reistimer, Heist-context, bestemming, pending handoff, group-blocker, navigatie, city-control en bevestiging.
 // Release 6.0.0-test27Z: Travel-herstel en legacy-cleanup. Travel gebruikt nu DOM-first pagina-detectie zodat een stale SPA-URL na een eerdere reis de tweede/volgende reis niet meer kan vasthouden. Travel wacht bovendien zolang een echte Race/Heist/Spot group-transaction actief is. Freeze Recovery mag na 15s bevestigde verweesde overlay een veilige force-refresh doen zonder door een stale planner/module-busy state te worden tegengehouden. Oude MasterControl_GAS polling, Opt-out Master UI en Master-only shop/travel hooks verwijderd; raceSet/ocSet blijven als compatibele externe hooks bestaan.
 // Release 6.0.0-test27Y: Travel Mijn Account-herkenning structureel hersteld. Alleen Travel onInfo() is aangepast: URL route (pathname/search/hash/href) plus zichtbare Mijn Account-DOM/timerlabels zijn nu geldig, terwijl een zichtbare Travelmodule expliciet geen Mijn Account is. Geen Heist-, bestemmings-, scheduler-, interval- of navigatielogica gewijzigd.
@@ -11629,15 +11630,23 @@ paint();
     return ms;
   }
   function readTimer(labelRx){
-    for(const row of document.querySelectorAll('#game_container tr, tr')){
-      const cells=[...row.querySelectorAll('th,td')];
+    const root=document.querySelector('#game_container');
+    if(!root)return '';
+    for(const row of root.querySelectorAll('tr')){
+      const cells=[...row.querySelectorAll(':scope > th,:scope > td')];
       if(cells.length<2)continue;
-      if(labelRx.test(clean(cells[0].textContent)))return clean(cells[cells.length-1].textContent);
+      const label=clean(cells[0]?.textContent||'').replace(/[:?]+$/,'');
+      labelRx.lastIndex=0;
+      if(!labelRx.test(label))continue;
+      // Sommige Omerta-layouts kunnen een timer over meerdere cellen/spans verdelen.
+      // Neem daarom alle cellen NA het label samen, niet alleen de laatste cel.
+      const value=clean(cells.slice(1).map(c=>c.textContent||'').join(' '));
+      if(value)return value;
     }
     return '';
   }
   function readTravelTimer(){return readTimer(/^(?:reis|travel|volgende reis|next travel|volgende vlucht|next flight)$/i);}
-  function readHeistTimer(){return readTimer(/volgende\s+heist|next\s+heist/i);}
+  function readHeistTimer(){return readTimer(/^(?:volgende\s+heist|next\s+heist)$/i);}
   function currentCity(){
     const root=document.querySelector('#game_container')||document.body;
     for(const row of root.querySelectorAll('tr')){
@@ -11657,8 +11666,10 @@ paint();
     const raw=readHeistTimer();
     if(!raw)return {mode:'hold',blocked:true,wait:NaN,raw:'',reason:'Heisttimer nog niet zichtbaar; Travel wacht veilig'};
     const wait=parseDuration(raw);
+    const bufferMs=heistBuffer*60000;
+    travelLog('heist-context',{raw,waitMs:wait,bufferMin:heistBuffer,insideBuffer:Number.isFinite(wait)?wait<=bufferMs:false});
     if(wait===0)return {mode:'prep',blocked:false,wait:0,raw,reason:'Heist is Nu · positioneren/blijven in Heiststad'};
-    if(wait<=heistBuffer*60000)return {mode:'prep',blocked:false,wait,raw,reason:`Heist over ${raw} · Heist-voorbereiding actief`};
+    if(wait<=bufferMs)return {mode:'prep',blocked:false,wait,raw,reason:`Heist over ${raw} · Heist-voorbereiding actief`};
     return {mode:'rank',blocked:false,wait,raw,reason:`Heist over ${raw} · rank-Travel toegestaan`};
   }
 
