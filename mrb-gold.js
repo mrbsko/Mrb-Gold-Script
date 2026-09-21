@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MRB Gold Edition
-// @version      6.0.0-test27U-travel-server-ready-handoff
+// @version      6.0.0-test27V-travel-timer-label-fix
 // @description  MRB Gold: centrale Unified Scheduler, navigatie-owner, retry-circuitbreaker en strikte actieguards.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -18,6 +18,7 @@
 // @run-at       document-end
 // ==/UserScript==
 
+// Release 6.0.0-test27V: Travel las de verkeerde timerlabels. Mijn Account toont in NL 'Volgende vlucht', terwijl de Travel-module alleen 'Reis/Travel/Volgende reis' accepteerde. Daardoor bleef readTravelTimer() leeg en werd de reis nooit uitgevoerd, ook al stond de serverwaarde zichtbaar op Nu. De timerherkenning gebruikt nu expliciet Volgende vlucht/Next flight naast de oude labels. Geen nieuwe loop of scheduler toegevoegd.
 // Release 6.0.0-test27U: Travel-wake structureel hersteld. Een live Mijn Account-serverwaarde Volgende vlucht=Nu doorbreekt nu een eventueel stale lokale nextCheck-deadline. Zodra een reis werkelijk uitvoerbaar is wordt de gekozen stad als pending handoff opgeslagen; de bestaande Travel-tick verifieert vervolgens dat de Travelpagina echt zichtbaar is voordat de stad wordt aangeklikt. mrbNavigate-return=true wordt dus niet meer als bewijs gezien dat de SPA daadwerkelijk is overgegaan. Geen extra loop toegevoegd; bestaande 1s Travel-task blijft de enige runtime-aansturing.
 // Release 6.0.0-test27T: Travel is uitgebreid met een 30-minuten Heist-voorbereidingsmodus en optionele Leader/Driver lockstep-bestemming. Buiten de buffer blijft rank-Travel actief; binnen 30 minuten voor Heist reist Travel alleen nog naar een Heist-toegestane stad of blijft staan wanneer de huidige stad al geschikt is. In lockstep-modus kiezen beide accounts deterministisch dezelfde routestad per halfuurslot, zonder extra server-endpoint. Bestaande Travel-module hergebruikt; geen tweede Travel-loop toegevoegd.
 // Release 6.0.0-test27S: structurele Race wake/ownership-fix. Een verlopen opgeslagen Race-startplan wordt nu uitgevoerd i.p.v. opnieuw vooruit gepland; de Unified Dispatcher beschouwt een ontbrekende Race-wake niet langer als succes; Race exporteert daarom een echte centrale wake-functie. WAITING_DRIVER is passief en geeft de group-owner vrij. Session Manager beschouwt uitsluitend passieve Race-wachtstaten als refresh-veilig, zodat een stale Race de Smart Idle Refresh niet meer onbeperkt blokkeert. Geen extra Race-loop toegevoegd.
@@ -11702,7 +11703,7 @@ paint();
     }
     return '';
   }
-  function readTravelTimer(){return readTimer(/^(?:reis|travel|volgende reis|next travel)$/i);}
+  function readTravelTimer(){return readTimer(/^(?:reis|travel|volgende reis|next travel|volgende vlucht|next flight)$/i);}
   function readHeistTimer(){return readTimer(/volgende\s+heist|next\s+heist/i);}
   function currentCity(){
     const root=document.querySelector('#game_container')||document.body;
