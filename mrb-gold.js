@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MRB Gold Edition
-// @version      6.0.0-test28H-server-backoff-freeze-diag-fix
+// @version      6.0.0-test28G-cloudflare-safe-mode-fix
 // @description  MRB Gold: centrale Unified Scheduler, navigatie-owner, retry-circuitbreaker en strikte actieguards.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -18,7 +18,6 @@
 // @run-at       document-end
 // ==/UserScript==
 
-// Release 6.0.0-test28H: serverfout-herstel structureel verbreed. Niet alleen HTTP 403 maar ook 418/429 en tijdelijke 502/503/504-responses activeren nu de bestaande globale server-backoff, zodat Gold geen nieuwe automatische navigatie/background-sync blijft uitvoeren terwijl BaraFranca of de beveiligingslaag verzoeken afwijst. Freeze diagnose gebruikt niet langer een niet-bestaande lokale captchaVisible() en leest de centrale captcha-bridge veilig uit. Geen Race/Heist/Travel-actielogica gewijzigd.
 // Release 6.0.0-test28G: Cloudflare/security-verification heeft nu één centrale eigenaar: Logged-Out Safe Mode. Zodra een Cloudflare challenge zichtbaar is wordt alle MRB-uitvoering bevroren zonder Race/Heist/Spot-state te resetten; geen navigatie, refresh of modulecallback loopt door. Na terugkeer van een stabiele game-shell hervat Gold automatisch. De gewone captcha-pauzebrug behandelt alleen reCAPTCHA/hCaptcha in de gamepagina en bemoeit zich niet meer met Cloudflare.
 // Release 6.0.0-test28F: Heist-uitbetaling volgorde hersteld. Na een afgeronde Heist controleert de Leider op Groepsmisdaden nu EERST of de winst-transfer zichtbaar is en pas daarna of de nieuwe Heist-cooldown actief is. Voorheen kon de cooldown direct na afronding de flow hard stoppen en de Leider naar Mijn Account sturen voordat transferLink() kon klikken. Geen wijziging aan Driver-, Travel-, Race- of captcha-logica.
 // Release 6.0.0-test28E: handmatige Freeze diagnose toegevoegd. Geen continue logger en geen wijziging aan Race/Heist/Travel/refresh-beslissingen. Typ mrbFreezeDiag() in de console tijdens een grijs scherm; mrbFreezeDiag(true) toont daarnaast de gevonden overlay-elementen.
@@ -892,18 +891,8 @@
       return until;
     }
     function serverBackoffActive(){ return Date.now() < serverBackoffUntil; }
-    function serverBackoffForStatus(status, url=''){
-      const s=Number(status)||0;
-      if(![403,418,429,502,503,504].includes(s)) return false;
-      // 418/429 duiden hier op een afwijzing/rate-limit achtige situatie: langer rust.
-      // 502/503/504 zijn meestal tijdelijk; daarvoor volstaat een kortere backoff.
-      const ms = (s===418 || s===429) ? 180000 : (s===403 ? 120000 : 60000);
-      tripServerBackoff(`HTTP ${s} ${String(url||'').slice(0,120)}`,ms);
-      return true;
-    }
     unsafeWindow.mrbServerBackoff = Object.freeze({
       trip:tripServerBackoff,
-      tripStatus:serverBackoffForStatus,
       active:serverBackoffActive,
       state:()=>({active:serverBackoffActive(),until:serverBackoffUntil,remainingMs:Math.max(0,serverBackoffUntil-Date.now()),reason:serverBackoffReason}),
       clear:()=>{serverBackoffUntil=0;serverBackoffReason='';try{sessionStorage.removeItem('mrb_server_backoff_until_test10');sessionStorage.removeItem('mrb_server_backoff_reason_test10');}catch(_){} return true;}
@@ -946,7 +935,7 @@
         const jq=unsafeWindow.jQuery||unsafeWindow.$;
         if(!jq?.fn?.jquery) return false;
         jq(document).ajaxError((_e,xhr,settings)=>{
-          serverBackoffForStatus(Number(xhr?.status), `AJAX ${String(settings?.url||'').slice(0,120)}`);
+          if(Number(xhr?.status)===403) tripServerBackoff(`HTTP 403 AJAX ${String(settings?.url||'').slice(0,120)}`,120000);
         });
         ajaxWatchInstalled=true;
         return true;
@@ -9248,7 +9237,9 @@ paint();
         headers:{'X-Requested-With':'XMLHttpRequest'}
       });
       if (!response.ok) {
-        try { unsafeWindow.mrbServerBackoff?.tripStatus?.(response.status,'background /information.php'); } catch(_) {}
+        if (response.status === 403) {
+          try { unsafeWindow.mrbServerBackoff?.trip?.('HTTP 403 background /information.php',120000); } catch(_) {}
+        }
         throw new Error(`HTTP ${response.status}`);
       }
       const html = await response.text();
@@ -12298,7 +12289,7 @@ paint();
       overlaySignature:orphan.signature||'',
       orphanOverlay:!!orphan.orphan,
       realPopup:!!realPopupVisible(),
-      captcha:(()=>{try{return !!unsafeWindow.mrbCaptchaPauseBridge?.active?.();}catch(_){return false;}})(),
+      captcha:!!captchaVisible(),
       gate:!!gateVisible(),
       manualPause:manual,
       groupOwner:String(group?.owner||''),
@@ -12311,7 +12302,6 @@ paint();
       idleForMs:Math.max(0,Date.now()-lastActivity),
       safeToRefresh:!!safeToRefresh(),
       forcedRefreshAllowed:!!safeForForcedPeriodicRefresh(),
-      serverBackoff:(()=>{try{return unsafeWindow.mrbServerBackoff?.state?.()||{};}catch(_){return {};}})(),
       overlays:candidates.map(describe)
     };
     try{
@@ -12331,9 +12321,7 @@ paint();
         inputBusy:result.inputBusy,
         documentHidden:result.documentHidden,
         safeToRefresh:result.safeToRefresh,
-        forcedRefreshAllowed:result.forcedRefreshAllowed,
-        serverBackoffActive:!!result.serverBackoff?.active,
-        serverBackoffReason:String(result.serverBackoff?.reason||'')
+        forcedRefreshAllowed:result.forcedRefreshAllowed
       });
       if(verbose){
         console.log('Volledige diagnose:',result);
