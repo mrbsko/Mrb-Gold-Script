@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MRB Gold Edition
-// @version      6.0.0-test28I-runtime-diag
+// @version      6.0.0-test28J-race-driver-travel-lock-travel-log-cleanup
 // @description  MRB Gold: centrale Unified Scheduler, navigatie-owner, retry-circuitbreaker en strikte actieguards.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -18,6 +18,7 @@
 // @run-at       document-end
 // ==/UserScript==
 
+// Release 6.0.0-test28J: Race Driver-travel krijgt een korte expliciete atomaire travel-lock zodat Crimes/Cars de Driver niet midden in de reeds gestarte reis naar Mijn Account kan trekken. De lock vervalt automatisch na 20s of direct na bevestigde reis/terugkeer, zodat Crimes/Cars daarna weer hoogste prioriteit houdt. Travel-diagnose is state-change based gemaakt: identieke timer/heist/destination-events worden per eventtype onderdrukt en timerwaarden worden per 30s-bucket gelogd. Geen wijziging aan bestemmingskeuze, Heistbuffer of Race uitnodigingslogica.
 // Release 6.0.0-test28I: on-demand runtime diagnose toegevoegd zonder moduleflow te wijzigen. Typ mrbRuntimeDiag() tijdens traag/vast gedrag om scheduler, actieve timers, navigation gate, server-backoff, Session Safe Mode, handmatige pauze, Crimes/Cars, Race/Heist/Spot ownership, Travel pending en module registry in één snapshot te zien. mrbRuntimeDiag(true) toont extra detail. Geen extra loop, interval, navigatie of actie toegevoegd.
 // Release 6.0.0-test28H: serverfout-herstel structureel verbreed. Niet alleen HTTP 403 maar ook 418/429 en tijdelijke 502/503/504-responses activeren nu de bestaande globale server-backoff, zodat Gold geen nieuwe automatische navigatie/background-sync blijft uitvoeren terwijl BaraFranca of de beveiligingslaag verzoeken afwijst. Freeze diagnose gebruikt niet langer een niet-bestaande lokale captchaVisible() en leest de centrale captcha-bridge veilig uit. Geen Race/Heist/Travel-actielogica gewijzigd.
 // Release 6.0.0-test28G: Cloudflare/security-verification heeft nu één centrale eigenaar: Logged-Out Safe Mode. Zodra een Cloudflare challenge zichtbaar is wordt alle MRB-uitvoering bevroren zonder Race/Heist/Spot-state te resetten; geen navigatie, refresh of modulecallback loopt door. Na terugkeer van een stabiele game-shell hervat Gold automatisch. De gewone captcha-pauzebrug behandelt alleen reCAPTCHA/hCaptcha in de gamepagina en bemoeit zich niet meer met Cloudflare.
@@ -6130,6 +6131,18 @@ try {
   let raceCorePhase = 'IDLE';
   let raceCoreDetail = 'gereed';
   let raceCoreUpdatedAt = Date.now();
+  let driverTravelLockUntil = 0;
+  let driverTravelLockCity = '';
+  const DRIVER_TRAVEL_LOCK_MS = 20000;
+  function setDriverTravelLock(city=''){
+    driverTravelLockCity=String(city||'');
+    driverTravelLockUntil=Date.now()+DRIVER_TRAVEL_LOCK_MS;
+  }
+  function clearDriverTravelLock(){
+    driverTravelLockUntil=0;
+    driverTravelLockCity='';
+  }
+  function driverTravelLockActive(){ return Date.now()<driverTravelLockUntil; }
 
   function raceRegistryState(phase, detail=''){
     raceCorePhase = String(phase || 'IDLE');
@@ -6157,6 +6170,7 @@ try {
   // In 5.8.38/5.8.39 werd deze helper wel aangeroepen maar nergens gedefinieerd,
   // waardoor callbacks met een ReferenceError stopten voordat Mijn Account kon openen.
   function raceReleaseAction(detail='Race-actie vrijgegeven'){
+    clearDriverTravelLock();
     raceCorePhase = 'IDLE';
     raceCoreDetail = String(detail || 'Race-actie vrijgegeven');
     raceCoreUpdatedAt = Date.now();
@@ -6173,9 +6187,10 @@ try {
   const RACE_ACTIVE_PHASE_RE = /^(?:STARTING|LEADER_OPEN|LEADER_INVITE|RUNNING|DRIVER_OPEN|DRIVER_ACCEPT|DRIVER_CAR|TRAVEL|CANCEL_PENDING|CANCELLING)$/;
   try {
     unsafeWindow.mrbRaceTransaction = Object.freeze({
-      active:()=>RACE_ACTIVE_PHASE_RE.test(String(raceCorePhase||'').toUpperCase()),
+      active:()=>RACE_ACTIVE_PHASE_RE.test(String(raceCorePhase||'').toUpperCase()) || driverTravelLockActive(),
       phase:()=>String(raceCorePhase||'IDLE'),
-      release:()=>raceReleaseAction('extern vrijgegeven')
+      driverTravelLock:()=>({active:driverTravelLockActive(),city:driverTravelLockCity,until:driverTravelLockUntil}),
+      release:()=>{ clearDriverTravelLock(); return raceReleaseAction('extern vrijgegeven'); }
     });
   } catch(e) {}
 
@@ -6534,8 +6549,10 @@ try {
 
   function raceAutoTravelToCityName(cityName){
     raceRegistryState('TRAVEL', 'naar racestad reizen');
+    setDriverTravelLock(cityName);
     const code = raceCityNameToCode(cityName);
     if (!code){
+      clearDriverTravelLock();
       console.warn('[Race] Auto-Travel: stad niet herkend:', cityName);
       return;
     }
@@ -6584,6 +6601,7 @@ try {
         next(()=>{
           if(!scriptAan) return;
           if (isLoggedOut()) return pauseForGate('Auto-Travel klaar: uitgelogd bij terugkeer');
+          clearDriverTravelLock();
           clearRacePlan();
           guiLoad('/information.php');
           next(()=>checkAvailability(true), randomDelay(2000,4000));
@@ -10392,6 +10410,11 @@ paint();
     return true;
   }
   function atomicFlowBlocksPreempt(){
+    // TEST28J: een reeds gestarte Driver-reis mag niet door CC-preempt worden onderbroken.
+    try {
+      const lock=unsafeWindow.mrbRaceTransaction?.driverTravelLock?.();
+      if(lock?.active) return `race-driver-travel:${lock.city||'city'}`;
+    } catch(_) {}
     // Race: alleen echte atomaire transactiefasen blokkeren. WAITING_DRIVER/DRIVER_READY
     // zijn in TEST6 expliciet yield-fasen en geven de pagina vrij.
     try { if(unsafeWindow.mrbRaceTransaction?.active?.()===true) return 'race-atomic'; } catch(_) {}
@@ -11561,13 +11584,23 @@ paint();
   const K_LOG='mrb_travel_diag_log_v1';
   const MAX_LOG=40;
   let lastLogSig='';
+  const lastEventSig=new Map();
   let lastRuntimeStateSig='';
   function travelLogs(){
     try{const raw=GM_Get(K_LOG,[]);return Array.isArray(raw)?raw:[];}catch(_){return [];}
   }
+  function travelEventSignature(event,data={}){
+    const d={...data};
+    if(event==='timer' && Number.isFinite(Number(d.waitMs))) d.waitBucket=Math.floor(Number(d.waitMs)/30000);
+    if(event==='timer'){ delete d.waitMs; delete d.raw; delete d.heistReason; }
+    if(event==='heist-context' && Number.isFinite(Number(d.waitMs))) d.waitBucket=Math.floor(Number(d.waitMs)/30000);
+    if(event==='heist-context'){ delete d.waitMs; delete d.raw; }
+    return event+'|'+JSON.stringify(d);
+  }
   function travelLog(event,data={}){
-    const sig=event+'|'+JSON.stringify(data);
-    if(sig===lastLogSig)return;
+    const sig=travelEventSignature(event,data);
+    if(lastEventSig.get(event)===sig)return;
+    lastEventSig.set(event,sig);
     lastLogSig=sig;
     const list=travelLogs();
     list.push({t:Date.now(),event,...data});
@@ -11968,7 +12001,7 @@ paint();
     heistBuffer=Math.max(0,Math.min(180,Number(event.target.value)||0));event.target.value=heistBuffer;GM_Set(K_HEIST_BUFFER,heistBuffer);nextCheck=0;GM_Set(K_NEXT_CHECK,0);GM_Set(K_LAST_MODE,'');paint('Heistbuffer opgeslagen');
   });
 
-  block.querySelector('#trDiagClear')?.addEventListener('click',()=>{GM_Set(K_LOG,[]);lastLogSig='';renderTravelLog();});
+  block.querySelector('#trDiagClear')?.addEventListener('click',()=>{GM_Set(K_LOG,[]);lastLogSig='';lastEventSig.clear();renderTravelLog();});
 
   unsafeWindow.mrbTravelControl=Object.freeze({
     state:()=>({enabled,busy,nextCheck,heistBuffer,pending:pendingTravel(),allowed:allowedCities(),heistAllowed:heistAllowedCities(),logs:travelLogs()}),
@@ -15460,7 +15493,8 @@ paint();
     const group=apiState(unsafeWindow.mrbGroupTransaction)||{};
     const race={
       active:safe(()=>!!unsafeWindow.mrbRaceTransaction?.active?.(),false),
-      phase:safe(()=>String(unsafeWindow.mrbRaceTransaction?.phase?.()||''),'')
+      phase:safe(()=>String(unsafeWindow.mrbRaceTransaction?.phase?.()||''),''),
+      driverTravelLock:safe(()=>unsafeWindow.mrbRaceTransaction?.driverTravelLock?.()||{}, {})
     };
     const modules=safe(()=>unsafeWindow.mrbModuleStateRegistry?.list?.()||[],[]);
     const flight=apiState(unsafeWindow.mrbFlightRecorder)||{};
