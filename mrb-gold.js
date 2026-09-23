@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MRB Gold Edition
-// @version      6.0.0-test27Z-travel-recovery-cleanup
+// @version      6.0.0-test27Z-diag-readonly
 // @description  MRB Gold: centrale Unified Scheduler, navigatie-owner, retry-circuitbreaker en strikte actieguards.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -17,6 +17,10 @@
 // @connect      script.googleusercontent.com
 // @run-at       document-end
 // ==/UserScript==
+
+
+// Release 6.0.0-test27Z-DIAG: uitsluitend read-only console-diagnose toegevoegd.
+// mrbDiag() leest bestaande runtime-API's uit en wijzigt geen module-state, timers, navigatie of opslag.
 
 // Release 6.0.0-test27Z: Travel-herstel en legacy-cleanup. Travel gebruikt nu DOM-first pagina-detectie zodat een stale SPA-URL na een eerdere reis de tweede/volgende reis niet meer kan vasthouden. Travel wacht bovendien zolang een echte Race/Heist/Spot group-transaction actief is. Freeze Recovery mag na 15s bevestigde verweesde overlay een veilige force-refresh doen zonder door een stale planner/module-busy state te worden tegengehouden. Oude MasterControl_GAS polling, Opt-out Master UI en Master-only shop/travel hooks verwijderd; raceSet/ocSet blijven als compatibele externe hooks bestaan.
 // Release 6.0.0-test27Y: Travel Mijn Account-herkenning structureel hersteld. Alleen Travel onInfo() is aangepast: URL route (pathname/search/hash/href) plus zichtbare Mijn Account-DOM/timerlabels zijn nu geldig, terwijl een zichtbare Travelmodule expliciet geen Mijn Account is. Geen Heist-, bestemmings-, scheduler-, interval- of navigatielogica gewijzigd.
@@ -15174,4 +15178,88 @@ paint();
     getState:()=>({enabled:enabled(),role:role(),phase,status:String(get(K_STATUS,'')||''),driverProbeAfter:driverProbeAfter()})
   });
   if(enabled()) next(goInfo,600);
+})();
+
+
+// =====================================================================
+// TEST27Z READ-ONLY RUNTIME DIAG
+// Gebruik in console: mrbDiag()   of   mrbDiag(true)
+// Deze code leest alleen bestaande publieke runtime-API's uit.
+// =====================================================================
+;(function MRBTest27ZReadOnlyDiag(){
+  'use strict';
+  function safe(fn, fallback=null){ try { return fn(); } catch(e) { return fallback; } }
+  function clone(v){
+    try { return JSON.parse(JSON.stringify(v)); } catch(e) { return v; }
+  }
+  function compactModules(){
+    const list=safe(()=>unsafeWindow.mrbModuleStateRegistry?.list?.(),[])||[];
+    return Array.isArray(list) ? list.map(x=>({
+      id:x?.id||x?.name||x?.module||'',
+      enabled:!!(x?.enabled||x?.running||x?.requestedEnabled),
+      state:x?.state||x?.phase||'',
+      detail:x?.detail||'',
+      lastUpdate:x?.lastUpdate||x?.updatedAt||0
+    })) : [];
+  }
+  function snapshot(verbose=false){
+    const now=Date.now();
+    const nav=safe(()=>unsafeWindow.mrbNavigationGate?.state?.(),{})||{};
+    const raw={
+      ts:new Date(now).toISOString(),
+      href:String(location.href),
+      title:String(document.title||''),
+      gameContainer:!!document.querySelector('#game_container'),
+      group:safe(()=>unsafeWindow.mrbGroupTransaction?.state?.(),null),
+      race:{
+        transactionActive:safe(()=>unsafeWindow.mrbRaceTransaction?.active?.(),null),
+        phase:safe(()=>unsafeWindow.mrbRaceTransaction?.phase?.(),null)
+      },
+      heist:safe(()=>unsafeWindow.mrbHeistCoreControl?.getState?.(),null),
+      spot:safe(()=>unsafeWindow.mrbSpotRaidCoreV3?.getState?.(),null),
+      travel:safe(()=>unsafeWindow.mrbTravelControl?.state?.(),null),
+      navigation:{
+        gate:clone(nav),
+        current:clone(safe(()=>unsafeWindow.mrbNavigationState,{}))
+      },
+      manualPause:safe(()=>unsafeWindow.mrbManualControl?.state?.(),null),
+      serverBackoff:safe(()=>unsafeWindow.mrbServerBackoff?.state?.(),null),
+      sessionSafe:safe(()=>unsafeWindow.mrbSessionSafeMode?.state?.(),null),
+      dispatcher:safe(()=>unsafeWindow.mrbUnifiedRunnableDispatcher?.state?.(),null),
+      scheduler:safe(()=>unsafeWindow.mrbUnifiedScheduler?.state?.(),null),
+      recorder:safe(()=>unsafeWindow.mrbFlightRecorder?.state?.(),null),
+      modules:compactModules()
+    };
+    if(verbose){
+      raw.unifiedLast=safe(()=>unsafeWindow.mrbUnifiedDiagnostics?.last?.(),null);
+      raw.travelDom={
+        visibleTravel:!!document.querySelector('#game_container [id*="travel" i], #game_container [class*="travel" i]'),
+        visibleGroupCrimes:!!document.querySelector('#game_container [id*="group" i][id*="crime" i], #game_container [class*="group" i][class*="crime" i]')
+      };
+    }
+    return raw;
+  }
+  unsafeWindow.mrbDiag=function(verbose=false){
+    const s=snapshot(verbose===true);
+    try {
+      console.group('[MRB 27Z DIAG] '+new Date().toLocaleTimeString());
+      console.log('URL',s.href);
+      console.log('Group owner',s.group);
+      console.log('Race',s.race);
+      console.log('Heist',s.heist);
+      console.log('Spot',s.spot);
+      console.log('Travel',s.travel);
+      console.log('Navigation',s.navigation);
+      console.log('Manual pause',s.manualPause);
+      console.log('Server backoff',s.serverBackoff);
+      console.log('Session Safe Mode',s.sessionSafe);
+      console.log('Dispatcher',s.dispatcher);
+      console.table(s.modules||[]);
+      if(verbose===true) console.log('Verbose snapshot',s);
+      console.groupEnd();
+    } catch(e) { try{console.log('[MRB 27Z DIAG]',s);}catch(_){} }
+    return s;
+  };
+  unsafeWindow.mrbDiagSnapshot=()=>snapshot(true);
+  try { console.info('[MRB 27Z DIAG] Read-only diagnose geladen. Gebruik mrbDiag() of mrbDiag(true).'); } catch(e) {}
 })();
