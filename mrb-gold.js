@@ -18,6 +18,7 @@
 // @run-at       document-end
 // ==/UserScript==
 
+// Release 6.0.0-test27Z-CCSPOT-BACKOFFFIX: CC-bevestiging aangescherpt: DOM-knopverdwijnen/module-overgang gelden niet langer als bewijs van een uitgevoerde actie; bij ontbreken van echt resultaat/cooldown volgt serververificatie via Mijn Account. Globale HTTP-403 backoff negeert bekende passieve/diagnostische requests (ntp.php, ajax_debug.php, Statistics/global_stats, Services.Account) maar blijft actief voor echte game/module-requests. mrbLogoutDiag wordt ook via window/globalThis gepubliceerd. Overige moduleflows ongewijzigd.
 // Release 6.0.0-test27Z-CCSPOT-LOGOUTDIAG: read-only persistente logout-diagnose toegevoegd bovenop de bestaande Flight Recorder. Geen navigatie, clicks, timers of module-state gewijzigd. Gebruik mrbLogoutDiag() na onverwachte logout; mrbLogoutDiag(true) toont ruimer eventdetail.
 
 // Release 6.0.0-test27Z-CC-SPOTFIX: gerichte Spot root-cause fix bovenop de bewezen CC-fix. Een live Mijn Account Spot=Nu wist nu direct een stale COOLDOWN-state voordat de Leader-cooldownguard draait. Driver-probes mogen geen group-owner claimen en openen vanaf Groepsmisdaden alleen nog een Spot-entry met expliciete uitnodiging/acceptatie-indicatie; een generieke Spot-link wordt niet meer geopend. Geen wijzigingen aan Race/Heist/Travel/captcha/Session Manager.
@@ -857,8 +858,19 @@
       return true;
     }
 
-    // Vang 403's van Omerta/jQuery SPA-loads af. De background fetch meldt 403
-    // hieronder apart via dezelfde backoff-API.
+    // Vang 403's van Omerta/jQuery SPA-loads af. Niet iedere passieve pagina-request
+    // mag heel Gold twee minuten bevriezen. Bekende klok/debug/statistiek/account-polls
+    // worden alleen gelogd; echte game/module-requests behouden de bestaande backoff.
+    function ignorableAjax403(rawUrl=''){
+      const u=String(rawUrl||'').toLowerCase();
+      if(!u) return false;
+      if(/(?:^|\/)ntp\.php(?:[?#]|$)/i.test(u)) return true;
+      if(/(?:^|\/)ajax_debug\.php(?:[?#]|$)/i.test(u)) return true;
+      if(/[?&]module=statistics(?:&|$)/i.test(u)) return true;
+      if(/[?&]action=global_stats(?:&|$)/i.test(u) && /module=statistics/i.test(u)) return true;
+      if(/[?&]module=services\.account(?:&|$)/i.test(u)) return true;
+      return false;
+    }
     let ajaxWatchInstalled=false;
     const installAjax403Watch=()=>{
       if(ajaxWatchInstalled) return true;
@@ -866,7 +878,14 @@
         const jq=unsafeWindow.jQuery||unsafeWindow.$;
         if(!jq?.fn?.jquery) return false;
         jq(document).ajaxError((_e,xhr,settings)=>{
-          if(Number(xhr?.status)===403) tripServerBackoff(`HTTP 403 AJAX ${String(settings?.url||'').slice(0,120)}`,120000);
+          if(Number(xhr?.status)!==403) return;
+          const url=String(settings?.url||'');
+          if(ignorableAjax403(url)){
+            try { console.debug('[MRB Unified TEST10] 403 genegeerd voor globale backoff', url); } catch(_) {}
+            try { unsafeWindow.mrbFlightRecorder?.add?.('SERVER_403_IGNORED',{url:url.slice(0,160)}); } catch(_) {}
+            return;
+          }
+          tripServerBackoff(`HTTP 403 AJAX ${url.slice(0,120)}`,120000);
         });
         ajaxWatchInstalled=true;
         return true;
@@ -9894,8 +9913,8 @@ paint();
 
   function ccOutcomeEvidence(kind, chosen){
     try{
-      if (!onExactCrimesCarsPage(kind)) return 'module-overgang';
-      if (!chosen?.isConnected || !isVisible(chosen)) return 'actieknop-verdwenen';
+      // Alleen inhoudelijk resultaatbewijs telt. Een verdwenen knop of SPA-routewissel
+      // kan ook een rerender/onderbroken load zijn en is daarom GEEN execute-bevestiging.
       if (jailNowDetected() || jailFreeDetected()) return 'jail-resultaat';
       if (attemptFailedDetected()) return 'mislukt-resultaat';
       if (successDetected() || (kind==='cars' && carSuccessDetected())) return 'succes-resultaat';
@@ -15378,7 +15397,12 @@ paint();
     return result;
   }
 
-  unsafeWindow.mrbLogoutDiag=report;
-  unsafeWindow.mrbLogoutDiagClear=()=>safe(()=>unsafeWindow.mrbFlightRecorder?.clearIncident?.(),false);
+  const clearDiag=()=>safe(()=>unsafeWindow.mrbFlightRecorder?.clearIncident?.(),false);
+  try { unsafeWindow.mrbLogoutDiag=report; unsafeWindow.mrbLogoutDiagClear=clearDiag; } catch(_) {}
+  // Extra publicatiepaden voor loaders/userscript-isolatie zodat de gewone DevTools-console
+  // de diagnosefunctie ook kan vinden.
+  try { window.mrbLogoutDiag=report; window.mrbLogoutDiagClear=clearDiag; } catch(_) {}
+  try { globalThis.mrbLogoutDiag=report; globalThis.mrbLogoutDiagClear=clearDiag; } catch(_) {}
+  try { if(unsafeWindow?.window){ unsafeWindow.window.mrbLogoutDiag=report; unsafeWindow.window.mrbLogoutDiagClear=clearDiag; } } catch(_) {}
 })();
 
