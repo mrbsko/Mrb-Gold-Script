@@ -18,6 +18,8 @@
 // @run-at       document-end
 // ==/UserScript==
 
+// Release 6.0.0-test27Z-CCSPOT-LOGOUTDIAG: read-only persistente logout-diagnose toegevoegd bovenop de bestaande Flight Recorder. Geen navigatie, clicks, timers of module-state gewijzigd. Gebruik mrbLogoutDiag() na onverwachte logout; mrbLogoutDiag(true) toont ruimer eventdetail.
+
 // Release 6.0.0-test27Z-CC-SPOTFIX: gerichte Spot root-cause fix bovenop de bewezen CC-fix. Een live Mijn Account Spot=Nu wist nu direct een stale COOLDOWN-state voordat de Leader-cooldownguard draait. Driver-probes mogen geen group-owner claimen en openen vanaf Groepsmisdaden alleen nog een Spot-entry met expliciete uitnodiging/acceptatie-indicatie; een generieke Spot-link wordt niet meer geopend. Geen wijzigingen aan Race/Heist/Travel/captcha/Session Manager.
 // Release 6.0.0-test27Z-CCFIX: gerichte Crimes/Cars root-cause fix bovenop exact TEST27Z. Travel/captcha/Race/Heist/Session Manager ongewijzigd. Crimes kiest altijd de laatste optie; Cars behoudt hoogste %. Een CC-klik wordt pas als echte poging geregistreerd na zichtbare outcome of serverbevestigde toekomstige cooldown. Bij een niet-bevestigde klik keert CC eenmalig terug naar Mijn Account: server=toekomst bevestigt de poging, server=Nu laat dezelfde actie veilig opnieuw starten. Extra read-only CC-navigatielogging toegevoegd.
 // Release 6.0.0-test27Z: Travel-herstel en legacy-cleanup. Travel gebruikt nu DOM-first pagina-detectie zodat een stale SPA-URL na een eerdere reis de tweede/volgende reis niet meer kan vasthouden. Travel wacht bovendien zolang een echte Race/Heist/Spot group-transaction actief is. Freeze Recovery mag na 15s bevestigde verweesde overlay een veilige force-refresh doen zonder door een stale planner/module-busy state te worden tegengehouden. Oude MasterControl_GAS polling, Opt-out Master UI en Master-only shop/travel hooks verwijderd; raceSet/ocSet blijven als compatibele externe hooks bestaan.
@@ -15311,3 +15313,72 @@ paint();
   });
   if(enabled()) next(goInfo,600);
 })();
+// ==========================================================
+// TEST27Z CC+SPOT LOGOUT DIAG
+// Read-only diagnose bovenop de bestaande Flight Recorder.
+// Bewaart geen extra navigatie/actie-state en wijzigt geen moduleflow.
+// Console: mrbLogoutDiag() / mrbLogoutDiag(true)
+// ==========================================================
+(function MRBLogoutDiag(){
+  'use strict';
+  if (unsafeWindow.__mrbLogoutDiagInstalled) return;
+  unsafeWindow.__mrbLogoutDiagInstalled = true;
+
+  const clean=v=>String(v==null?'':v).replace(/\s+/g,' ').trim();
+  function safe(fn,fallback=null){ try{return fn();}catch(_){return fallback;} }
+  function snapshot(){
+    const cc=safe(()=>unsafeWindow.mrbV9CrimesCars?.state?.(),{})||{};
+    const spot=safe(()=>unsafeWindow.mrbSpotRaidCoreV3?.getState?.(),{})||{};
+    const heist=safe(()=>unsafeWindow.mrbHeistCoreControl?.getState?.(),{})||{};
+    const race=safe(()=>unsafeWindow.mrbModuleStateRegistry?.get?.('Race')||unsafeWindow.mrbModuleStateRegistry?.get?.('race'),{})||{};
+    const group=safe(()=>unsafeWindow.mrbGroupTransaction?.state?.(),{})||{};
+    const nav=safe(()=>unsafeWindow.mrbNavigationGate?.state?.(),{})||{};
+    const session=safe(()=>unsafeWindow.mrbSessionSafeMode?.state?.(),{})||{};
+    const backoff=safe(()=>unsafeWindow.mrbServerBackoff?.state?.(),{})||{};
+    return {
+      at:new Date().toISOString(),
+      href:String(location.href||''),
+      sessionSafe:session,
+      serverBackoff:backoff,
+      navigation:nav,
+      groupOwner:group,
+      crimesCars:{
+        running:!!cc.running,busy:!!cc.busy,current:clean(cc.current),
+        crimesServerReady:!!cc.crimesServerReady,carsServerReady:!!cc.carsServerReady,
+        confirmPendingKind:clean(cc.confirmPendingKind),forcedRetryKind:clean(cc.forcedRetryKind),
+        jailReleasePending:!!cc.jailReleasePending
+      },
+      race:{enabled:!!(race.running||race.enabled),phase:clean(race.phase||race.state)},
+      heist:{enabled:!!heist.enabled,role:clean(heist.role),phase:clean(heist.phase||heist.state)},
+      spot:{enabled:!!spot.enabled,role:clean(spot.role),state:clean(spot.state),nextAt:Number(spot.nextAt||0)}
+    };
+  }
+
+  function importantEvents(events){
+    const re=/(INCIDENT|ENV_CHANGE|MODULE_STATES|SERVER_BACKOFF|GROUP_OWNER|NAV|ROUTE|SESSION|SAFE|JS_ERROR|UNHANDLED|CLICK_LIMIT|UNIFIED_|CC_|SPOT|HEIST|RACE)/i;
+    const rows=(Array.isArray(events)?events:[]).filter(e=>re.test(String(e?.kind||'')));
+    return rows.slice(-60);
+  }
+
+  function report(verbose=false){
+    const rec=unsafeWindow.mrbFlightRecorder;
+    const incident=safe(()=>rec?.lastIncident?.(),null);
+    const live=safe(()=>rec?.live?.(),[])||[];
+    const source=incident?.events?.length?'lastIncident':'live';
+    const sourceEvents=incident?.events?.length?incident.events:live;
+    const events=verbose?sourceEvents.slice(-180):importantEvents(sourceEvents);
+    const result={source,incidentReason:clean(incident?.reason||''),incidentAt:incident?.frozenAt||0,current:snapshot(),events};
+    try{
+      console.group('[MRB Logout Diagnose]');
+      console.log('Bron:',source,'Reden:',result.incidentReason||'-');
+      console.log('Huidige status:',result.current);
+      console.table(events);
+      console.groupEnd();
+    }catch(_){ try{console.log('[MRB Logout Diagnose]',result);}catch(__){} }
+    return result;
+  }
+
+  unsafeWindow.mrbLogoutDiag=report;
+  unsafeWindow.mrbLogoutDiagClear=()=>safe(()=>unsafeWindow.mrbFlightRecorder?.clearIncident?.(),false);
+})();
+
