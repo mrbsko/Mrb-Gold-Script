@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MRB Gold Edition
-// @version      6.0.0-test27Z-diag-readonly
+// @version      6.0.0-test27Z-cc-rootcause-fix
 // @description  MRB Gold: centrale Unified Scheduler, navigatie-owner, retry-circuitbreaker en strikte actieguards.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -18,10 +18,7 @@
 // @run-at       document-end
 // ==/UserScript==
 
-
-// Release 6.0.0-test27Z-DIAG: uitsluitend read-only console-diagnose toegevoegd.
-// mrbDiag() leest bestaande runtime-API's uit en wijzigt geen module-state, timers, navigatie of opslag.
-
+// Release 6.0.0-test27Z-CCFIX: gerichte Crimes/Cars root-cause fix bovenop exact TEST27Z. Travel/captcha/Race/Heist/Session Manager ongewijzigd. Crimes kiest altijd de laatste optie; Cars behoudt hoogste %. Een CC-klik wordt pas als echte poging geregistreerd na zichtbare outcome of serverbevestigde toekomstige cooldown. Bij een niet-bevestigde klik keert CC eenmalig terug naar Mijn Account: server=toekomst bevestigt de poging, server=Nu laat dezelfde actie veilig opnieuw starten. Extra read-only CC-navigatielogging toegevoegd.
 // Release 6.0.0-test27Z: Travel-herstel en legacy-cleanup. Travel gebruikt nu DOM-first pagina-detectie zodat een stale SPA-URL na een eerdere reis de tweede/volgende reis niet meer kan vasthouden. Travel wacht bovendien zolang een echte Race/Heist/Spot group-transaction actief is. Freeze Recovery mag na 15s bevestigde verweesde overlay een veilige force-refresh doen zonder door een stale planner/module-busy state te worden tegengehouden. Oude MasterControl_GAS polling, Opt-out Master UI en Master-only shop/travel hooks verwijderd; raceSet/ocSet blijven als compatibele externe hooks bestaan.
 // Release 6.0.0-test27Y: Travel Mijn Account-herkenning structureel hersteld. Alleen Travel onInfo() is aangepast: URL route (pathname/search/hash/href) plus zichtbare Mijn Account-DOM/timerlabels zijn nu geldig, terwijl een zichtbare Travelmodule expliciet geen Mijn Account is. Geen Heist-, bestemmings-, scheduler-, interval- of navigatielogica gewijzigd.
 // Release 6.0.0-test27W: Travel-Heist voorbereiding gebruikt nu echte Heist-stadbeschikbaarheid uit Groepsmisdaden. Binnen de Heistbuffer doet Travel, zodra de vluchttimer vrij is, eerst een begrensde GroupCrimes-probe om geblokkeerde/beschikbare steden te lezen. Staat de Leider in een ongeschikte stad (zoals Chicago wanneer Feds die blokkeren), dan kiest Travel direct een toegestane beschikbare Heiststad in plaats van de volledige 30 minuten te blijven staan. De probe wordt kort gecachet en na gebruik teruggegeven aan Mijn Account; geen extra loop toegevoegd.
@@ -8139,6 +8136,17 @@ try {
   let ccNavLeaseTarget = '';
   let ccNavLeaseUntil = 0;
 
+  // TEST27Z-CCFIX: een fysieke klik is nog geen bewezen serveractie.
+  // Houd een korte verificatiestatus bij totdat DOM/outcome of Mijn Account
+  // aantoonbaar bevestigt dat de server de poging heeft verwerkt.
+  let ccPendingClickKind = '';
+  let ccPendingClickAt = 0;
+  const CC_CLICK_VERIFY_MS = 4500;
+  const CC_PENDING_CLICK_MAX_MS = 15000;
+  function setPendingClick(kind){ ccPendingClickKind=kind; ccPendingClickAt=Date.now(); }
+  function clearPendingClick(){ ccPendingClickKind=''; ccPendingClickAt=0; }
+  function pendingClickRecent(kind){ return ccPendingClickKind===kind && ccPendingClickAt>0 && Date.now()-ccPendingClickAt<=CC_PENDING_CLICK_MAX_MS; }
+
   // ---- SPA loader
   const loadPage = (()=>{
     const blocked=()=>{ try{return !!unsafeWindow.mrbSessionSafeMode?.active?.();}catch(_){return false;} };
@@ -8148,11 +8156,14 @@ try {
         if (blocked()) return false;
         const now=Date.now();
         if (h===ccNavLeaseTarget && now<ccNavLeaseUntil){
+          try { console.debug('[MRB CCFIX] NAV lease actief', {target:h,remainingMs:ccNavLeaseUntil-now}); } catch(_) {}
           try { unsafeWindow.mrbUnifiedDiagnostics?.add?.('CC_NAV_SUPPRESS',{target:h,remaining:ccNavLeaseUntil-now}); } catch(_) {}
           return true;
         }
         ccNavLeaseTarget=h; ccNavLeaseUntil=now+8000;
-        const ok=unsafeWindow.mrbNavigate(h,{source:'crimes-cars'});
+        let ok=false;
+        try { ok=unsafeWindow.mrbNavigate(h,{source:'crimes-cars'})===true; } catch(_) { ok=false; }
+        try { console.log(`[MRB CCFIX] NAV ${ok?'OK':'FAIL'} -> ${h}`); } catch(_) {}
         if (!ok){ ccNavLeaseTarget=''; ccNavLeaseUntil=0; }
         return ok;
       };
@@ -8507,6 +8518,22 @@ try {
     // Hiermee blijft Nu staan totdat dezelfde actiecyclus aantoonbaar begon.
     const wasDue = Number(currentNext || 0) <= now + 1500;
     const movesFuture = nextRemaining > 5000;
+
+    // TEST27Z-CCFIX: als de DOM na de klik geen duidelijke overgang liet zien,
+    // is een echte toekomstige Mijn Account-cooldown alsnog hard serverbewijs.
+    // Alleen dan registreren we de poging. Blijft de server op Nu, dan was de
+    // klik niet verwerkt en mag dezelfde actiecyclus opnieuw worden uitgevoerd.
+    if (pendingClickRecent(kind)){
+      if (movesFuture){
+        markAttempt(kind, `serverbevestigd-na-klik:${source}`);
+        clearPendingClick();
+        try { console.log(`[MRB CCFIX] ${kind} klik bevestigd door servercooldown (${Math.ceil(nextRemaining/1000)}s)`); } catch(_) {}
+      } else if (nextRemaining <= 0){
+        clearPendingClick();
+        try { console.warn(`[MRB CCFIX] ${kind} klik NIET verwerkt: server staat nog op Nu -> opnieuw proberen`); } catch(_) {}
+      }
+    }
+
     const ownAttemptRecent = now - lastAttemptAt(kind) <= 60_000;
     if (wasDue && movesFuture && !ownAttemptRecent){
       try { console.warn(`[Crimes/Cars] ${kind} toekomsttimer uit ${source} genegeerd: lokale deadline was al Nu en er is geen poging geregistreerd.`); } catch(_) {}
@@ -9404,12 +9431,13 @@ paint();
     });
     if(!buttons.length) return [];
 
-    const ranked=buttons.map((btn,idx)=>({btn,idx,chance:readChancePercent(btn)}))
-      .filter(x=>Number.isFinite(x.chance)&&x.chance>=0)
-      .sort((a,b)=>b.chance!==a.chance ? b.chance-a.chance : a.idx-b.idx);
-    if(!ranked.length) return []; // TEST9: nooit meer blind buttons[0] gebruiken.
-    try { console.log('[Crimes/Cars/D&D] Hoogste kans gekozen:', kind, ranked[0].chance + '%'); } catch(_) {}
-    return [ranked[0].btn];
+    // TEST27Z-CCFIX: Crimes gebruikt bewust altijd de laatste beschikbare optie.
+    // De oude generieke % parser las o.a. data-value=chance5 als "5%" en koos
+    // daardoor niet betrouwbaar de door Gold gewenste vijfde/laatste crime.
+    const chosen=buttons[buttons.length-1];
+    if(!chosen) return [];
+    try { console.log(`[MRB CCFIX] Crimes laatste optie gekozen (${buttons.length}/${buttons.length})`); } catch(_) {}
+    return [chosen];
   }
 
   // ===================================================================
@@ -9833,6 +9861,48 @@ paint();
     paint();
   }
 
+  function ccOutcomeEvidence(kind, chosen){
+    try{
+      if (!onExactCrimesCarsPage(kind)) return 'module-overgang';
+      if (!chosen?.isConnected || !isVisible(chosen)) return 'actieknop-verdwenen';
+      if (jailNowDetected() || jailFreeDetected()) return 'jail-resultaat';
+      if (attemptFailedDetected()) return 'mislukt-resultaat';
+      if (successDetected() || (kind==='cars' && carSuccessDetected())) return 'succes-resultaat';
+      if (readPopupCountdownMs() !== null) return 'cooldown-popup';
+    }catch(_){}
+    return '';
+  }
+
+  function verifyCrimesCarsClick(kind, chosen, startedAt){
+    if (!running || pausedCaptcha || current !== kind) return;
+    const evidence=ccOutcomeEvidence(kind, chosen);
+    if(evidence){
+      markAttempt(kind, `automatisch-bevestigd:${evidence}`);
+      clearPendingClick();
+      try { console.log(`[MRB CCFIX] ${kind} klik bevestigd via ${evidence}`); } catch(_) {}
+      handleOutcome(kind);
+      return;
+    }
+    const age=Date.now()-startedAt;
+    if(age<CC_CLICK_VERIFY_MS){
+      outcomeTimeoutId=mrbSetTimeout(()=>{
+        outcomeTimeoutId=null;
+        verifyCrimesCarsClick(kind, chosen, startedAt);
+      },350);
+      return;
+    }
+
+    // Geen zichtbare overgang: niet gokken en niet als poging boeken.
+    // Mijn Account is nu de arbiter. Toekomstige cooldown = verwerkt; Nu = retry.
+    try { console.warn(`[MRB CCFIX] ${kind} klik na ${age}ms niet bevestigd -> servercontrole via Mijn Account`); } catch(_) {}
+    busy=false;
+    current='';
+    stopWaiters();
+    loadPage(INFO_PAGE);
+    mrbSetTimeout(()=>{ try{ resyncFromInfo(); wake(); }catch(_){} },1200);
+    paint();
+  }
+
   function waitAndClick(kind){
     stopWaiters();
 
@@ -9928,12 +9998,14 @@ paint();
             paint();
             return;
           }
-          markAttempt(kind, 'automatisch');
-
+          // TEST27Z-CCFIX: een click() call is geen serverbevestiging.
+          // Eerst aantoonbare DOM/outcome-overgang; bij twijfel verifieert Mijn Account.
+          setPendingClick(kind);
+          const verifyStartedAt=Date.now();
           outcomeTimeoutId = mrbSetTimeout(()=>{
             outcomeTimeoutId = null;
-            handleOutcome(kind);
-          }, 900 + Math.floor(Math.random()*800));
+            verifyCrimesCarsClick(kind, chosen, verifyStartedAt);
+          }, 450);
         }, crimeActionDelay());
 
         return true;
@@ -10089,6 +10161,27 @@ paint();
     return now + 5000;
   }
 
+  // Read-only diagnose voor gemiste CC-navigatie/klik; verandert geen state.
+  unsafeWindow.mrbCCDiag = ()=>{
+    let navOwner=null, groupOwner=null;
+    try{ navOwner=unsafeWindow.mrbV9Planner?.navigationOwner?.() ?? null; }catch(_){}
+    try{ groupOwner=unsafeWindow.mrbGroupTransaction?.owner?.() ?? unsafeWindow.mrbGroupTransaction?.state?.()?.owner ?? null; }catch(_){}
+    const snap={
+      at:new Date().toISOString(), href:String(location.href||''),
+      running,busy,current,doCrimes,doCars,pausedCaptcha,gatePaused,
+      crimesNext,carsNext,crimesServerReady,carsServerReady,
+      crimesServerSyncAt,carsServerSyncAt,
+      confirmPendingKind,forcedRetryKind,
+      ccNavLeaseTarget,ccNavLeaseRemainingMs:Math.max(0,ccNavLeaseUntil-Date.now()),
+      pendingClickKind:ccPendingClickKind,
+      pendingClickAgeMs:ccPendingClickAt?Date.now()-ccPendingClickAt:0,
+      manualPaused:(()=>{try{return !!unsafeWindow.mrbManualControl?.isPaused?.();}catch(_){return false;}})(),
+      navOwner,groupOwner
+    };
+    try{ console.log('[MRB CCFIX DIAG]',snap); }catch(_){}
+    return snap;
+  };
+
   unsafeWindow.mrbV9CrimesCars = {
     version:'11.1.0-test14-cc-clean',
     wake:()=>{ tick(); return schedulerNextAt(); },
@@ -10104,7 +10197,8 @@ paint();
     state:()=>({
       running, busy, current, doCrimes, doCars, doDD:false,
       crimesNext, carsNext, crimesServerReady, carsServerReady, crimesServerSyncAt, carsServerSyncAt,
-      ddRetryAt, jailUntil, jailReleasePending, jailReleaseKind, jailReleaseStage, pausedCaptcha, gatePaused, confirmPendingKind, forcedRetryKind
+      ddRetryAt, jailUntil, jailReleasePending, jailReleaseKind, jailReleaseStage, pausedCaptcha, gatePaused, confirmPendingKind, forcedRetryKind,
+      ccNavLeaseTarget, ccNavLeaseUntil, pendingClickKind:ccPendingClickKind, pendingClickAt:ccPendingClickAt
     })
   };
 
@@ -15178,88 +15272,4 @@ paint();
     getState:()=>({enabled:enabled(),role:role(),phase,status:String(get(K_STATUS,'')||''),driverProbeAfter:driverProbeAfter()})
   });
   if(enabled()) next(goInfo,600);
-})();
-
-
-// =====================================================================
-// TEST27Z READ-ONLY RUNTIME DIAG
-// Gebruik in console: mrbDiag()   of   mrbDiag(true)
-// Deze code leest alleen bestaande publieke runtime-API's uit.
-// =====================================================================
-;(function MRBTest27ZReadOnlyDiag(){
-  'use strict';
-  function safe(fn, fallback=null){ try { return fn(); } catch(e) { return fallback; } }
-  function clone(v){
-    try { return JSON.parse(JSON.stringify(v)); } catch(e) { return v; }
-  }
-  function compactModules(){
-    const list=safe(()=>unsafeWindow.mrbModuleStateRegistry?.list?.(),[])||[];
-    return Array.isArray(list) ? list.map(x=>({
-      id:x?.id||x?.name||x?.module||'',
-      enabled:!!(x?.enabled||x?.running||x?.requestedEnabled),
-      state:x?.state||x?.phase||'',
-      detail:x?.detail||'',
-      lastUpdate:x?.lastUpdate||x?.updatedAt||0
-    })) : [];
-  }
-  function snapshot(verbose=false){
-    const now=Date.now();
-    const nav=safe(()=>unsafeWindow.mrbNavigationGate?.state?.(),{})||{};
-    const raw={
-      ts:new Date(now).toISOString(),
-      href:String(location.href),
-      title:String(document.title||''),
-      gameContainer:!!document.querySelector('#game_container'),
-      group:safe(()=>unsafeWindow.mrbGroupTransaction?.state?.(),null),
-      race:{
-        transactionActive:safe(()=>unsafeWindow.mrbRaceTransaction?.active?.(),null),
-        phase:safe(()=>unsafeWindow.mrbRaceTransaction?.phase?.(),null)
-      },
-      heist:safe(()=>unsafeWindow.mrbHeistCoreControl?.getState?.(),null),
-      spot:safe(()=>unsafeWindow.mrbSpotRaidCoreV3?.getState?.(),null),
-      travel:safe(()=>unsafeWindow.mrbTravelControl?.state?.(),null),
-      navigation:{
-        gate:clone(nav),
-        current:clone(safe(()=>unsafeWindow.mrbNavigationState,{}))
-      },
-      manualPause:safe(()=>unsafeWindow.mrbManualControl?.state?.(),null),
-      serverBackoff:safe(()=>unsafeWindow.mrbServerBackoff?.state?.(),null),
-      sessionSafe:safe(()=>unsafeWindow.mrbSessionSafeMode?.state?.(),null),
-      dispatcher:safe(()=>unsafeWindow.mrbUnifiedRunnableDispatcher?.state?.(),null),
-      scheduler:safe(()=>unsafeWindow.mrbUnifiedScheduler?.state?.(),null),
-      recorder:safe(()=>unsafeWindow.mrbFlightRecorder?.state?.(),null),
-      modules:compactModules()
-    };
-    if(verbose){
-      raw.unifiedLast=safe(()=>unsafeWindow.mrbUnifiedDiagnostics?.last?.(),null);
-      raw.travelDom={
-        visibleTravel:!!document.querySelector('#game_container [id*="travel" i], #game_container [class*="travel" i]'),
-        visibleGroupCrimes:!!document.querySelector('#game_container [id*="group" i][id*="crime" i], #game_container [class*="group" i][class*="crime" i]')
-      };
-    }
-    return raw;
-  }
-  unsafeWindow.mrbDiag=function(verbose=false){
-    const s=snapshot(verbose===true);
-    try {
-      console.group('[MRB 27Z DIAG] '+new Date().toLocaleTimeString());
-      console.log('URL',s.href);
-      console.log('Group owner',s.group);
-      console.log('Race',s.race);
-      console.log('Heist',s.heist);
-      console.log('Spot',s.spot);
-      console.log('Travel',s.travel);
-      console.log('Navigation',s.navigation);
-      console.log('Manual pause',s.manualPause);
-      console.log('Server backoff',s.serverBackoff);
-      console.log('Session Safe Mode',s.sessionSafe);
-      console.log('Dispatcher',s.dispatcher);
-      console.table(s.modules||[]);
-      if(verbose===true) console.log('Verbose snapshot',s);
-      console.groupEnd();
-    } catch(e) { try{console.log('[MRB 27Z DIAG]',s);}catch(_){} }
-    return s;
-  };
-  unsafeWindow.mrbDiagSnapshot=()=>snapshot(true);
-  try { console.info('[MRB 27Z DIAG] Read-only diagnose geladen. Gebruik mrbDiag() of mrbDiag(true).'); } catch(e) {}
 })();
