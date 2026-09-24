@@ -18,6 +18,7 @@
 // @run-at       document-end
 // ==/UserScript==
 
+// Release 6.0.0-test27Z-CC-SPOTFIX: gerichte Spot root-cause fix bovenop de bewezen CC-fix. Een live Mijn Account Spot=Nu wist nu direct een stale COOLDOWN-state voordat de Leader-cooldownguard draait. Driver-probes mogen geen group-owner claimen en openen vanaf Groepsmisdaden alleen nog een Spot-entry met expliciete uitnodiging/acceptatie-indicatie; een generieke Spot-link wordt niet meer geopend. Geen wijzigingen aan Race/Heist/Travel/captcha/Session Manager.
 // Release 6.0.0-test27Z-CCFIX: gerichte Crimes/Cars root-cause fix bovenop exact TEST27Z. Travel/captcha/Race/Heist/Session Manager ongewijzigd. Crimes kiest altijd de laatste optie; Cars behoudt hoogste %. Een CC-klik wordt pas als echte poging geregistreerd na zichtbare outcome of serverbevestigde toekomstige cooldown. Bij een niet-bevestigde klik keert CC eenmalig terug naar Mijn Account: server=toekomst bevestigt de poging, server=Nu laat dezelfde actie veilig opnieuw starten. Extra read-only CC-navigatielogging toegevoegd.
 // Release 6.0.0-test27Z: Travel-herstel en legacy-cleanup. Travel gebruikt nu DOM-first pagina-detectie zodat een stale SPA-URL na een eerdere reis de tweede/volgende reis niet meer kan vasthouden. Travel wacht bovendien zolang een echte Race/Heist/Spot group-transaction actief is. Freeze Recovery mag na 15s bevestigde verweesde overlay een veilige force-refresh doen zonder door een stale planner/module-busy state te worden tegengehouden. Oude MasterControl_GAS polling, Opt-out Master UI en Master-only shop/travel hooks verwijderd; raceSet/ocSet blijven als compatibele externe hooks bestaan.
 // Release 6.0.0-test27Y: Travel Mijn Account-herkenning structureel hersteld. Alleen Travel onInfo() is aangepast: URL route (pathname/search/hash/href) plus zichtbare Mijn Account-DOM/timerlabels zijn nu geldig, terwijl een zichtbare Travelmodule expliciet geen Mijn Account is. Geen Heist-, bestemmings-, scheduler-, interval- of navigatielogica gewijzigd.
@@ -2177,6 +2178,27 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
   function clickOnce(el) { if (!visible(el) || !actionAllowed()) return false; markAction(); el.click(); return true; }
   function navigateToGroup() { if (isGroupPage()) return true; if (!canNavigate()) return false; const link = findGroupLink(); if (!link) return false; markNav(); link.click(); return true; }
   function openSpot() { if (!canNavigate()) return false; const link = findSpotEntry(); if (!link) return false; markNav(); set(K.spotOpenedAt, Date.now()); link.click(); return true; }
+  function findDriverInviteEntry() {
+    // Driver mag een generieke Spot-link nooit als uitnodiging behandelen.
+    // Alleen een entry waarvan de eigen rij/kaart expliciet een uitnodiging of
+    // acceptatie benoemt, mag worden geopend.
+    const links = [...document.querySelectorAll('a')].filter(visible).filter(a => {
+      const label = norm(a.textContent || '');
+      const href = String(a.getAttribute('href') || '');
+      if (!/module=Spot/i.test(href) && !/spot|overval|raid/i.test(label)) return false;
+      if (/annuleer|cancel|wijs af|decline|reject/i.test(label+' '+href)) return false;
+      const scope = a.closest('tr,li,.popup-box-wrapper,.popup-box,.panel,.box') || a.parentElement;
+      const hay = norm([scope?.textContent || '', label, href].join(' '));
+      return /uitnodiging|invitation|accepteer|accept(?:eer)?\s+(?:uitnodiging|invitation)/i.test(hay);
+    });
+    return links[0] || null;
+  }
+  function openDriverInviteSpot() {
+    if (!canNavigate()) return false;
+    const link = findDriverInviteEntry();
+    if (!link) return false;
+    markNav(); set(K.spotOpenedAt, Date.now()); link.click(); return true;
+  }
   function spotDriverHeistPriority(){
     try {
       const h=unsafeWindow.mrbHeistCoreControl?.getState?.();
@@ -2654,7 +2676,14 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
       const freshTimer = readSpotTimer();
       if (freshTimer?.found) {
         syncSpotTimer(freshTimer);
-        if (!freshTimer.ready && !freshSecondPass && hardStopSpotCooldown(freshTimer.raw, 'Mijn Account pre-second-pass')) return;
+        // ROOT CAUSE: een oude lokale COOLDOWN-state mocht voorheen de verse
+        // serverwaarde "Nu" alsnog blokkeren via spotCooldownKnown().
+        // Mijn Account is hier de bron van waarheid: Nu wist de stale cooldown
+        // voordat de generieke cooldownguard hieronder wordt beoordeeld.
+        if (freshTimer.ready) {
+          clearStaleCooldown();
+          set(K.timerReady, true);
+        } else if (!freshSecondPass && hardStopSpotCooldown(freshTimer.raw, 'Mijn Account pre-second-pass')) return;
       }
     }
     if (isGroupPage()) {
@@ -2907,10 +2936,10 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
     }
     if (isGroupPage()) {
       if (spotDriverYieldForHeist('Groepsmisdaden')) return;
-      if (openSpot()) setStatus('DRIVER_OPEN_SPOT', 'Spot-link éénmalig geopend om een echte uitnodiging te controleren.');
+      if (openDriverInviteSpot()) setStatus('DRIVER_OPEN_SPOT', 'Expliciete Spot-uitnodiging gevonden; Driver opent uitsluitend deze uitnodiging.');
       else {
-        setStatus('DRIVER_WAIT_INVITE', 'Geen aantoonbare Spot-uitnodiging zichtbaar. Driver keert terug naar Mijn Account en wacht voor een nieuwe probe.');
-        if (canNavigate()){ markNav(); try{ unsafeWindow.mrbNavigate?.('/information.php',{source:'spot-driver-no-invite'}); }catch(_){} }
+        setStatus('DRIVER_WAIT_INVITE', 'Geen expliciete Spot-uitnodiging zichtbaar. Generieke Spot-link blijft dicht; Driver keert terug naar Mijn Account.');
+        if (canNavigate()){ markNav(); try{ unsafeWindow.mrbNavigate?.('/information.php',{source:'spot-driver-no-explicit-invite'}); }catch(_){} }
       }
       return;
     }
@@ -10605,9 +10634,18 @@ paint();
     }
     if(nowish(spotRaw) && GM_Get('mrb_spot_complete_v1_enabled',false)){
       try {
-        if(mayWake('spot') && unsafeWindow.mrbGroupTransaction?.acquire?.('spot','WAKE_PENDING')){
+        const ctl=unsafeWindow.mrbSpotRaidCoreV3;
+        const ss=ctl?.getState?.()||{};
+        if(String(ss.role||'').toLowerCase()==='driver'){
+          // Driver-wake is alleen een passieve invite-probe en krijgt dus geen
+          // group-owner. Ownership ontstaat pas na echte acceptatie/ready-state.
+          if(mayWake('spot')){
+            diag('SPOT_DRIVER_PROBE_WAKE',{timer:spotRaw},'spot-driver-probe-wake',1200);
+            ctl?.wake?.();
+          }
+        } else if(mayWake('spot') && unsafeWindow.mrbGroupTransaction?.acquire?.('spot','WAKE_PENDING')){
           diag('SPOT_WAKE',{timer:spotRaw},'spot-wake',1200);
-          const accepted=unsafeWindow.mrbSpotRaidCoreV3?.wake?.();
+          const accepted=ctl?.wake?.();
           if(accepted===false) unsafeWindow.mrbGroupTransaction?.release?.('spot','spot wake geweigerd');
         }
       } catch(_) {}
