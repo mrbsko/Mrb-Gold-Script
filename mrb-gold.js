@@ -1,6 +1,6 @@
 // ==UserScript==
-// @name         MRB Gold Edition
-// @version      6.0.0-test28A
+// @name         MRB Gold TEST - RACE LEADER BOUNDED INSPECT
+// @version      6.0.0-test27P-race-leader-bounded-inspect
 // @description  MRB Gold: centrale Unified Scheduler, navigatie-owner, retry-circuitbreaker en strikte actieguards.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -18,20 +18,6 @@
 // @run-at       document-end
 // ==/UserScript==
 
-// Release 6.0.0-test27Z-CCSPOT-BACKOFFFIX: CC-bevestiging aangescherpt: DOM-knopverdwijnen/module-overgang gelden niet langer als bewijs van een uitgevoerde actie; bij ontbreken van echt resultaat/cooldown volgt serververificatie via Mijn Account. Globale HTTP-403 backoff negeert bekende passieve/diagnostische requests (ntp.php, ajax_debug.php, Statistics/global_stats, Services.Account) maar blijft actief voor echte game/module-requests. mrbLogoutDiag wordt ook via window/globalThis gepubliceerd. Overige moduleflows ongewijzigd.
-// Release 6.0.0-test27Z-CCSPOT-LOGOUTDIAG: read-only persistente logout-diagnose toegevoegd bovenop de bestaande Flight Recorder. Geen navigatie, clicks, timers of module-state gewijzigd. Gebruik mrbLogoutDiag() na onverwachte logout; mrbLogoutDiag(true) toont ruimer eventdetail.
-
-// Release 6.0.0-test27Z-CC-SPOTFIX: gerichte Spot root-cause fix bovenop de bewezen CC-fix. Een live Mijn Account Spot=Nu wist nu direct een stale COOLDOWN-state voordat de Leader-cooldownguard draait. Driver-probes mogen geen group-owner claimen en openen vanaf Groepsmisdaden alleen nog een Spot-entry met expliciete uitnodiging/acceptatie-indicatie; een generieke Spot-link wordt niet meer geopend. Geen wijzigingen aan Race/Heist/Travel/captcha/Session Manager.
-// Release 6.0.0-test27Z-CCFIX: gerichte Crimes/Cars root-cause fix bovenop exact TEST27Z. Travel/captcha/Race/Heist/Session Manager ongewijzigd. Crimes kiest altijd de laatste optie; Cars behoudt hoogste %. Een CC-klik wordt pas als echte poging geregistreerd na zichtbare outcome of serverbevestigde toekomstige cooldown. Bij een niet-bevestigde klik keert CC eenmalig terug naar Mijn Account: server=toekomst bevestigt de poging, server=Nu laat dezelfde actie veilig opnieuw starten. Extra read-only CC-navigatielogging toegevoegd.
-// Release 6.0.0-test27Z: Travel-herstel en legacy-cleanup. Travel gebruikt nu DOM-first pagina-detectie zodat een stale SPA-URL na een eerdere reis de tweede/volgende reis niet meer kan vasthouden. Travel wacht bovendien zolang een echte Race/Heist/Spot group-transaction actief is. Freeze Recovery mag na 15s bevestigde verweesde overlay een veilige force-refresh doen zonder door een stale planner/module-busy state te worden tegengehouden. Oude MasterControl_GAS polling, Opt-out Master UI en Master-only shop/travel hooks verwijderd; raceSet/ocSet blijven als compatibele externe hooks bestaan.
-// Release 6.0.0-test27Y: Travel Mijn Account-herkenning structureel hersteld. Alleen Travel onInfo() is aangepast: URL route (pathname/search/hash/href) plus zichtbare Mijn Account-DOM/timerlabels zijn nu geldig, terwijl een zichtbare Travelmodule expliciet geen Mijn Account is. Geen Heist-, bestemmings-, scheduler-, interval- of navigatielogica gewijzigd.
-// Release 6.0.0-test27W: Travel-Heist voorbereiding gebruikt nu echte Heist-stadbeschikbaarheid uit Groepsmisdaden. Binnen de Heistbuffer doet Travel, zodra de vluchttimer vrij is, eerst een begrensde GroupCrimes-probe om geblokkeerde/beschikbare steden te lezen. Staat de Leider in een ongeschikte stad (zoals Chicago wanneer Feds die blokkeren), dan kiest Travel direct een toegestane beschikbare Heiststad in plaats van de volledige 30 minuten te blijven staan. De probe wordt kort gecachet en na gebruik teruggegeven aan Mijn Account; geen extra loop toegevoegd.
-// Release 6.0.0-test27V: Travel las de verkeerde timerlabels. Mijn Account toont in NL 'Volgende vlucht', terwijl de Travel-module alleen 'Reis/Travel/Volgende reis' accepteerde. Daardoor bleef readTravelTimer() leeg en werd de reis nooit uitgevoerd, ook al stond de serverwaarde zichtbaar op Nu. De timerherkenning gebruikt nu expliciet Volgende vlucht/Next flight naast de oude labels. Geen nieuwe loop of scheduler toegevoegd.
-// Release 6.0.0-test27U: Travel-wake structureel hersteld. Een live Mijn Account-serverwaarde Volgende vlucht=Nu doorbreekt nu een eventueel stale lokale nextCheck-deadline. Zodra een reis werkelijk uitvoerbaar is wordt de gekozen stad als pending handoff opgeslagen; de bestaande Travel-tick verifieert vervolgens dat de Travelpagina echt zichtbaar is voordat de stad wordt aangeklikt. mrbNavigate-return=true wordt dus niet meer als bewijs gezien dat de SPA daadwerkelijk is overgegaan. Geen extra loop toegevoegd; bestaande 1s Travel-task blijft de enige runtime-aansturing.
-// Release 6.0.0-test27T: Travel is uitgebreid met een 30-minuten Heist-voorbereidingsmodus en optionele Leader/Driver lockstep-bestemming. Buiten de buffer blijft rank-Travel actief; binnen 30 minuten voor Heist reist Travel alleen nog naar een Heist-toegestane stad of blijft staan wanneer de huidige stad al geschikt is. In lockstep-modus kiezen beide accounts deterministisch dezelfde routestad per halfuurslot, zonder extra server-endpoint. Bestaande Travel-module hergebruikt; geen tweede Travel-loop toegevoegd.
-// Release 6.0.0-test27S: structurele Race wake/ownership-fix. Een verlopen opgeslagen Race-startplan wordt nu uitgevoerd i.p.v. opnieuw vooruit gepland; de Unified Dispatcher beschouwt een ontbrekende Race-wake niet langer als succes; Race exporteert daarom een echte centrale wake-functie. WAITING_DRIVER is passief en geeft de group-owner vrij. Session Manager beschouwt uitsluitend passieve Race-wachtstaten als refresh-veilig, zodat een stale Race de Smart Idle Refresh niet meer onbeperkt blokkeert. Geen extra Race-loop toegevoegd.
-// Release 6.0.0-test27R: minimale Race-responsivenessfix op de teruggerolde stabiele Race-basis. Driver startplan verkort van 25-30s naar 8-12s zodat een verse uitnodiging ook zonder Crimes/Cars snel wordt geopend. Leider herkent nu ook de Nederlandse eindtekst 'De Race is afgelopen, controleer je postbus voor de resultaten' en verlaat een afgeronde Race binnen circa 1-2s naar Mijn Account, zodat andere modules direct weer timers kunnen lezen. Geen nieuwe Race-state-machine, watchdog of extra moduleloop toegevoegd. Zichtbare scriptnaam is MRB Gold Edition.
-// Release 6.0.0-test27Q: Race-module volledig teruggezet naar de bewezen 5.8.52/5.8.12-basis in plaats van verder te patchen op 27N-27P. Hiermee verdwijnen de nieuwe Race-state/inspect/verify-lagen die Leader, Driver en post-race konden vasthouden. De structurele TEST27M Crimes/Cars jail-release fix en overige modules blijven behouden. Zichtbare menuheader opgeschoond naar 'MRB Gold Edition'.
 // Release 6.0.0-test27P: Leader partner-check is nu een strikt begrensde inspectie. Na het openen van /races.php geldt alleen een aantoonbare Start-knop/ready-status als reden om op Race te blijven; elke andere geldige niet-ready toestand (zoals Accepted zonder ingestelde auto) wordt direct WAITING_DRIVER en yieldt naar Mijn Account. De oude tekstafhankelijke fallback naar leader_raceFlow is verwijderd, zodat een onbekende/wijzigende status nooit meer de Racepagina kan vasthouden en Crimes/Cars blokkeren.
 // Release 6.0.0-test27O: Race Leider geeft direct na het versturen van de uitnodiging de atomaire LEADER_INVITE-fase vrij. De uitnodiging blijft persistent pending, maar de Leider gaat meteen naar Mijn Account en plant exact één partner-hercontrole. Hierdoor kunnen Crimes/Cars tijdens het wachten op de Driver gewoon doorlopen. Pas de korte LEADER_INSPECT en STARTING-fasen zijn atomair. Geen extra loop toegevoegd.
 // Release 6.0.0-test27N: structurele Race-state cleanup voor Leider + Driver. Eén gedeelde atomic/passive fase-definitie is nu leidend voor group ownership en preemption. Leider inspecteert /races.php kort atomair (LEADER_INSPECT) zodat Crimes/Cars de DOM niet tussen laden en Start-detectie kunnen vervangen; pas echte WAITING_DRIVER yieldt. De Race-yield watchdog mag atomaire Race-fasen niet meer naar IDLE herschrijven. Driver opent een verse Race sneller (8-12s na server-Nu i.p.v. 25-30s) en een bestaande DRIVER_READY wordt bij server-Nu begrensd op de Racepagina geverifieerd in plaats van tot 90s passief te blokkeren. Geen extra moduleloop toegevoegd; Unified Dispatcher blijft enige externe wake-owner.
@@ -858,19 +844,8 @@
       return true;
     }
 
-    // Vang 403's van Omerta/jQuery SPA-loads af. Niet iedere passieve pagina-request
-    // mag heel Gold twee minuten bevriezen. Bekende klok/debug/statistiek/account-polls
-    // worden alleen gelogd; echte game/module-requests behouden de bestaande backoff.
-    function ignorableAjax403(rawUrl=''){
-      const u=String(rawUrl||'').toLowerCase();
-      if(!u) return false;
-      if(/(?:^|\/)ntp\.php(?:[?#]|$)/i.test(u)) return true;
-      if(/(?:^|\/)ajax_debug\.php(?:[?#]|$)/i.test(u)) return true;
-      if(/[?&]module=statistics(?:&|$)/i.test(u)) return true;
-      if(/[?&]action=global_stats(?:&|$)/i.test(u) && /module=statistics/i.test(u)) return true;
-      if(/[?&]module=services\.account(?:&|$)/i.test(u)) return true;
-      return false;
-    }
+    // Vang 403's van Omerta/jQuery SPA-loads af. De background fetch meldt 403
+    // hieronder apart via dezelfde backoff-API.
     let ajaxWatchInstalled=false;
     const installAjax403Watch=()=>{
       if(ajaxWatchInstalled) return true;
@@ -878,14 +853,7 @@
         const jq=unsafeWindow.jQuery||unsafeWindow.$;
         if(!jq?.fn?.jquery) return false;
         jq(document).ajaxError((_e,xhr,settings)=>{
-          if(Number(xhr?.status)!==403) return;
-          const url=String(settings?.url||'');
-          if(ignorableAjax403(url)){
-            try { console.debug('[MRB Unified TEST10] 403 genegeerd voor globale backoff', url); } catch(_) {}
-            try { unsafeWindow.mrbFlightRecorder?.add?.('SERVER_403_IGNORED',{url:url.slice(0,160)}); } catch(_) {}
-            return;
-          }
-          tripServerBackoff(`HTTP 403 AJAX ${url.slice(0,120)}`,120000);
+          if(Number(xhr?.status)===403) tripServerBackoff(`HTTP 403 AJAX ${String(settings?.url||'').slice(0,120)}`,120000);
         });
         ajaxWatchInstalled=true;
         return true;
@@ -1312,7 +1280,7 @@ return false;
     wrap.innerHTML = `
       <div class="gm-header">
         <div class="gm-drag-handle" title="Sleep mij">❖</div>
-        <div class="gm-title">MRB Gold Edition</div>
+        <div class="gm-title">MRB Gold Edition · UNIFIED TEST</div>
         <div class="gm-actions">
           <button id="gmCollapseAll" class="gm-icon" title="Alles minimaliseren">↧</button>
           <button id="gmExpandAll" class="gm-icon" title="Alles uitklappen">↥</button>
@@ -2199,27 +2167,6 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
   function clickOnce(el) { if (!visible(el) || !actionAllowed()) return false; markAction(); el.click(); return true; }
   function navigateToGroup() { if (isGroupPage()) return true; if (!canNavigate()) return false; const link = findGroupLink(); if (!link) return false; markNav(); link.click(); return true; }
   function openSpot() { if (!canNavigate()) return false; const link = findSpotEntry(); if (!link) return false; markNav(); set(K.spotOpenedAt, Date.now()); link.click(); return true; }
-  function findDriverInviteEntry() {
-    // Driver mag een generieke Spot-link nooit als uitnodiging behandelen.
-    // Alleen een entry waarvan de eigen rij/kaart expliciet een uitnodiging of
-    // acceptatie benoemt, mag worden geopend.
-    const links = [...document.querySelectorAll('a')].filter(visible).filter(a => {
-      const label = norm(a.textContent || '');
-      const href = String(a.getAttribute('href') || '');
-      if (!/module=Spot/i.test(href) && !/spot|overval|raid/i.test(label)) return false;
-      if (/annuleer|cancel|wijs af|decline|reject/i.test(label+' '+href)) return false;
-      const scope = a.closest('tr,li,.popup-box-wrapper,.popup-box,.panel,.box') || a.parentElement;
-      const hay = norm([scope?.textContent || '', label, href].join(' '));
-      return /uitnodiging|invitation|accepteer|accept(?:eer)?\s+(?:uitnodiging|invitation)/i.test(hay);
-    });
-    return links[0] || null;
-  }
-  function openDriverInviteSpot() {
-    if (!canNavigate()) return false;
-    const link = findDriverInviteEntry();
-    if (!link) return false;
-    markNav(); set(K.spotOpenedAt, Date.now()); link.click(); return true;
-  }
   function spotDriverHeistPriority(){
     try {
       const h=unsafeWindow.mrbHeistCoreControl?.getState?.();
@@ -2697,14 +2644,7 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
       const freshTimer = readSpotTimer();
       if (freshTimer?.found) {
         syncSpotTimer(freshTimer);
-        // ROOT CAUSE: een oude lokale COOLDOWN-state mocht voorheen de verse
-        // serverwaarde "Nu" alsnog blokkeren via spotCooldownKnown().
-        // Mijn Account is hier de bron van waarheid: Nu wist de stale cooldown
-        // voordat de generieke cooldownguard hieronder wordt beoordeeld.
-        if (freshTimer.ready) {
-          clearStaleCooldown();
-          set(K.timerReady, true);
-        } else if (!freshSecondPass && hardStopSpotCooldown(freshTimer.raw, 'Mijn Account pre-second-pass')) return;
+        if (!freshTimer.ready && !freshSecondPass && hardStopSpotCooldown(freshTimer.raw, 'Mijn Account pre-second-pass')) return;
       }
     }
     if (isGroupPage()) {
@@ -2957,10 +2897,10 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
     }
     if (isGroupPage()) {
       if (spotDriverYieldForHeist('Groepsmisdaden')) return;
-      if (openDriverInviteSpot()) setStatus('DRIVER_OPEN_SPOT', 'Expliciete Spot-uitnodiging gevonden; Driver opent uitsluitend deze uitnodiging.');
+      if (openSpot()) setStatus('DRIVER_OPEN_SPOT', 'Spot-link éénmalig geopend om een echte uitnodiging te controleren.');
       else {
-        setStatus('DRIVER_WAIT_INVITE', 'Geen expliciete Spot-uitnodiging zichtbaar. Generieke Spot-link blijft dicht; Driver keert terug naar Mijn Account.');
-        if (canNavigate()){ markNav(); try{ unsafeWindow.mrbNavigate?.('/information.php',{source:'spot-driver-no-explicit-invite'}); }catch(_){} }
+        setStatus('DRIVER_WAIT_INVITE', 'Geen aantoonbare Spot-uitnodiging zichtbaar. Driver keert terug naar Mijn Account en wacht voor een nieuwe probe.');
+        if (canNavigate()){ markNav(); try{ unsafeWindow.mrbNavigate?.('/information.php',{source:'spot-driver-no-invite'}); }catch(_){} }
       }
       return;
     }
@@ -3414,10 +3354,16 @@ Naam3"></textarea><br><br>
   const K_WE     = 'oc_we';
   const K_DR     = 'oc_dr';
 
+  // Master opt-out (per browser)
+  // true  = deze browser negeert master commands (Race/OC)
+  // false = volgt master commands
+  const K_OPTOUT = 'cc.local.optOutAll';
+
   let partnerName  = GM_Get(K_NAME, 'Invullen'); // standaard Invullen
   let ocEE         = GM_Get(K_EE,   '');         // standaard leeg
   let ocWE         = GM_Get(K_WE,   '');
   let ocDR         = GM_Get(K_DR,   '');
+  let optOutMaster = GM_Get(K_OPTOUT, false);
 
   // UI — Settings blok (Partner/OC rechtsboven grid, Save onderaan)
   const block = addBlock(`
@@ -3451,6 +3397,12 @@ Naam3"></textarea><br><br>
         <input id="ocDR" type="text" maxlength="12" value="${ocDR}"
                style="width:12ch; height:22px; padding:2px 6px;">
 
+        <!-- Opt-out Master (volledige breedte, rechts uitgelijnd) -->
+        <label style="grid-column:1 / span 2; justify-self:end; display:flex; align-items:center; gap:8px; margin-top:2px;">
+          <input id="optOutMaster" type="checkbox" ${optOutMaster ? 'checked' : ''}>
+          Opt-out Master
+        </label>
+
         <!-- Save onderaan (volledige breedte, rechts uitgelijnd) -->
         <button id="grpsSave" class="gm-btn"
                 style="grid-column:1 / span 2; justify-self:end; margin-top:2px;">Save</button>
@@ -3463,7 +3415,14 @@ Naam3"></textarea><br><br>
   const eeInp     = block.querySelector('#ocEE');
   const weInp     = block.querySelector('#ocWE');
   const drInp     = block.querySelector('#ocDR');
+  const optOutInp = block.querySelector('#optOutMaster');
   const saveBtn   = block.querySelector('#grpsSave');
+
+  // Opt-out direct opslaan bij toggle (staat los van Save)
+  optOutInp.addEventListener('change', ()=>{
+    optOutMaster = !!optOutInp.checked;
+    GM_Set(K_OPTOUT, optOutMaster);
+  });
 
   // Opslaan
   function doSave(){
@@ -6024,6 +5983,14 @@ Naam3"></textarea><br><br>
       lockRelease();
     }
   }
+  // -------------------------
+  // Public API voor MasterControl
+  // -------------------------
+unsafeWindow.cc_api = unsafeWindow.cc_api || {};
+unsafeWindow.cc_api.shopBuyHandgun = ()=>buyHandgun();
+unsafeWindow.cc_api.shopBuyArmor   = ()=>buyArmor();
+unsafeWindow.cc_api.travelDetroit  = ()=>travelTo('Det');
+unsafeWindow.cc_api.travelChicago  = ()=>travelTo('Chi');
 
 // Centrale menuhelpers beschikbaar maken voor alle latere module-IIFE's.
 // Deze modules staan bewust buiten de basis-IIFE en konden addBlock anders
@@ -6039,6 +6006,171 @@ try {
   }
 } catch (_) {}
 })();
+
+// =====================================================================
+// MASTER CONTROL 
+// =====================================================================
+
+    ;(function MasterControl_GAS(){
+  'use strict';
+
+  const FEED_URL = 'https://script.google.com/macros/s/AKfycbyCQ-VYbfhJunqM8ucDExXtRUrbNCLJMcic1sGCHO97djelQPtNLqmFXeNw8NYqNQzD/exec?token=MRB Gold';
+  const POLL_MS = 40_000;
+
+  const MODULES = {
+    race:    { enabledKey:'race_scriptAan'    },
+    oc:      { enabledKey:'oc_scriptAan'      },
+  };
+
+  // ✅ NIEUW: one-shot tasks (geen enabledKey, alleen uitvoeren)
+  const TASKS = {
+    buy_handgun:    { apiFn: 'shopBuyHandgun' },
+    buy_armor:      { apiFn: 'shopBuyArmor'   },
+    travel_detroit: { apiFn: 'travelDetroit'  },
+    travel_chicago: { apiFn: 'travelChicago'  },
+  };
+
+  const K = {
+    optOutAll: 'cc.local.optOutAll',
+    lastSeen:  (m)=>`cc.local.${m}.lastSeenCmdId`,
+    latch:     (m)=>`cc.local.${m}.stopLatch`,
+    reason:    (m)=>`cc.local.${m}.stopReason`,
+  };
+
+  // Gebruik jouw GM helpers als ze bestaan
+  const GM_Get_ = (unsafeWindow.GM_Get || ((k,d)=>GM_getValue(k,d)));
+  const GM_Set_ = (unsafeWindow.GM_Set || ((k,v)=>GM_setValue(k,v)));
+
+  const isOptedOut  = ()=> !!GM_Get_(K.optOutAll, false);
+  const getLastSeen = (m)=> String(GM_Get_(K.lastSeen(m), '')||'');
+  const setLastSeen = (m,id)=> GM_Set_(K.lastSeen(m), String(id||''));
+  const setLatch    = (m,on,reason='')=>{
+    GM_Set_(K.latch(m), !!on);
+    GM_Set_(K.reason(m), on ? String(reason||'').slice(0,200) : '');
+  };
+
+  const normalizeAction = (a)=>{
+    a = String(a||'').trim().toUpperCase();
+    if (['ON','TRUE','1','START','RUN','DO','GO','TRIGGER'].includes(a)) return 'ON';
+    if (['OFF','FALSE','0','STOP'].includes(a)) return 'OFF';
+    return '';
+  };
+
+  // Public hook: modules kunnen zichzelf “latchen” (= blijft uit tot nieuw command-id)
+  unsafeWindow.cc_localStop = function(module, reason){
+    module = String(module||'').toLowerCase();
+    if (!MODULES[module]) return;
+    setLatch(module, true, reason || 'local stop');
+    GM_Set_(MODULES[module].enabledKey, false);
+  };
+
+  function applyCommand(module, cmd){
+    if (!cmd || !cmd.id) return;
+    if (isOptedOut()) return;
+
+    const api = unsafeWindow.cc_api || {};
+    const isTask = !!TASKS[module];
+
+    // --- bepaal actie ---
+    let action = normalizeAction(cmd.action);
+
+    // ✅ Tasks: als action niet ON/OFF is maar wel gevuld -> behandel als ON (execute)
+    if (!action && isTask && String(cmd.action||'').trim()){
+      action = 'ON';
+    }
+    if (!action) return;
+
+    // ✅ Tasks: als functie nog niet bestaat, NIET lastSeen zetten (anders verlies je command)
+    if (isTask){
+      const fnName = TASKS[module].apiFn;
+      if (typeof api?.[fnName] !== 'function'){
+        return;
+      }
+    }
+
+    const id = String(cmd.id);
+    if (getLastSeen(module) === id) return; // one-shot
+    setLastSeen(module, id);
+
+    // -------------------------
+    // TASKS (one-shot execute)
+    // -------------------------
+    if (isTask){
+      const fnName = TASKS[module].apiFn;
+      try{ api[fnName]?.(); }catch(e){}
+      return;
+    }
+
+    // -------------------------
+    // MODULES (start/stop)
+    // -------------------------
+    if (action === 'OFF'){
+      GM_Set_(MODULES[module].enabledKey, false);
+
+      // DIRECT stop zonder refresh
+      if (module === 'race')    api.raceSet?.(false, 'master OFF');
+      if (module === 'oc')      api.ocSet?.(false, 'master OFF');
+
+      return;
+    }
+
+    if (action === 'ON'){
+      // reset latch zodat ook eerder gestopte browsers weer 1x proberen
+      setLatch(module, false, '');
+      GM_Set_(MODULES[module].enabledKey, true);
+
+      // DIRECT start zonder refresh
+      if (module === 'race')    api.raceSet?.(true, 'master ON');
+      if (module === 'oc')      api.ocSet?.(true, 'master ON');
+
+      return;
+    }
+  }
+
+  function fetchFeed(){
+    return new Promise((resolve, reject)=>{
+      GM_xmlhttpRequest({
+        method: 'GET',
+        url: FEED_URL,
+        headers: { 'Accept': 'application/json' },
+        timeout: 10_000,
+        onload: (res)=>{
+          try{ resolve(JSON.parse(res.responseText || '{}')); }
+          catch(e){ reject(e); }
+        },
+        onerror: reject,
+        ontimeout: ()=>reject(new Error('timeout')),
+      });
+    });
+  }
+
+async function poll(){
+  try{
+    if (isOptedOut()) return;
+
+    const j = await fetchFeed();
+    if (!j || j.ok === false) return;
+
+    // modules
+    for (const m of Object.keys(MODULES)){
+      if (j[m]) applyCommand(m, j[m]);
+    }
+    // tasks
+    for (const t of Object.keys(TASKS)){
+      if (j[t]) applyCommand(t, j[t]);
+    }
+
+  } catch(e){
+    // stil falen
+  }
+}
+
+  // Init
+  poll();
+  mrbSetInterval(poll, POLL_MS);
+
+})();
+
 
 // ==========================================================
 // 5.8.46 HEIST SERVER-TIMER RACE UNLOCK
@@ -6073,6 +6205,12 @@ try {
   let raceCoreDetail = 'gereed';
   let raceCoreUpdatedAt = Date.now();
 
+  // TEST27N: één definitie voor actieve/atomaire Race-fasen. Dezezelfde regex
+  // stuurt group ownership, Crimes/Cars-preemption en de Race-yield watchdog.
+  // Wachtfases (WAITING_DRIVER / DRIVER_READY / DRIVER_WAIT_INVITE) zijn bewust passief.
+  const RACE_ATOMIC_PHASE_RE = /^(?:STARTING|LEADER_OPEN|LEADER_INVITE|LEADER_INSPECT|RUNNING|DRIVER_OPEN|DRIVER_ACCEPT|DRIVER_CAR|DRIVER_VERIFY|TRAVEL|CANCEL_PENDING|CANCELLING)$/;
+  const RACE_PASSIVE_PHASE_RE = /^(?:IDLE|OFF|COOLDOWN|CHECK_TIMER|WAIT_RETRY|POST_RACE_HOME|DRIVER_POST_RACE_HOME|RECOVERY_WAIT|WAITING_DRIVER|DRIVER_READY|DRIVER_READY_INFO|DRIVER_WAIT_INVITE|DRIVER_RESTART_AFTER_CANCEL)$/;
+
   function raceRegistryState(phase, detail=''){
     raceCorePhase = String(phase || 'IDLE');
     raceCoreDetail = String(detail || '');
@@ -6086,19 +6224,20 @@ try {
         role: raceRole
       });
     } catch(e) {}
-
-    // TEST27S: passieve Race-fasen bezitten geen groeps-transactie. Dit voorkomt
-    // dat WAITING_DRIVER of een terugkeer naar Mijn Account de centrale dispatcher,
-    // Crimes/Cars of Session Manager onterecht blijft blokkeren.
-    if (/^(?:IDLE|CHECK_TIMER|WAITING_DRIVER|DRIVER_WAIT_INVITE|DRIVER_READY_INFO|DRIVER_POST_RACE_HOME|POST_RACE_HOME|COOLDOWN)$/i.test(raceCorePhase)) {
-      try { unsafeWindow.mrbGroupTransaction?.release?.('race', `passieve Race-fase: ${raceCorePhase}`); } catch(_) {}
-    }
+    // TEST27N: group ownership volgt exact dezelfde atomic/passive fasegrens
+    // als de centrale preemption. Geen tweede, conflicterende Race-state meer.
+    try {
+      const p=String(raceCorePhase||'').toUpperCase();
+      if(RACE_ATOMIC_PHASE_RE.test(p)) unsafeWindow.mrbGroupTransaction?.acquire?.('race',p);
+      else if(RACE_PASSIVE_PHASE_RE.test(p)) unsafeWindow.mrbGroupTransaction?.release?.('race','race '+p.toLowerCase());
+    } catch(_) {}
   }
 
   // 5.8.40: centrale vrijgave van een afgeronde/gepauzeerde Race-actie.
   // In 5.8.38/5.8.39 werd deze helper wel aangeroepen maar nergens gedefinieerd,
   // waardoor callbacks met een ReferenceError stopten voordat Mijn Account kon openen.
   function raceReleaseAction(detail='Race-actie vrijgegeven'){
+    try { unsafeWindow.mrbGroupTransaction?.release?.('race',detail); } catch(_) {}
     raceCorePhase = 'IDLE';
     raceCoreDetail = String(detail || 'Race-actie vrijgegeven');
     raceCoreUpdatedAt = Date.now();
@@ -6111,8 +6250,8 @@ try {
     return true;
   }
 
-  // Alleen echte transactie-fasen blokkeren Heist. Idle/cooldown/info-wacht nooit.
-  const RACE_ACTIVE_PHASE_RE = /^(?:STARTING|LEADER_OPEN|LEADER_INVITE|RUNNING|DRIVER_OPEN|DRIVER_ACCEPT|DRIVER_CAR|TRAVEL|CANCEL_PENDING|CANCELLING)$/;
+  // Alleen echte atomaire transactie-fasen blokkeren andere flows.
+  const RACE_ACTIVE_PHASE_RE = RACE_ATOMIC_PHASE_RE;
   try {
     unsafeWindow.mrbRaceTransaction = Object.freeze({
       active:()=>RACE_ACTIVE_PHASE_RE.test(String(raceCorePhase||'').toUpperCase()),
@@ -6133,17 +6272,66 @@ try {
   // Na enkele bevestigde lege Race-controles synchroniseert Driver opnieuw via Mijn Account.
   let driverAcceptedWatch = false;
   let driverAcceptedMisses = 0;
+  const DRIVER_READY_STALE_MS = 90_000;
+  const DRIVER_READY_VERIFY_GAP_MS = 8_000;
+  let driverAcceptedSince = 0;
+  let driverReadyLastVerifyAt = 0;
+  function markDriverAccepted(){
+    driverAcceptedWatch = true;
+    if (!driverAcceptedSince) driverAcceptedSince = Date.now();
+    driverAcceptedMisses = 0;
+  }
+  function clearDriverAcceptedWatch(reason=''){
+    driverAcceptedWatch = false;
+    driverAcceptedSince = 0;
+    driverAcceptedMisses = 0;
+    driverReadyLastVerifyAt = 0;
+    clearDriverReadyExit();
+    if(reason){ try { unsafeWindow.mrbUnifiedDiagnostics?.add?.('RACE_DRIVER_READY_CLEAR',{reason,role:raceRole}); } catch(_) {} }
+  }
+  function driverAcceptedStale(){
+    return !!driverAcceptedWatch && driverAcceptedSince > 0 && (Date.now() - driverAcceptedSince) >= DRIVER_READY_STALE_MS;
+  }
+  function recoverStaleDriverReady(reason='oude DRIVER_READY verlopen'){
+    if (raceRole !== 'slave' || !driverAcceptedStale()) return false;
+    const ageMs = Date.now() - driverAcceptedSince;
+    clearRacePlan();
+    clearDriverAcceptedWatch(reason);
+    raceReleaseAction(reason);
+    raceRegistryState('CHECK_TIMER', reason);
+    try { unsafeWindow.mrbUnifiedDiagnostics?.add?.('RACE_DRIVER_READY_STALE_RECOVER',{reason,ageMs,role:raceRole}); } catch(_) {}
+    try { unsafeWindow.mrbFlightRecorder?.add?.('RACE_DRIVER_READY_STALE_RECOVER',{reason,ageMs}); } catch(_) {}
+    return true;
+  }
+  function planDriverReadyVerification(reason='server-Race staat Nu terwijl Driver-ready nog actief is'){
+    if (raceRole !== 'slave' || !driverAcceptedWatch) return false;
+    const now=Date.now();
+    const left=Math.max(0, DRIVER_READY_VERIFY_GAP_MS-(now-driverReadyLastVerifyAt));
+    if(left>0){
+      raceRegistryState('DRIVER_READY', `${reason} · verificatie over ${Math.ceil(left/1000)}s`);
+      saveRacePlan({type:'info',at:now+left,createdAt:now,role:raceRole});
+      armStoredRacePlan();
+      return true;
+    }
+    driverReadyLastVerifyAt=now;
+    clearRacePlan();
+    raceRegistryState('DRIVER_VERIFY', reason);
+    saveRacePlan({type:'start',at:now+randomDelay(1200,2500),createdAt:now,role:raceRole,verifyReady:true});
+    armStoredRacePlan();
+    try { unsafeWindow.mrbUnifiedDiagnostics?.add?.('RACE_DRIVER_READY_VERIFY',{reason,ageMs:now-driverAcceptedSince}); } catch(_) {}
+    return true;
+  }
   // 5.8.50: onafhankelijke Driver-exit. Na een bevestigde/ingestuurde auto mag de
   // Driver niet afhankelijk blijven van de gedeelde Race loopTimer. Die timer kan door
   // een andere Race-callback worden vervangen. Deze aparte timer keert daarom altijd
   // terug naar Mijn Account zolang de Driver nog op een Race-pagina staat.
   let driverReadyExitTimer = null;
   function clearDriverReadyExit(){
-    if (driverReadyExitTimer){ clearTimeout(driverReadyExitTimer); driverReadyExitTimer = null; }
+    if (driverReadyExitTimer){ mrbClearTimeout(driverReadyExitTimer); driverReadyExitTimer = null; }
   }
   function driverReadyHardExit(reason='Driver-race afgerond; terug naar Mijn Account'){
     clearDriverReadyExit();
-    driverReadyExitTimer = setTimeout(()=>{
+    driverReadyExitTimer = mrbSetTimeout(()=>{
       driverReadyExitTimer = null;
       if(!scriptAan || raceRole!=='slave' || isLoggedOut()) return;
       if (/information\.php/i.test(location.href)) {
@@ -6156,7 +6344,7 @@ try {
       clearRacePlan();
       raceReleaseAction(reason);
       guiLoad('/information.php');
-      setTimeout(()=>{
+      mrbSetTimeout(()=>{
         if(!scriptAan || raceRole!=='slave' || isLoggedOut()) return;
         if (/information\.php/i.test(location.href)) checkAvailability(true);
       }, randomDelay(2500,4500));
@@ -6164,12 +6352,12 @@ try {
   }
 
   const next = (fn, ms)=>{
-    if(loopTimer) clearTimeout(loopTimer);
-    loopTimer = setTimeout(fn, Math.max(0, ms || 0));
+    if(loopTimer) mrbClearTimeout(loopTimer);
+    loopTimer = mrbSetTimeout(fn, Math.max(0, ms || 0));
   };
   const clearAll = ()=>{
-    if(loopTimer) clearTimeout(loopTimer);
-    if(failsafeTimer) clearTimeout(failsafeTimer);
+    if(loopTimer) mrbClearTimeout(loopTimer);
+    if(failsafeTimer) mrbClearTimeout(failsafeTimer);
     clearDriverReadyExit();
   };
 
@@ -6199,10 +6387,52 @@ try {
 
   const $jq = ()=> (unsafeWindow.$ || unsafeWindow.jQuery || null);
 
+  // TEST10: Race mag maar EEN terugkeer naar Mijn Account tegelijk open hebben.
+  // Een mislukte/trage SPA-load kan daardoor niet meer door goInfo, PriorityWake
+  // en checkAvailability tegelijk opnieuw worden aangevraagd.
+  let raceInfoNavPendingUntil = 0;
+  let raceInfoRecoveryUntil = 0;
+  function raceInfoArrived(){
+    if (!/information\.php/i.test(location.href)) return false;
+    raceInfoNavPendingUntil=0;
+    raceInfoRecoveryUntil=0;
+    return true;
+  }
+  function raceInfoNavSuppressed(){
+    raceInfoArrived();
+    const now=Date.now();
+    return now < raceInfoNavPendingUntil || now < raceInfoRecoveryUntil;
+  }
+  function armRaceInfoSingleFlight(){
+    const now=Date.now();
+    if (raceInfoArrived()) return false;
+    if (now < raceInfoRecoveryUntil || now < raceInfoNavPendingUntil) return false;
+    raceInfoNavPendingUntil=now+10000;
+    try { unsafeWindow.mrbFlightRecorder?.add?.('RACE_INFO_NAV_START',{pendingUntil:raceInfoNavPendingUntil}); } catch(_) {}
+    mrbSetTimeout(()=>{
+      if (raceInfoArrived()) return;
+      if (Date.now() < raceInfoNavPendingUntil) return;
+      raceInfoNavPendingUntil=0;
+      raceInfoRecoveryUntil=Date.now()+45000;
+      raceRegistryState('RECOVERY_WAIT','Mijn Account niet bevestigd; Race 45s in herstelrust');
+      try { unsafeWindow.mrbFlightRecorder?.add?.('RACE_INFO_RECOVERY_WAIT',{until:raceInfoRecoveryUntil}); } catch(_) {}
+      try { unsafeWindow.mrbUnifiedDiagnostics?.add?.('RACE_INFO_RECOVERY_WAIT',{until:raceInfoRecoveryUntil,role:raceRole}); } catch(_) {}
+    },10100);
+    return true;
+  }
 
   const guiLoad = (path)=>{
+    if (unsafeWindow.mrbSessionSafeMode?.active?.()) return false;
+    const toInfo=/information\.php/i.test(String(path||''));
+    if (toInfo){
+      if (raceInfoArrived()) return true;
+      if (!armRaceInfoSingleFlight()) {
+        try { unsafeWindow.mrbFlightRecorder?.add?.('RACE_INFO_NAV_SUPPRESS',{pendingUntil:raceInfoNavPendingUntil,recoveryUntil:raceInfoRecoveryUntil}); } catch(_) {}
+        return true;
+      }
+    }
     if (unsafeWindow.mrbNavigate?.(path,{source:'race'})) return true;
-    try { unsafeWindow.omerta.GUI.container.loadPage(path); return true; }
+    try { return unsafeWindow.mrbNavigate?.(path,{source:'race'}) ?? false; }
     catch {
       // Gebruik voor Race altijd de normale pagina-URL; nooit een half geladen
       // fragment in de bestaande game-container laten staan.
@@ -6214,6 +6444,7 @@ try {
 
   function randomDelay(min,max){ return Math.floor(Math.random()*(max-min+1))+min; }
   function actionDelay(){ return (typeof unsafeWindow.mrbVarDelayMs === 'function') ? unsafeWindow.mrbVarDelayMs() : randomDelay(2000,5000); }
+
 
   function parseTimer(txt){
     const value = String(txt || '').replace(/\s+/g,' ').trim();
@@ -6295,8 +6526,18 @@ try {
       if (latest.type === 'start'){
         clearRacePlan();
         if (isLoggedOut()) return pauseForGate('Geplande racestart tijdens gate');
+        // Unified Scheduler heeft de runnable-volgorde al bepaald vóór deze
+        // geplande Race-start. De module start hier alleen zijn eigen transactie.
         if (raceRole === 'leader') leader_startRace();
         else slave_startRace();
+        return;
+      }
+
+      if (latest.type === 'partner'){
+        clearRacePlan();
+        if (isLoggedOut()) return pauseForGate('Geplande Driver-hercontrole tijdens gate');
+        if (raceRole !== 'leader') return;
+        leader_checkPartner(Number(latest.retries || 0));
         return;
       }
 
@@ -6315,9 +6556,8 @@ try {
   }
 
   function planRaceStart(){
-    // Leider krijgt altijd ruim de tijd om de uitnodiging eerst aan te maken.
-    // De oude vensters overlapten (Leider 4-10s, Driver 10-15s), waardoor de
-    // Driver soms tegelijk of zelfs eerder op de racepagina aankwam.
+    // Leider blijft eerst. Driver opent daarna snel genoeg om een bestaande invite
+    // te accepteren zonder de oude 25-30s kunstmatige vertraging.
     const delay = (raceRole === 'leader')
       ? randomDelay(3000,7000)
       : randomDelay(8000,12000);
@@ -6329,6 +6569,18 @@ try {
       role: raceRole
     });
 
+    armStoredRacePlan();
+  }
+
+  function planLeaderPartnerRecheck(waitMs, retries=0){
+    raceRegistryState('WAITING_DRIVER', 'wacht op Driver · hercontrole gepland');
+    saveRacePlan({
+      type: 'partner',
+      at: Date.now() + Math.max(0, waitMs),
+      createdAt: Date.now(),
+      role: 'leader',
+      retries: Number(retries || 0)
+    });
     armStoredRacePlan();
   }
 
@@ -6533,7 +6785,7 @@ try {
         return;
       }
       tries++;
-      setTimeout(poll, 250);
+      mrbSetTimeout(poll, 250);
     })();
   }
 
@@ -6828,8 +7080,8 @@ try {
     clearRacePlan();
     guiLoad('/races.php');
 
-    if(failsafeTimer) clearTimeout(failsafeTimer);
-    failsafeTimer = setTimeout(()=>{
+    if(failsafeTimer) mrbClearTimeout(failsafeTimer);
+    failsafeTimer = mrbSetTimeout(()=>{
       if(!scriptAan) return;
       goInfo();
     }, 60000);
@@ -6877,8 +7129,15 @@ try {
         racePrefillInviteName();
         raceSelectFirstAvailableCar();
         raceSafeClick(inviteBtn);
-        if(failsafeTimer) clearTimeout(failsafeTimer);
-        next(()=> leader_checkPartner(0), randomDelay(10000,15000));
+        if(failsafeTimer) mrbClearTimeout(failsafeTimer);
+
+        // TEST27O: na het versturen is Race niet meer atomair. De Leider wacht
+        // op de Driver, dus geef de racepagina direct vrij voor Crimes/Cars en
+        // bewaar slechts één persistente partner-hercontrole. De volgende
+        // atomaire fase begint pas bij LEADER_INSPECT.
+        raceRegistryState('WAITING_DRIVER', 'uitnodiging verstuurd · wacht passief op Driver');
+        unsafeWindow.mrbNavigate?.('/information.php',{source:'race-invite-wait',yield:true,force:true});
+        planLeaderPartnerRecheck(randomDelay(10000,15000), 0);
       }, actionDelay());
       return;
     }
@@ -6903,8 +7162,19 @@ try {
     if (isLoggedOut()) return pauseForGate('leader_checkPartner: uitgelogd');
     if(retries>=3){ goInfo(); return; }
 
+    // TEST27N: alleen het korte openen+lezen van de Racepagina is atomair.
+    // Daardoor kan Crimes/Cars de DOM niet tussen pagina-load en Start-detectie
+    // vervangen. Blijkt de Driver nog niet klaar, dan gaat Race direct terug naar
+    // de passieve WAITING_DRIVER-state en yieldt weer.
+    raceRegistryState('LEADER_INSPECT', 'Racepagina atomair controleren op Driver-ready');
     guiLoad('/races.php');
     next(()=>{
+      if (!/races\.php/i.test(location.href)) {
+        raceRegistryState('WAITING_DRIVER','Race-inspect kon pagina niet claimen; later opnieuw');
+        planLeaderPartnerRecheck(randomDelay(4000,7000), retries);
+        return;
+      }
+
       const body = document.body.innerText || '';
 
       if (raceRecoverStartedTravelBlock('Leider-wacht')) return;
@@ -6917,12 +7187,16 @@ try {
         return;
       }
 
-      if (/invited|accepted|uitgenodigd|geaccepteerd|waiting|wachten/i.test(body)){
-        next(()=> leader_checkPartner(retries+1), randomDelay(10000,15000));
-        return;
-      }
-
-      next(leader_raceFlow, randomDelay(2000,4000));
+      // TEST27P: dit is een begrensde inspectie, geen tweede Race-flow.
+      // Als er GEEN startknop/ready-status is, is de Driver simpelweg nog niet klaar.
+      // Dat geldt ook voor layouts/statussen die anders heten (bijv. "Accepted"
+      // zonder dat de Driver al een auto heeft ingezet). Blijf daarom nooit op
+      // /races.php hangen op basis van tekstherkenning: altijd terug naar Mijn Account
+      // en exact één partner-hercontrole bewaren.
+      raceRegistryState('WAITING_DRIVER', 'Driver nog niet startklaar · Mijn Account vrijgegeven');
+      unsafeWindow.mrbNavigate?.('/information.php',{source:'race-partner-wait',yield:true,force:true});
+      planLeaderPartnerRecheck(randomDelay(10000,15000), retries+1);
+      return;
     }, randomDelay(1000,2000));
   }
 
@@ -6939,7 +7213,7 @@ try {
 
     if (btn){
       raceSafeClick(btn);
-      if(failsafeTimer) clearTimeout(failsafeTimer);
+      if(failsafeTimer) mrbClearTimeout(failsafeTimer);
       next(leader_checkDone, randomDelay(5000,8000));
     } else {
       next(()=>{
@@ -6955,15 +7229,13 @@ try {
     if (isLoggedOut()) return pauseForGate('leader_checkDone: uitgelogd');
     const $ = $jq();
     const body = document.body.innerText || '';
-    const done = $ ? $('#game_container:contains("The Race has ended, check your inbox for results"), #game_container:contains("check your inbox for results"), #game_container:contains("The race has ended"), #game_container:contains("De Race is afgelopen")').length>0 : false;
-    const doneText = /(?:The\s+Race\s+has\s+ended|check\s+your\s+inbox\s+for\s+results|De\s+Race\s+is\s+afgelopen|controleer\s+je\s+postbus\s+voor\s+de\s+resultaten)/i.test(body);
+    const done = $ ? $('#game_container:contains("The Race has ended, check your inbox for results"), #game_container:contains("check your inbox for results"), #game_container:contains("The race has ended")').length>0 : false;
 
     if (raceRecoverStartedTravelBlock('Race-resultaatcontrole')) return;
 
-    if (done || doneText){
+    if (done || body.includes("The race has ended") || body.includes("check your inbox for results")){
       GM_Set("lastRaceTime", Math.floor(Date.now()/1000));
-      raceRegistryState('POST_RACE_HOME', 'Race afgerond; direct terug naar Mijn Account');
-      next(goInfo, randomDelay(800,1600));
+      next(goInfo, randomDelay(5000,10000));
     } else if (isTired(body)){
       next(goInfo, randomDelay(5000,10000));
     } else if (attempt >= 2){
@@ -7004,9 +7276,7 @@ try {
   }
 
   function raceDriverRecoverCancelledInvite(reason='oude Race-uitnodiging verdwenen'){
-    clearDriverReadySince();
-    driverAcceptedWatch = false;
-    driverAcceptedMisses = 0;
+    clearDriverAcceptedWatch('oude Race-uitnodiging verdwenen');
     clearRacePlan();
     raceReleaseAction();
     raceRegistryState('DRIVER_RESTART_AFTER_CANCEL', reason);
@@ -7055,8 +7325,7 @@ try {
     }
 
     if (alreadyAcceptedMsg(body)){
-      driverAcceptedWatch = true;
-      driverAcceptedMisses = 0;
+      markDriverAccepted();
 
       // Driver heeft zijn auto bevestigd. Vanaf dit moment niet op de oude
       // Race-pagina blijven pollen: Mijn Account is de bron van waarheid voor
@@ -7082,8 +7351,7 @@ try {
 
     const accept = $('a').filter(function(){ return /(Accepteer|Accept)/i.test($(this).text()); });
     if (accept.length){
-      driverAcceptedWatch = true;
-      driverAcceptedMisses = 0;
+      markDriverAccepted();
       accept[0].click();
       next(slave_selectCar, actionDelay());
       return;
@@ -7165,8 +7433,7 @@ try {
             try{ form.submit(); submitted = true; }catch{}
           }
 
-          driverAcceptedWatch = true;
-          driverAcceptedMisses = 0;
+          markDriverAccepted();
           // Zet direct ook de onafhankelijke hard-exit klaar. Zodra de bevestigingspagina
           // zichtbaar is, kan geen andere Race-callback deze terugkeer meer blokkeren.
           driverReadyHardExit('Auto bevestigd; Driver verlaat Race altijd naar Mijn Account');
@@ -7190,6 +7457,11 @@ try {
       if (armStoredRacePlan()) return;
 
       if (fromInfoSync){
+        const now=Date.now();
+        if (now < raceInfoRecoveryUntil){
+          next(()=>checkAvailability(true), Math.max(3000,raceInfoRecoveryUntil-now+250));
+          return;
+        }
         guiLoad('/information.php');
         next(()=>checkAvailability(true), randomDelay(3000,6000));
         return;
@@ -7232,21 +7504,27 @@ try {
     const status = readRaceStatusByLabel();
 
     if (/^(Nu|NOW|Now)$/i.test(status)){
+      // Crimes/Cars-prioriteit wordt centraal door de Unified Dispatcher bepaald.
+      // Race plant hier alleen de eigen start nadat de centrale wake is ontvangen.
+
       const existingPlan = loadRacePlan();
-      if (existingPlan && existingPlan.type === 'start'){
-        if (existingPlan.at > Date.now() + 250){
-          armStoredRacePlan();
+      if (existingPlan && existingPlan.type === 'partner'){
+        armStoredRacePlan();
+        return;
+      }
+      if (existingPlan && existingPlan.type === 'start' && existingPlan.at > Date.now() + 250){
+        armStoredRacePlan();
+        return;
+      }
+
+      // TEST27N: server-Nu mag een oude DRIVER_READY niet meer 90s blind blokkeren.
+      // De Driver verifieert begrensd op /races.php of dezelfde ready-status nog
+      // bestaat, of dat er inmiddels een verse uitnodiging/lege pagina zichtbaar is.
+      if (raceRole === 'slave' && driverAcceptedWatch){
+        if (!recoverStaleDriverReady('Race bleef DRIVER_READY terwijl timer opnieuw Nu is')){
+          planDriverReadyVerification('Race-timer is Nu; bestaande Driver-ready verifiëren');
           return;
         }
-
-        // TEST27S root cause: een startplan waarvan de deadline al verstreken was,
-        // werd voorheen opnieuw 8-12s/3-7s vooruit gepland. Als de opgeslagen
-        // callback ooit gemist was kon dit eindeloos blijven herhalen. Een verlopen
-        // plan is nu juist het bewijs dat de actie DIRECT uitgevoerd moet worden.
-        clearRacePlan();
-        if (raceRole === 'leader') leader_startRace();
-        else slave_startRace();
-        return;
       }
 
       planRaceStart();
@@ -7255,6 +7533,9 @@ try {
 
     const wait = parseTimer(status);
     if (wait > 0){
+      if (driverAcceptedWatch){
+        clearDriverAcceptedWatch('Race-servercooldown bevestigd');
+      }
       planInfoRecheck(wait + randomDelay(5000,15000));
       return;
     }
@@ -7263,47 +7544,71 @@ try {
     planInfoRecheck(10000);
   }
 
-  // TEST27S: echte centrale wake-entry voor de Unified Dispatcher.
-  // De dispatcher mag Race pas als geaccepteerd beschouwen wanneer deze functie
-  // daadwerkelijk bestaat en een geldige wake heeft ingepland/uitgevoerd.
-  function unifiedRaceWake(source='unified-dispatcher'){
-    if(!scriptAan || isLoggedOut()) return false;
+  // TEST8: echte centrale Race-job bridge. In TEST7 werd mrbRacePriorityWake
+  // wel aangeroepen door de Unified Scheduler, maar nergens door Race geexporteerd.
+  // Daardoor kon vooral de Driver op een oud info-plan blijven slapen terwijl Race al Nu was.
+  unsafeWindow.mrbRacePriorityWake = function(source='unified'){
+    if (!scriptAan) {
+      try { unsafeWindow.mrbUnifiedDiagnostics?.add?.('RACE_WAKE_REJECT',{source,reason:'race-uit',role:raceRole}); } catch(_) {}
+      return false;
+    }
+    if (isLoggedOut()) {
+      try { unsafeWindow.mrbUnifiedDiagnostics?.add?.('RACE_WAKE_REJECT',{source,reason:'gate',role:raceRole}); } catch(_) {}
+      return false;
+    }
 
-    // Als we al op Mijn Account staan, lees de servertimer onmiddellijk opnieuw.
-    if (/information\.php/i.test(location.href)){
-      next(()=>checkAvailability(true), 100);
+    // TEST10: als een Race->Mijn Account single-flight al loopt of in recovery
+    // staat, accepteert de bridge geen nieuwe navigatiejob.
+    if (!/information\.php/i.test(location.href) && raceInfoNavSuppressed()) {
+      try { unsafeWindow.mrbUnifiedDiagnostics?.add?.('RACE_WAKE_DEFER',{source,role:raceRole,phase:raceCorePhase,reason:'info-single-flight'}); } catch(_) {}
+      return false;
+    }
+
+    // Een reeds lopende Leider-invite-wachtfase heeft precies een eigen
+    // hercontrole-owner. Een centrale wake mag die niet veranderen in een verse start.
+    const oldPlan = loadRacePlan();
+    if (oldPlan?.type === 'partner'){
+      armStoredRacePlan();
+      try { unsafeWindow.mrbUnifiedDiagnostics?.add?.('RACE_WAKE_DEFER',{source,role:raceRole,phase:raceCorePhase,reason:'partner-single-flight'}); } catch(_) {}
+      return false;
+    }
+    // TEST27N: Driver-ready is geen reden meer om een centrale Race-wake af te
+    // wijzen. checkAvailability(true) beslist op basis van de verse server-timer
+    // en plant zo nodig een begrensde Driver-ready-verificatie op /races.php.
+    if (raceRole === 'slave' && driverAcceptedWatch){
+      recoverStaleDriverReady('centrale Race-wake trof stale DRIVER_READY');
+    }
+
+    // Een centrale wake is leidend boven een oud cooldown/info-plan. De verse
+    // Mijn Account-timer wordt direct opnieuw gelezen door checkAvailability(true).
+    if (oldPlan?.type === 'info') clearRacePlan();
+
+    try {
+      unsafeWindow.mrbUnifiedDiagnostics?.add?.('RACE_WAKE_ACCEPT',{
+        source, role:raceRole, phase:raceCorePhase, oldPlan:oldPlan?.type||'',
+        oldPlanAt:Number(oldPlan?.at||0), onInfo:/information\.php/i.test(location.href)
+      });
+    } catch(_) {}
+
+    if (/information\.php/i.test(location.href)) {
+      checkAvailability(true);
       return true;
     }
 
-    // Een echte actieve Driver/Leider-handeling niet onderbreken; die bezit zijn
-    // eigen callback. Passieve/stale pagina's keren via Mijn Account terug naar de
-    // serverwaarheid en worden daarna opnieuw ingepland.
-    const activePhase=String(raceCorePhase||'').toUpperCase();
-    if (/^(?:STARTING|LEADER_OPEN|LEADER_INVITE|RUNNING|DRIVER_OPEN|DRIVER_ACCEPT|DRIVER_CAR|TRAVEL|CANCEL_PENDING|CANCELLING)$/.test(activePhase)) return true;
+    // Alleen vanuit een niet-atomaire fase mag de centrale scheduler Race naar
+    // Mijn Account trekken. Een echte Race-actie blijft eerst atomair afronden.
+    if (RACE_ACTIVE_PHASE_RE.test(String(raceCorePhase||'').toUpperCase())) {
+      try { unsafeWindow.mrbUnifiedDiagnostics?.add?.('RACE_WAKE_DEFER',{source,role:raceRole,phase:raceCorePhase}); } catch(_) {}
+      return false;
+    }
 
-    clearRacePlan();
-    raceReleaseAction(`centrale Race-wake: ${source}`);
     guiLoad('/information.php');
-    next(()=>checkAvailability(true), randomDelay(700,1300));
+    next(()=>{
+      if (!scriptAan || isLoggedOut()) return;
+      checkAvailability(true);
+    }, randomDelay(1200,2200));
     return true;
-  }
-  try { unsafeWindow.mrbRacePriorityWake = unifiedRaceWake; } catch(_) {}
-
-  // Zelfstandige lokale Race-watcher.
-  let raceLocalWatchBusy = false;
-  mrbSetInterval(()=>{
-    if (!scriptAan || raceLocalWatchBusy) return;
-    if (isLoggedOut()) return;
-    if (!/information\.php/i.test(location.href)) return;
-
-    const existing = loadRacePlan();
-    if (existing && Number(existing.at) > Date.now() + 250) return;
-
-    raceLocalWatchBusy = true;
-    try { checkAvailability(true); }
-    catch(e) { try { console.warn('[Race local watcher]', e); } catch(_) {} }
-    finally { setTimeout(()=>{ raceLocalWatchBusy = false; }, 1500); }
-  }, 2000);
+  };
 
   // ------------------ UI handlers ------------------
   block.querySelectorAll('input[name="raceRole"]').forEach(r=>{
@@ -7374,7 +7679,7 @@ try {
     // Bij een harde refresh zijn Omerta GUI/jQuery soms nog een fractie te vroeg.
     // Hervat daarom vertraagd en laat een tijdelijke initfout nooit de opgeslagen
     // Race-schakelaar uitschakelen.
-    setTimeout(()=>{
+    mrbSetTimeout(()=>{
       if (!scriptAan) return;
       try {
         if (isLoggedOut()){
@@ -7390,7 +7695,7 @@ try {
           const st = block?.querySelector('#raceStatus');
           if (st) st.innerHTML = '<span class="warn">Actief - hervatten...</span>';
         } catch (_) {}
-        setTimeout(()=>{
+        mrbSetTimeout(()=>{
           if (!scriptAan || isLoggedOut()) return;
           try { bootstrapRaceIdle(); }
           catch (retryError) { try { console.warn('[Race refresh retry]', retryError); } catch (_) {} }
@@ -7476,6 +7781,11 @@ try {
 // =====================================================================
 // =====================================================================
 // =====================================================================
+// =====================================================================
+// =====================================================================
+// SHARED JAIL BUYOUT CONTROLLER - TEST19B
+// Eén gedeelde jail-afhandeling voor modules buiten de Crimes/Cars-runner.
+// De bestaande Crimes/Cars instelling cc_buyout blijft de enige schakelaar.
 // =====================================================================
 ;(function MRBSharedJailBuyoutController(){
   if (unsafeWindow.mrbJailBuyoutControl) return;
@@ -8186,17 +8496,6 @@ try {
   let ccNavLeaseTarget = '';
   let ccNavLeaseUntil = 0;
 
-  // TEST27Z-CCFIX: een fysieke klik is nog geen bewezen serveractie.
-  // Houd een korte verificatiestatus bij totdat DOM/outcome of Mijn Account
-  // aantoonbaar bevestigt dat de server de poging heeft verwerkt.
-  let ccPendingClickKind = '';
-  let ccPendingClickAt = 0;
-  const CC_CLICK_VERIFY_MS = 4500;
-  const CC_PENDING_CLICK_MAX_MS = 15000;
-  function setPendingClick(kind){ ccPendingClickKind=kind; ccPendingClickAt=Date.now(); }
-  function clearPendingClick(){ ccPendingClickKind=''; ccPendingClickAt=0; }
-  function pendingClickRecent(kind){ return ccPendingClickKind===kind && ccPendingClickAt>0 && Date.now()-ccPendingClickAt<=CC_PENDING_CLICK_MAX_MS; }
-
   // ---- SPA loader
   const loadPage = (()=>{
     const blocked=()=>{ try{return !!unsafeWindow.mrbSessionSafeMode?.active?.();}catch(_){return false;} };
@@ -8206,14 +8505,11 @@ try {
         if (blocked()) return false;
         const now=Date.now();
         if (h===ccNavLeaseTarget && now<ccNavLeaseUntil){
-          try { console.debug('[MRB CCFIX] NAV lease actief', {target:h,remainingMs:ccNavLeaseUntil-now}); } catch(_) {}
           try { unsafeWindow.mrbUnifiedDiagnostics?.add?.('CC_NAV_SUPPRESS',{target:h,remaining:ccNavLeaseUntil-now}); } catch(_) {}
           return true;
         }
         ccNavLeaseTarget=h; ccNavLeaseUntil=now+8000;
-        let ok=false;
-        try { ok=unsafeWindow.mrbNavigate(h,{source:'crimes-cars'})===true; } catch(_) { ok=false; }
-        try { console.log(`[MRB CCFIX] NAV ${ok?'OK':'FAIL'} -> ${h}`); } catch(_) {}
+        const ok=unsafeWindow.mrbNavigate(h,{source:'crimes-cars'});
         if (!ok){ ccNavLeaseTarget=''; ccNavLeaseUntil=0; }
         return ok;
       };
@@ -8568,22 +8864,6 @@ try {
     // Hiermee blijft Nu staan totdat dezelfde actiecyclus aantoonbaar begon.
     const wasDue = Number(currentNext || 0) <= now + 1500;
     const movesFuture = nextRemaining > 5000;
-
-    // TEST27Z-CCFIX: als de DOM na de klik geen duidelijke overgang liet zien,
-    // is een echte toekomstige Mijn Account-cooldown alsnog hard serverbewijs.
-    // Alleen dan registreren we de poging. Blijft de server op Nu, dan was de
-    // klik niet verwerkt en mag dezelfde actiecyclus opnieuw worden uitgevoerd.
-    if (pendingClickRecent(kind)){
-      if (movesFuture){
-        markAttempt(kind, `serverbevestigd-na-klik:${source}`);
-        clearPendingClick();
-        try { console.log(`[MRB CCFIX] ${kind} klik bevestigd door servercooldown (${Math.ceil(nextRemaining/1000)}s)`); } catch(_) {}
-      } else if (nextRemaining <= 0){
-        clearPendingClick();
-        try { console.warn(`[MRB CCFIX] ${kind} klik NIET verwerkt: server staat nog op Nu -> opnieuw proberen`); } catch(_) {}
-      }
-    }
-
     const ownAttemptRecent = now - lastAttemptAt(kind) <= 60_000;
     if (wasDue && movesFuture && !ownAttemptRecent){
       try { console.warn(`[Crimes/Cars] ${kind} toekomsttimer uit ${source} genegeerd: lokale deadline was al Nu en er is geen poging geregistreerd.`); } catch(_) {}
@@ -9481,13 +9761,12 @@ paint();
     });
     if(!buttons.length) return [];
 
-    // TEST27Z-CCFIX: Crimes gebruikt bewust altijd de laatste beschikbare optie.
-    // De oude generieke % parser las o.a. data-value=chance5 als "5%" en koos
-    // daardoor niet betrouwbaar de door Gold gewenste vijfde/laatste crime.
-    const chosen=buttons[buttons.length-1];
-    if(!chosen) return [];
-    try { console.log(`[MRB CCFIX] Crimes laatste optie gekozen (${buttons.length}/${buttons.length})`); } catch(_) {}
-    return [chosen];
+    const ranked=buttons.map((btn,idx)=>({btn,idx,chance:readChancePercent(btn)}))
+      .filter(x=>Number.isFinite(x.chance)&&x.chance>=0)
+      .sort((a,b)=>b.chance!==a.chance ? b.chance-a.chance : a.idx-b.idx);
+    if(!ranked.length) return []; // TEST9: nooit meer blind buttons[0] gebruiken.
+    try { console.log('[Crimes/Cars/D&D] Hoogste kans gekozen:', kind, ranked[0].chance + '%'); } catch(_) {}
+    return [ranked[0].btn];
   }
 
   // ===================================================================
@@ -9911,48 +10190,6 @@ paint();
     paint();
   }
 
-  function ccOutcomeEvidence(kind, chosen){
-    try{
-      // Alleen inhoudelijk resultaatbewijs telt. Een verdwenen knop of SPA-routewissel
-      // kan ook een rerender/onderbroken load zijn en is daarom GEEN execute-bevestiging.
-      if (jailNowDetected() || jailFreeDetected()) return 'jail-resultaat';
-      if (attemptFailedDetected()) return 'mislukt-resultaat';
-      if (successDetected() || (kind==='cars' && carSuccessDetected())) return 'succes-resultaat';
-      if (readPopupCountdownMs() !== null) return 'cooldown-popup';
-    }catch(_){}
-    return '';
-  }
-
-  function verifyCrimesCarsClick(kind, chosen, startedAt){
-    if (!running || pausedCaptcha || current !== kind) return;
-    const evidence=ccOutcomeEvidence(kind, chosen);
-    if(evidence){
-      markAttempt(kind, `automatisch-bevestigd:${evidence}`);
-      clearPendingClick();
-      try { console.log(`[MRB CCFIX] ${kind} klik bevestigd via ${evidence}`); } catch(_) {}
-      handleOutcome(kind);
-      return;
-    }
-    const age=Date.now()-startedAt;
-    if(age<CC_CLICK_VERIFY_MS){
-      outcomeTimeoutId=mrbSetTimeout(()=>{
-        outcomeTimeoutId=null;
-        verifyCrimesCarsClick(kind, chosen, startedAt);
-      },350);
-      return;
-    }
-
-    // Geen zichtbare overgang: niet gokken en niet als poging boeken.
-    // Mijn Account is nu de arbiter. Toekomstige cooldown = verwerkt; Nu = retry.
-    try { console.warn(`[MRB CCFIX] ${kind} klik na ${age}ms niet bevestigd -> servercontrole via Mijn Account`); } catch(_) {}
-    busy=false;
-    current='';
-    stopWaiters();
-    loadPage(INFO_PAGE);
-    mrbSetTimeout(()=>{ try{ resyncFromInfo(); wake(); }catch(_){} },1200);
-    paint();
-  }
-
   function waitAndClick(kind){
     stopWaiters();
 
@@ -10048,14 +10285,12 @@ paint();
             paint();
             return;
           }
-          // TEST27Z-CCFIX: een click() call is geen serverbevestiging.
-          // Eerst aantoonbare DOM/outcome-overgang; bij twijfel verifieert Mijn Account.
-          setPendingClick(kind);
-          const verifyStartedAt=Date.now();
+          markAttempt(kind, 'automatisch');
+
           outcomeTimeoutId = mrbSetTimeout(()=>{
             outcomeTimeoutId = null;
-            verifyCrimesCarsClick(kind, chosen, verifyStartedAt);
-          }, 450);
+            handleOutcome(kind);
+          }, 900 + Math.floor(Math.random()*800));
         }, crimeActionDelay());
 
         return true;
@@ -10211,27 +10446,6 @@ paint();
     return now + 5000;
   }
 
-  // Read-only diagnose voor gemiste CC-navigatie/klik; verandert geen state.
-  unsafeWindow.mrbCCDiag = ()=>{
-    let navOwner=null, groupOwner=null;
-    try{ navOwner=unsafeWindow.mrbV9Planner?.navigationOwner?.() ?? null; }catch(_){}
-    try{ groupOwner=unsafeWindow.mrbGroupTransaction?.owner?.() ?? unsafeWindow.mrbGroupTransaction?.state?.()?.owner ?? null; }catch(_){}
-    const snap={
-      at:new Date().toISOString(), href:String(location.href||''),
-      running,busy,current,doCrimes,doCars,pausedCaptcha,gatePaused,
-      crimesNext,carsNext,crimesServerReady,carsServerReady,
-      crimesServerSyncAt,carsServerSyncAt,
-      confirmPendingKind,forcedRetryKind,
-      ccNavLeaseTarget,ccNavLeaseRemainingMs:Math.max(0,ccNavLeaseUntil-Date.now()),
-      pendingClickKind:ccPendingClickKind,
-      pendingClickAgeMs:ccPendingClickAt?Date.now()-ccPendingClickAt:0,
-      manualPaused:(()=>{try{return !!unsafeWindow.mrbManualControl?.isPaused?.();}catch(_){return false;}})(),
-      navOwner,groupOwner
-    };
-    try{ console.log('[MRB CCFIX DIAG]',snap); }catch(_){}
-    return snap;
-  };
-
   unsafeWindow.mrbV9CrimesCars = {
     version:'11.1.0-test14-cc-clean',
     wake:()=>{ tick(); return schedulerNextAt(); },
@@ -10247,8 +10461,7 @@ paint();
     state:()=>({
       running, busy, current, doCrimes, doCars, doDD:false,
       crimesNext, carsNext, crimesServerReady, carsServerReady, crimesServerSyncAt, carsServerSyncAt,
-      ddRetryAt, jailUntil, jailReleasePending, jailReleaseKind, jailReleaseStage, pausedCaptcha, gatePaused, confirmPendingKind, forcedRetryKind,
-      ccNavLeaseTarget, ccNavLeaseUntil, pendingClickKind:ccPendingClickKind, pendingClickAt:ccPendingClickAt
+      ddRetryAt, jailUntil, jailReleasePending, jailReleaseKind, jailReleaseStage, pausedCaptcha, gatePaused, confirmPendingKind, forcedRetryKind
     })
   };
 
@@ -10621,14 +10834,9 @@ paint();
       try {
         if(mayWake('race') && unsafeWindow.mrbGroupTransaction?.acquire?.('race','WAKE_PENDING')){
           diag('RACE_WAKE',{timer:raceRaw},'race-wake',1200);
-          const wake=unsafeWindow.mrbRacePriorityWake;
-          if(typeof wake!=='function'){
-            unsafeWindow.mrbGroupTransaction?.release?.('race','Race wake ontbreekt');
-          } else {
-            const accepted=wake('unified-dispatcher');
-            if(accepted!==true) unsafeWindow.mrbGroupTransaction?.release?.('race','Race wake geweigerd');
-            else return;
-          }
+          const accepted=unsafeWindow.mrbRacePriorityWake?.('unified-test20b');
+          if(accepted===false) unsafeWindow.mrbGroupTransaction?.release?.('race','race wake geweigerd');
+          else return;
         }
       } catch(_) {}
     }
@@ -10655,18 +10863,9 @@ paint();
     }
     if(nowish(spotRaw) && GM_Get('mrb_spot_complete_v1_enabled',false)){
       try {
-        const ctl=unsafeWindow.mrbSpotRaidCoreV3;
-        const ss=ctl?.getState?.()||{};
-        if(String(ss.role||'').toLowerCase()==='driver'){
-          // Driver-wake is alleen een passieve invite-probe en krijgt dus geen
-          // group-owner. Ownership ontstaat pas na echte acceptatie/ready-state.
-          if(mayWake('spot')){
-            diag('SPOT_DRIVER_PROBE_WAKE',{timer:spotRaw},'spot-driver-probe-wake',1200);
-            ctl?.wake?.();
-          }
-        } else if(mayWake('spot') && unsafeWindow.mrbGroupTransaction?.acquire?.('spot','WAKE_PENDING')){
+        if(mayWake('spot') && unsafeWindow.mrbGroupTransaction?.acquire?.('spot','WAKE_PENDING')){
           diag('SPOT_WAKE',{timer:spotRaw},'spot-wake',1200);
-          const accepted=ctl?.wake?.();
+          const accepted=unsafeWindow.mrbSpotRaidCoreV3?.wake?.();
           if(accepted===false) unsafeWindow.mrbGroupTransaction?.release?.('spot','spot wake geweigerd');
         }
       } catch(_) {}
@@ -11584,16 +11783,6 @@ paint();
   const K_HEIST_PRIORITY='mrb_travel_heist_priority_v1';
   const K_HEIST_BUFFER='mrb_travel_heist_buffer_minutes_v1';
   const K_NEXT_CHECK='mrb_travel_roundtrip_next_check_v1';
-  const K_SYNC='mrb_travel_lockstep_sync_v1';
-  const K_HEIST_CITIES='mrb_heist_p1_leader_cities';
-  const K_LAST_MODE='mrb_travel_last_mode_v1';
-  const K_PENDING_CITY='mrb_travel_pending_city_v2';
-  const K_PENDING_MODE='mrb_travel_pending_mode_v2';
-  const K_PENDING_INDEX='mrb_travel_pending_index_v2';
-  const K_HEIST_AVAIL='mrb_travel_heist_available_cities_v1';
-  const K_HEIST_AVAIL_AT='mrb_travel_heist_available_at_v1';
-  const K_HEIST_PROBE='mrb_travel_heist_probe_pending_v1';
-  const HEIST_AVAIL_TTL=5*60*1000;
 
   const INFO='/information.php';
   const TRAVEL='/?module=Travel';
@@ -11604,9 +11793,7 @@ paint();
   let enabled=!!GM_Get(K_ON,false);
   let routeIndex=Math.max(0,Number(GM_Get(K_INDEX,0))||0);
   let heistPriority=GM_Get(K_HEIST_PRIORITY,true)!==false;
-  // TEST27T: 30 minuten is de veilige standaard. 0 blijft toegestaan voor handmatig uitschakelen.
-  let heistBuffer=Math.max(0,Math.min(180,Number(GM_Get(K_HEIST_BUFFER,30))||30));
-  let syncTravel=GM_Get(K_SYNC,false)===true;
+  let heistBuffer=Math.max(0,Math.min(180,Number(GM_Get(K_HEIST_BUFFER,60))||60));
   let nextCheck=Math.max(0,Number(GM_Get(K_NEXT_CHECK,0))||0);
   let busy=false;
 
@@ -11621,120 +11808,22 @@ paint();
   let allowed=loadCities();
   function saveCities(){GM_Set(K_CITIES,JSON.stringify(allowed));}
   function allowedCities(){return CITIES.filter(city=>allowed[city]!==false);}
-  function loadHeistCities(){
-    try{
-      let raw=GM_Get(K_HEIST_CITIES,{});
-      if(typeof raw==='string') raw=JSON.parse(raw||'{}');
-      return Object.fromEntries(CITIES.map(city=>[city,!(raw&&raw[city]===false)]));
-    }catch(_){return {...DEFAULT_CITIES};}
-  }
-  function heistAllowedCities(){
-    const hs=loadHeistCities();
-    return CITIES.filter(city=>allowed[city]!==false && hs[city]!==false);
-  }
-  function cachedHeistAvailable(){
-    try{
-      const at=Math.max(0,Number(GM_Get(K_HEIST_AVAIL_AT,0))||0);
-      if(!at||Date.now()-at>HEIST_AVAIL_TTL)return [];
-      let raw=GM_Get(K_HEIST_AVAIL,'[]');
-      if(typeof raw==='string')raw=JSON.parse(raw||'[]');
-      if(!Array.isArray(raw))return [];
-      const allowedSet=new Set(heistAllowedCities());
-      return raw.filter(city=>CITIES.includes(city)&&allowedSet.has(city));
-    }catch(_){return [];}
-  }
-  function saveHeistAvailable(list){
-    const cleanList=[...new Set((list||[]).filter(city=>CITIES.includes(city)))];
-    GM_Set(K_HEIST_AVAIL,JSON.stringify(cleanList));GM_Set(K_HEIST_AVAIL_AT,Date.now());
-    return cleanList;
-  }
-  function onGroup(){return /module=GroupCrimes/i.test(String(location.href||''));}
-  function parseHeistAvailableFromGroup(){
-    const root=document.querySelector('#game_container')||document.body;
-    const t=clean(root?.innerText||root?.textContent||'');
-    const allowedSet=new Set(heistAllowedCities());
-    const explicit=t.match(/(?:You might want to try your luck in|Je kunt je geluk proberen in)\s*[:\-]?\s*([^|]+?)(?=(?:Georganiseerde Misdaad|Mega OC|Overval een zaak|$))/i);
-    if(explicit){
-      const arr=CITIES.filter(city=>allowedSet.has(city)&&new RegExp('\\b'+city.replace(/[.*+?^${}()|[\]\\]/g,'\\$&').replace(' ','\\s+')+'\\b','i').test(explicit[1]));
-      if(arr.length)return arr;
-    }
-    const blockedMatch=t.match(/(?:may not do an? heist in the following cities|mag(?:\s+je)?(?:\s+geen)?\s+heist(?:\s+doen)?\s+in(?:\s+de)?\s+volgende\s+steden)\s*[:\-]?\s*([^|]+?)(?=(?:Georganiseerde Misdaad|Mega OC|Overval een zaak|$))/i);
-    const blocked=new Set();
-    if(blockedMatch){
-      for(const city of CITIES){
-        const re=new RegExp('\\b'+city.replace(/[.*+?^${}()|[\]\\]/g,'\\$&').replace(' ','\\s+')+'\\b','i');
-        if(re.test(blockedMatch[1]))blocked.add(city);
-      }
-    }
-    return CITIES.filter(city=>allowedSet.has(city)&&!blocked.has(city));
-  }
-  function pendingTravel(){
-    const city=clean(GM_Get(K_PENDING_CITY,''));
-    const mode=clean(GM_Get(K_PENDING_MODE,''));
-    const index=Math.max(0,Number(GM_Get(K_PENDING_INDEX,routeIndex))||0);
-    return {city:CITIES.includes(city)?city:'',mode:/^(?:rank|prep)$/.test(mode)?mode:'',nextIndex:index};
-  }
-  function setPendingTravel(city,mode='rank',nextIndex=routeIndex){
-    if(!CITIES.includes(city))return false;
-    GM_Set(K_PENDING_CITY,city);GM_Set(K_PENDING_MODE,mode==='prep'?'prep':'rank');GM_Set(K_PENDING_INDEX,Math.max(0,Number(nextIndex)||0));
-    GM_Set(K_LAST_MODE,mode==='prep'?'prep':'rank');
-    return true;
-  }
-  function clearPendingTravel(){GM_Set(K_PENDING_CITY,'');GM_Set(K_PENDING_MODE,'');GM_Set(K_PENDING_INDEX,0);}
 
   function loadPage(path){
     if (unsafeWindow.mrbSessionSafeMode?.active?.()) return false;
     try { return unsafeWindow.mrbNavigate?.(path,{source:'travel-roundtrip'}) === true; } catch(_) { return false; }
   }
-  function travelVisibleDom(){
-    const root=document.querySelector('#game_container')||document.body;
-    const cls=String(root?.className||'');
-    if(document.querySelector('#module_Travel,.moduleTravel')||/moduletravel/i.test(cls))return true;
-    const heading=clean(root?.querySelector('h1,h2,h3,.title,.moduleTitle')?.textContent||'');
-    return /^(?:Reis|Travel)$/i.test(heading);
-  }
-  function infoVisibleDom(){
-    const root=document.querySelector('#game_container')||document.body;
-    const cls=String(root?.className||'');
-    const txt=clean(root?.innerText||root?.textContent||'');
-    if(/moduleInformation|information/i.test(cls))return true;
-    return /Volgende\s+vlucht|Next\s+flight/i.test(txt)
-      && /Volgende\s+(?:misdaadpoging|autojatpoging|heist)|Next\s+(?:crime|car|heist)/i.test(txt);
-  }
-  function onInfo(){
-    if(infoVisibleDom())return true;
-    if(travelVisibleDom())return false;
-    const route=[location.pathname||'',location.search||'',location.hash||'',location.href||''].join(' ');
-    return /information\.php/i.test(route)||/[?&]module=Information\b/i.test(route);
-  }
-  function onTravel(){
-    if(travelVisibleDom())return true;
-    if(infoVisibleDom())return false;
-    const route=[location.pathname||'',location.search||'',location.hash||'',location.href||''].join(' ');
-    return /module=Travel/i.test(route);
-  }
+  function onInfo(){return /information\.php/i.test(String(location.pathname||location.href));}
+  function onTravel(){return /module=Travel/i.test(String(location.href||''));}
   function visible(el){return !!(el&&!el.disabled&&(el.offsetParent!==null||el.getClientRects?.().length));}
-
-  function activeGroupTravelBlocker(){
-    try{
-      const tx=unsafeWindow.mrbGroupTransaction?.state?.();
-      if(tx?.active && /^(?:race|heist|spot)$/i.test(String(tx.owner||''))){
-        return `${String(tx.owner||'groep')} ${String(tx.phase||'actief')}`.trim();
-      }
-    }catch(_){}
-    return '';
-  }
 
   function parseDuration(raw){
     const value=clean(raw);
     if(/^(nu|now|ready)$/i.test(value))return 0;
     let ms=0;
-    for(const m of value.matchAll(/(\d+)\s*([DHMS]|dag(?:en)?|uur|uren|min(?:uten)?|sec(?:onden)?)/ig)){
-      const n=Number(m[1]); const u=m[2].toLowerCase();
-      if(u.startsWith('d')) ms+=n*86400000;
-      else if(u==='h'||u.startsWith('u')) ms+=n*3600000;
-      else if(u==='m'||u.startsWith('min')) ms+=n*60000;
-      else ms+=n*1000;
+    for(const m of value.matchAll(/(\d+)\s*([HMS])/ig)){
+      const n=Number(m[1]); const u=m[2].toUpperCase();
+      ms+=n*(u==='H'?3600000:u==='M'?60000:1000);
     }
     return ms;
   }
@@ -11746,7 +11835,7 @@ paint();
     }
     return '';
   }
-  function readTravelTimer(){return readTimer(/^(?:reis|travel|volgende reis|next travel|volgende vlucht|next flight)$/i);}
+  function readTravelTimer(){return readTimer(/^(?:reis|travel|volgende reis|next travel)$/i);}
   function readHeistTimer(){return readTimer(/volgende\s+heist|next\s+heist/i);}
   function currentCity(){
     const root=document.querySelector('#game_container')||document.body;
@@ -11762,58 +11851,26 @@ paint();
     return CITIES.find(city=>new RegExp('(?:stad|city)\\s*[:\\-]?\\s*'+city.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'i').test(text))||'';
   }
 
-  function heistContext(){
-    if(!heistPriority)return {mode:'rank',blocked:false,wait:Infinity,raw:'',reason:'Heist-voorrang uit'};
+  function heistBlocksTravel(){
+    if(!heistPriority)return {blocked:false,reason:''};
     const raw=readHeistTimer();
-    if(!raw)return {mode:'hold',blocked:true,wait:NaN,raw:'',reason:'Heisttimer nog niet zichtbaar; Travel wacht veilig'};
+    if(!raw)return {blocked:false,reason:'Heisttimer nog niet zichtbaar'};
     const wait=parseDuration(raw);
-    if(wait===0)return {mode:'prep',blocked:false,wait:0,raw,reason:'Heist is Nu · positioneren/blijven in Heiststad'};
-    if(wait<=heistBuffer*60000)return {mode:'prep',blocked:false,wait,raw,reason:`Heist over ${raw} · Heist-voorbereiding actief`};
-    return {mode:'rank',blocked:false,wait,raw,reason:`Heist over ${raw} · rank-Travel toegestaan`};
+    if(wait===0)return {blocked:true,reason:'Heist is Nu; Heist-module krijgt voorrang'};
+    if(wait<=heistBuffer*60000)return {blocked:true,reason:`Heist over ${raw}; gewone rondreis gepauzeerd`};
+    return {blocked:false,reason:`Heist over ${raw}`};
   }
 
-  // Beide accounts kunnen zonder gedeelde opslag dezelfde bestemming kiezen.
-  // Het absolute halfuurslot is op elke computer gelijk. De lijst moet op beide
-  // accounts hetzelfde zijn aangevinkt voor echte lockstep.
-  function halfHourSlot(){return Math.floor(Date.now()/1800000);}
-  function deterministicDestination(list){
-    if(!list.length)return '';
-    return list[halfHourSlot()%list.length];
-  }
-
-  function nextRankDestination(){
+  function nextDestination(){
     const list=allowedCities();
     if(!list.length)return {city:'',nextIndex:routeIndex,reason:'Geen steden aangevinkt'};
     const here=currentCity();
-    if(syncTravel){
-      const city=deterministicDestination(list);
-      if(!city)return {city:'',nextIndex:routeIndex,reason:'Geen lockstep-bestemming'};
-      // Als dit account al in het slotdoel staat, bewust wachten. Zo convergeert
-      // een achterlopende Leader/Driver zonder dat de ander naar een andere stad vliegt.
-      if(city===here)return {city:'',nextIndex:routeIndex,reason:`Lockstep-doel ${city}; al aanwezig, wachten op volgend halfuurslot`};
-      return {city,nextIndex:routeIndex,reason:`Lockstep halfuursdoel ${city}`};
-    }
     for(let step=0;step<list.length;step++){
       const index=(routeIndex+step)%list.length;
       const city=list[index];
       if(city!==here)return {city,nextIndex:(index+1)%list.length,reason:here?`vanaf ${here}`:'huidige stad onbekend'};
     }
     return {city:'',nextIndex:routeIndex,reason:'Alleen huidige stad is toegestaan'};
-  }
-
-  function heistPrepDestination(){
-    const configured=heistAllowedCities();
-    const verified=cachedHeistAvailable();
-    const list=verified.length?verified:configured;
-    const here=currentCity();
-    if(!list.length)return {city:'',nextIndex:routeIndex,reason:'Geen stad is zowel voor Travel als Heist toegestaan'};
-    if(here && list.includes(here))return {city:'',nextIndex:routeIndex,reason:`Heist-voorbereiding: ${here} is aantoonbaar geschikt; niet meer reizen`};
-    const city=syncTravel?deterministicDestination(list):list[0];
-    return {city,nextIndex:routeIndex,reason:`Heist-voorbereiding: naar ${city}${verified.length?' (geverifieerd)':''}`};
-  }
-
-  function chooseDestination(ctx){
-    return ctx.mode==='prep' ? heistPrepDestination() : nextRankDestination();
   }
 
   const cityHtml=CITIES.map(city=>`<label style="display:inline-flex;align-items:center;gap:4px;width:108px;margin:2px 0"><input type="checkbox" data-travel-city="${city}" ${allowed[city]!==false?'checked':''}>${city}</label>`).join('');
@@ -11823,12 +11880,10 @@ paint();
       <button id="trRoundToggle" class="gm-btn">${enabled?'Stop':'Start'}</button>
       <div id="trRoundStatus" class="gm-status"></div>
     </div>
-    <div style="font-size:11px;margin-top:6px"><b>Rank-Travel + Heist-positionering</b></div>
+    <div style="font-size:11px;margin-top:6px"><b>Rondreis door toegestane steden</b></div>
     <div style="margin-top:4px">${cityHtml}</div>
     <label style="display:flex;align-items:center;gap:6px;margin-top:7px"><input id="trHeistPriority" type="checkbox" ${heistPriority?'checked':''}> Heist heeft voorrang</label>
-    <div class="gm-row" style="margin-top:5px;align-items:center;gap:6px"><label>Heist-voorbereiding binnen</label><input id="trHeistBuffer" type="number" min="0" max="180" step="5" value="${heistBuffer}" style="width:54px"><span>min</span></div>
-    <label style="display:flex;align-items:center;gap:6px;margin-top:7px"><input id="trSync" type="checkbox" ${syncTravel?'checked':''}> Leider + Driver zelfde halfuursstad</label>
-    <div style="font-size:10px;opacity:.8;margin-top:3px">Voor lockstep moeten op beide accounts dezelfde Travel- en Heiststeden aangevinkt zijn.</div>
+    <div class="gm-row" style="margin-top:5px;align-items:center;gap:6px"><label>Travel pauzeren als Heist binnen</label><input id="trHeistBuffer" type="number" min="0" max="180" step="5" value="${heistBuffer}" style="width:54px"><span>min</span></div>
     <div id="trRoundInfo" style="font-size:11px;line-height:1.35;margin-top:6px"></div>
   `,'04-travel');
 
@@ -11837,16 +11892,13 @@ paint();
     const button=block.querySelector('#trRoundToggle');
     if(button)button.textContent=enabled?'Stop':'Start';
     if(status)status.innerHTML=enabled?'<span class="ok">Actief</span>':'<span class="bad">Uit</span>';
-    const ctx=onInfo()?heistContext():{mode:'rank',reason:'Heiststatus wordt op Mijn Account gecontroleerd'};
-    const destination=onInfo()?chooseDestination(ctx):nextRankDestination();
+    const destination=nextDestination();
+    const heist=onInfo()?heistBlocksTravel():{blocked:false,reason:'Heiststatus wordt op Mijn Account gecontroleerd'};
     const info=block.querySelector('#trRoundInfo');
     if(info)info.innerHTML=[
-      message||ctx.reason,
-      `Modus: <b>${ctx.mode==='prep'?'Heist voorbereiden':ctx.mode==='hold'?'Wachten op timer':'Rank-Travel'}</b>`,
-      `Volgende bestemming: <b>${destination.city||'-'}</b>`,
-      `Travel toegestaan: ${allowedCities().join(', ')||'geen'}`,
-      `Heist toegestaan: ${heistAllowedCities().join(', ')||'geen'}`,
-      syncTravel?'Lockstep: aan':'Lockstep: uit'
+      message||heist.reason,
+      `Volgende routestad: <b>${destination.city||'-'}</b>`,
+      `Toegestaan: ${allowedCities().join(', ')||'geen'}`
     ].join('<br>');
   }
 
@@ -11857,136 +11909,66 @@ paint();
   function travelButton(){return document.querySelector('button[name="jqi_state0_buttonTravel"][value="true"]')||document.querySelector('.jqi .jqibuttons button[name="jqi_state0_buttonTravel"]')||[...document.querySelectorAll('button')].find(b=>visible(b)&&/^travel|reizen?$/i.test(clean(b.textContent)));}
   async function sleep(ms){return new Promise(resolve=>mrbSetTimeout(resolve,ms));}
 
-  async function executeTravel(city,nextIndex,mode='rank'){
-    if(!city)return;
-    setPendingTravel(city,mode,nextIndex);
-    if(!onTravel()){
-      // TEST27U: een true-return van de centrale navigator betekent alleen dat het
-      // verzoek is geaccepteerd/gesuppressed; de echte SPA-overgang wordt pas op
-      // de volgende bestaande Travel-tick bewezen met onTravel().
-      loadPage(TRAVEL);
-      nextCheck=Date.now()+1800;GM_Set(K_NEXT_CHECK,nextCheck);
-      paint(`Travelpagina openen voor ${city}`);
-      return;
-    }
+  async function executeTravel(city,nextIndex){
+    if(!onTravel()){loadPage(TRAVEL);nextCheck=Date.now()+1800;GM_Set(K_NEXT_CHECK,nextCheck);paint(`Travelpagina openen voor ${city}`);return;}
     const control=findCityControl(city);
-    if(!control){
-      // Een half geladen/verkeerde Travel-DOM nooit als succes behandelen.
-      nextCheck=Date.now()+2200;GM_Set(K_NEXT_CHECK,nextCheck);paint(`${city} nog niet klikbaar; Travelpagina opnieuw verifiëren`);return;
-    }
+    if(!control){nextCheck=Date.now()+5000;GM_Set(K_NEXT_CHECK,nextCheck);paint(`${city} is niet klikbaar; later opnieuw`);return;}
     try{
       if(typeof unsafeWindow.onTravelData==='function')unsafeWindow.onTravelData(CITY_TO_ID[city]);
       else control.click();
     }catch(_){control.click();}
     await sleep(800);
     const button=travelButton();
-    if(!button){nextCheck=Date.now()+1200;GM_Set(K_NEXT_CHECK,nextCheck);paint(`Bevestiging voor ${city} afwachten`);return;}
+    if(!button){nextCheck=Date.now()+2500;GM_Set(K_NEXT_CHECK,nextCheck);paint(`Bevestiging voor ${city} afwachten`);return;}
     button.click();
-    if(!syncTravel && mode==='rank'){routeIndex=nextIndex;GM_Set(K_INDEX,routeIndex);}
-    clearPendingTravel();
-    nextCheck=Date.now()+3000;GM_Set(K_NEXT_CHECK,nextCheck);GM_Set(K_LAST_MODE,mode);
-    paint(`${mode==='prep'?'Heist-positionering':'Rank-reis'} naar ${city} bevestigd`);
+    routeIndex=nextIndex;GM_Set(K_INDEX,routeIndex);
+    nextCheck=Date.now()+3000;GM_Set(K_NEXT_CHECK,nextCheck);
+    paint(`Reis naar ${city} bevestigd; routepositie opgeslagen`);
     mrbSetTimeout(()=>{if(enabled)loadPage(INFO);},1500);
   }
 
   async function tick(){
-    if(!enabled||busy)return;
-
-    // TEST27U: lokale deadlines zijn alleen een optimalisatie. Als Mijn Account
-    // ondertussen server-side Volgende vlucht=Nu toont, is die serverwaarde leidend
-    // en mag een oude/stale nextCheck de reis niet minutenlang tegenhouden.
-    if(Date.now()<nextCheck){
-      let liveReady=false;
-      if(onInfo()){
-        const liveRaw=readTravelTimer();
-        liveReady=!!liveRaw && parseDuration(liveRaw)===0;
-      }
-      if(!liveReady)return;
-      nextCheck=0;GM_Set(K_NEXT_CHECK,0);
-    }
+    if(!enabled||busy||Date.now()<nextCheck)return;
     try{if(typeof gm_isGateVisible==='function'&&gm_isGateVisible())return;}catch(_){}
     busy=true;
     try{
-      if(onGroup()&&GM_Get(K_HEIST_PROBE,false)===true){
-        const list=saveHeistAvailable(parseHeistAvailableFromGroup());
-        GM_Set(K_HEIST_PROBE,false);
-        nextCheck=Date.now()+1200;GM_Set(K_NEXT_CHECK,nextCheck);
-        loadPage(INFO);paint(`Heist-steden gecontroleerd: ${list.join(', ')||'geen geldige stad'}`);return;
-      }
       if(!onInfo()&&!onTravel()){
         loadPage(INFO);nextCheck=Date.now()+2000;GM_Set(K_NEXT_CHECK,nextCheck);paint('Mijn Account openen voor timers');return;
       }
-
-      // TEST27U: op de Travelpagina wordt uitsluitend de bestemming uitgevoerd die
-      // op Mijn Account al server-side is vrijgegeven. Niet opnieuw berekenen na
-      // een SPA-overgang; zo blijft de handoff single-source-of-truth.
       if(onTravel()){
-        const pending=pendingTravel();
-        if(!pending.city||!pending.mode){
-          clearPendingTravel();loadPage(INFO);nextCheck=Date.now()+1800;GM_Set(K_NEXT_CHECK,nextCheck);paint('Travel zonder geldige pending bestemming; eerst timers opnieuw lezen');return;
-        }
-        await executeTravel(pending.city,pending.nextIndex,pending.mode);return;
+        const destination=nextDestination();
+        if(!destination.city){nextCheck=Date.now()+30000;GM_Set(K_NEXT_CHECK,nextCheck);paint(destination.reason);return;}
+        await executeTravel(destination.city,destination.nextIndex);return;
       }
-
-      const ctx=heistContext();
-      if(ctx.blocked){nextCheck=Date.now()+5000;GM_Set(K_NEXT_CHECK,nextCheck);paint(ctx.reason);return;}
-
+      const heist=heistBlocksTravel();
+      if(heist.blocked){nextCheck=Date.now()+10000;GM_Set(K_NEXT_CHECK,nextCheck);paint(heist.reason);return;}
       const raw=readTravelTimer();
       if(!raw){nextCheck=Date.now()+5000;GM_Set(K_NEXT_CHECK,nextCheck);paint('Reistimer niet gevonden');return;}
       const wait=parseDuration(raw);
       if(wait>0){nextCheck=Date.now()+wait+1000;GM_Set(K_NEXT_CHECK,nextCheck);paint(`Reistimer: ${raw}`);return;}
-
-      const groupBlocker=activeGroupTravelBlocker();
-      if(groupBlocker){
-        clearPendingTravel();
-        nextCheck=Date.now()+2000;GM_Set(K_NEXT_CHECK,nextCheck);
-        paint(`Travel wacht tot ${groupBlocker} is afgerond`);
-        return;
-      }
-
-      if(ctx.mode==='prep' && !cachedHeistAvailable().length){
-        GM_Set(K_HEIST_PROBE,true);
-        loadPage('/?module=GroupCrimes');
-        nextCheck=Date.now()+1800;GM_Set(K_NEXT_CHECK,nextCheck);
-        paint('Heist-voorbereiding: beschikbare steden controleren');
-        return;
-      }
-
-      const destination=chooseDestination(ctx);
-      if(!destination.city){
-        clearPendingTravel();nextCheck=Date.now()+5000;GM_Set(K_NEXT_CHECK,nextCheck);GM_Set(K_LAST_MODE,ctx.mode);
-        paint(destination.reason);return;
-      }
-      setPendingTravel(destination.city,ctx.mode,destination.nextIndex);
-      await executeTravel(destination.city,destination.nextIndex,ctx.mode);
+      const destination=nextDestination();
+      if(!destination.city){nextCheck=Date.now()+30000;GM_Set(K_NEXT_CHECK,nextCheck);paint(destination.reason);return;}
+      await executeTravel(destination.city,destination.nextIndex);
     }finally{busy=false;}
   }
 
   block.querySelector('#trRoundToggle')?.addEventListener('click',()=>{
-    enabled=!enabled;GM_Set(K_ON,enabled);nextCheck=0;GM_Set(K_NEXT_CHECK,0);GM_Set(K_LAST_MODE,'');GM_Set(K_HEIST_PROBE,false);clearPendingTravel();paint(enabled?'Travel gestart':'Travel gestopt');
+    enabled=!enabled;GM_Set(K_ON,enabled);nextCheck=0;GM_Set(K_NEXT_CHECK,0);paint(enabled?'Rondreis gestart':'Rondreis gestopt');
   });
   block.querySelectorAll('[data-travel-city]').forEach(input=>input.addEventListener('change',()=>{
-    allowed[input.dataset.travelCity]=!!input.checked;saveCities();routeIndex=0;GM_Set(K_INDEX,0);nextCheck=0;GM_Set(K_NEXT_CHECK,0);GM_Set(K_LAST_MODE,'');paint('Stedenlijst opgeslagen');
+    allowed[input.dataset.travelCity]=!!input.checked;saveCities();routeIndex=0;GM_Set(K_INDEX,0);nextCheck=0;GM_Set(K_NEXT_CHECK,0);paint('Stedenlijst opgeslagen');
   }));
   block.querySelector('#trHeistPriority')?.addEventListener('change',event=>{
-    heistPriority=!!event.target.checked;GM_Set(K_HEIST_PRIORITY,heistPriority);nextCheck=0;GM_Set(K_NEXT_CHECK,0);GM_Set(K_LAST_MODE,'');paint('Heist-voorrang opgeslagen');
+    heistPriority=!!event.target.checked;GM_Set(K_HEIST_PRIORITY,heistPriority);nextCheck=0;GM_Set(K_NEXT_CHECK,0);paint('Heist-voorrang opgeslagen');
   });
   block.querySelector('#trHeistBuffer')?.addEventListener('change',event=>{
-    heistBuffer=Math.max(0,Math.min(180,Number(event.target.value)||0));event.target.value=heistBuffer;GM_Set(K_HEIST_BUFFER,heistBuffer);nextCheck=0;GM_Set(K_NEXT_CHECK,0);GM_Set(K_LAST_MODE,'');paint('Heistbuffer opgeslagen');
-  });
-  block.querySelector('#trSync')?.addEventListener('change',event=>{
-    syncTravel=!!event.target.checked;GM_Set(K_SYNC,syncTravel);routeIndex=0;GM_Set(K_INDEX,0);nextCheck=0;GM_Set(K_NEXT_CHECK,0);GM_Set(K_LAST_MODE,'');paint(syncTravel?'Lockstep reizen aangezet':'Lockstep reizen uitgezet');
+    heistBuffer=Math.max(0,Math.min(180,Number(event.target.value)||0));event.target.value=heistBuffer;GM_Set(K_HEIST_BUFFER,heistBuffer);nextCheck=0;GM_Set(K_NEXT_CHECK,0);paint('Heistbuffer opgeslagen');
   });
 
-  unsafeWindow.mrbTravelControl=Object.freeze({
-    state:()=>({enabled,busy,nextCheck,heistBuffer,syncTravel,pending:pendingTravel(),allowed:allowedCities(),heistAllowed:heistAllowedCities()}),
-    wake:()=>{if(!enabled||busy)return false;nextCheck=0;GM_Set(K_NEXT_CHECK,0);return true;}
-  });
-
-  paint('Travel-module geladen');
+  paint('Schone Travel-module geladen');
   mrbSetInterval(tick,1000);
   if(enabled){nextCheck=0;GM_Set(K_NEXT_CHECK,0);}
-})();;
+})();
 
 
 // [VERWIJDERD] BG Trainer module verwijderd op verzoek.
@@ -12219,10 +12201,6 @@ paint();
         // Oude, niet meer bijgewerkte registry-state mag een refresh niet eeuwig blokkeren.
         if(updated && now-updated>5*60_000) return false;
         const state=String(item.state||item.phase||'').trim().toUpperCase();
-        // TEST27S: passief Race-wachten is geen actieve transactie en mag een
-        // Smart Idle Refresh niet onbeperkt blokkeren. Echte start/accept/car/
-        // running-fasen blijven gewoon beschermd door de normale busy-check.
-        if(String(item.id||'').toLowerCase()==='race' && /^(?:WAITING_DRIVER|DRIVER_WAIT_INVITE|DRIVER_READY_INFO|DRIVER_POST_RACE_HOME|POST_RACE_HOME)$/.test(state)) return false;
         return !SAFE_MODULE_STATES.has(state);
       });
     }catch(e){return false;}
@@ -12295,7 +12273,7 @@ paint();
     block.querySelector('#rfToggle').textContent=active?'Stop':'Start';
     const gated=gateVisible();
     block.querySelector('#rfStatus').innerHTML=active
-      ? (gated ? '<span class="bad">⏸ Sessie/gate</span>' : '<span class="ok">✅ Actief</span>')
+      ? (gated ? '<span class="bad">⏸ Sessie/gate</span>' : '<span class="ok">✅ Actief — Unified</span>')
       : '<span class="bad">⛔</span>';
     const info=block.querySelector('#rfInfo');
     if(info){
@@ -12353,8 +12331,8 @@ paint();
       if(state.orphan){
         if(state.signature!==lastOverlaySignature){ lastOverlaySignature=state.signature; overlaySince=Date.now(); }
         if(!overlaySince) overlaySince=Date.now();
-        if(Date.now()-overlaySince>=FREEZE_CONFIRM_MS && safeForForcedPeriodicRefresh()){
-          if(doSafeRefresh('verweesde schermoverlay', true)) return {delayMs:PERIOD_MS,status:'freeze recovery refresh'};
+        if(Date.now()-overlaySince>=FREEZE_CONFIRM_MS && safeToRefresh()){
+          if(doSafeRefresh('verweesde schermoverlay')) return {delayMs:PERIOD_MS,status:'freeze recovery refresh'};
         }
         nextTs=Date.now()+3000; GM_Set(K_NEXTTS,nextTs);
         ui(`Mogelijke freeze controleren (${fmt(FREEZE_CONFIRM_MS-(Date.now()-overlaySince))})`);
@@ -15332,77 +15310,3 @@ paint();
   });
   if(enabled()) next(goInfo,600);
 })();
-// ==========================================================
-// TEST27Z CC+SPOT LOGOUT DIAG
-// Read-only diagnose bovenop de bestaande Flight Recorder.
-// Bewaart geen extra navigatie/actie-state en wijzigt geen moduleflow.
-// Console: mrbLogoutDiag() / mrbLogoutDiag(true)
-// ==========================================================
-(function MRBLogoutDiag(){
-  'use strict';
-  if (unsafeWindow.__mrbLogoutDiagInstalled) return;
-  unsafeWindow.__mrbLogoutDiagInstalled = true;
-
-  const clean=v=>String(v==null?'':v).replace(/\s+/g,' ').trim();
-  function safe(fn,fallback=null){ try{return fn();}catch(_){return fallback;} }
-  function snapshot(){
-    const cc=safe(()=>unsafeWindow.mrbV9CrimesCars?.state?.(),{})||{};
-    const spot=safe(()=>unsafeWindow.mrbSpotRaidCoreV3?.getState?.(),{})||{};
-    const heist=safe(()=>unsafeWindow.mrbHeistCoreControl?.getState?.(),{})||{};
-    const race=safe(()=>unsafeWindow.mrbModuleStateRegistry?.get?.('Race')||unsafeWindow.mrbModuleStateRegistry?.get?.('race'),{})||{};
-    const group=safe(()=>unsafeWindow.mrbGroupTransaction?.state?.(),{})||{};
-    const nav=safe(()=>unsafeWindow.mrbNavigationGate?.state?.(),{})||{};
-    const session=safe(()=>unsafeWindow.mrbSessionSafeMode?.state?.(),{})||{};
-    const backoff=safe(()=>unsafeWindow.mrbServerBackoff?.state?.(),{})||{};
-    return {
-      at:new Date().toISOString(),
-      href:String(location.href||''),
-      sessionSafe:session,
-      serverBackoff:backoff,
-      navigation:nav,
-      groupOwner:group,
-      crimesCars:{
-        running:!!cc.running,busy:!!cc.busy,current:clean(cc.current),
-        crimesServerReady:!!cc.crimesServerReady,carsServerReady:!!cc.carsServerReady,
-        confirmPendingKind:clean(cc.confirmPendingKind),forcedRetryKind:clean(cc.forcedRetryKind),
-        jailReleasePending:!!cc.jailReleasePending
-      },
-      race:{enabled:!!(race.running||race.enabled),phase:clean(race.phase||race.state)},
-      heist:{enabled:!!heist.enabled,role:clean(heist.role),phase:clean(heist.phase||heist.state)},
-      spot:{enabled:!!spot.enabled,role:clean(spot.role),state:clean(spot.state),nextAt:Number(spot.nextAt||0)}
-    };
-  }
-
-  function importantEvents(events){
-    const re=/(INCIDENT|ENV_CHANGE|MODULE_STATES|SERVER_BACKOFF|GROUP_OWNER|NAV|ROUTE|SESSION|SAFE|JS_ERROR|UNHANDLED|CLICK_LIMIT|UNIFIED_|CC_|SPOT|HEIST|RACE)/i;
-    const rows=(Array.isArray(events)?events:[]).filter(e=>re.test(String(e?.kind||'')));
-    return rows.slice(-60);
-  }
-
-  function report(verbose=false){
-    const rec=unsafeWindow.mrbFlightRecorder;
-    const incident=safe(()=>rec?.lastIncident?.(),null);
-    const live=safe(()=>rec?.live?.(),[])||[];
-    const source=incident?.events?.length?'lastIncident':'live';
-    const sourceEvents=incident?.events?.length?incident.events:live;
-    const events=verbose?sourceEvents.slice(-180):importantEvents(sourceEvents);
-    const result={source,incidentReason:clean(incident?.reason||''),incidentAt:incident?.frozenAt||0,current:snapshot(),events};
-    try{
-      console.group('[MRB Logout Diagnose]');
-      console.log('Bron:',source,'Reden:',result.incidentReason||'-');
-      console.log('Huidige status:',result.current);
-      console.table(events);
-      console.groupEnd();
-    }catch(_){ try{console.log('[MRB Logout Diagnose]',result);}catch(__){} }
-    return result;
-  }
-
-  const clearDiag=()=>safe(()=>unsafeWindow.mrbFlightRecorder?.clearIncident?.(),false);
-  try { unsafeWindow.mrbLogoutDiag=report; unsafeWindow.mrbLogoutDiagClear=clearDiag; } catch(_) {}
-  // Extra publicatiepaden voor loaders/userscript-isolatie zodat de gewone DevTools-console
-  // de diagnosefunctie ook kan vinden.
-  try { window.mrbLogoutDiag=report; window.mrbLogoutDiagClear=clearDiag; } catch(_) {}
-  try { globalThis.mrbLogoutDiag=report; globalThis.mrbLogoutDiagClear=clearDiag; } catch(_) {}
-  try { if(unsafeWindow?.window){ unsafeWindow.window.mrbLogoutDiag=report; unsafeWindow.window.mrbLogoutDiagClear=clearDiag; } } catch(_) {}
-})();
-
