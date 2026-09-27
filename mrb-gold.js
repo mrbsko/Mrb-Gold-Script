@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MRB Gold Edition
-// @version      6.0.0-test29E-source-diag
+// @version      6.0.0-test29F-bodyguard-recheck-fix
 // @description  MRB Gold: centrale Unified Scheduler, navigatie-owner, retry-circuitbreaker en strikte actieguards.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -18,6 +18,7 @@
 // @run-at       document-end
 // ==/UserScript==
 
+// Release 6.0.0-test29F: Bodyguard Trainer herstelt stale needsWork=false. Ook bij eerder bereikte doelen plant hij elke 15 minuten een echte Bodyguards-herinspectie; oude false/nextCheck=0 state wordt na update direct opnieuw gevalideerd. Geen wijzigingen aan Race/Heist/Spot/Crimes/Cars/D&D.
 // Release 6.0.0-test29E: uitsluitend bron-diagnose bovenop TEST29D. MutationObservers tonen nu eerste echte aanmaakframe + moduleclassificatie; centrale scheduler bewaart per task een bronframe/perfLabel zodat zware timeout/interval-callbacks niet meer als generieke dnd:timeout-ID verschijnen. Geen navigatie-, Spot-, Heist-, Race-, Crimes/Cars- of timerflow gewijzigd. Gebruik mrbPerfDiag(true), mrbObserverDiag() en mrbTaskSourceDiag().
 // Release 6.0.0-test29D: Spot Leider second-pass structureel hersteld. Na de eerste Start/Update blijft dezelfde actieve Spot-cyclus eigenaar van zijn bestaande timeout-state en wordt de verplichte tweede doorgang direct hervat: kort settlen -> Groepsmisdaden -> actieve Spot -> tweede Start/Update -> Mijn Account. Geen nieuwe watcher/loop toegevoegd. Leader zonder Crimes/Cars wacht niet meer op de langzame 35s achtergrond-hercontrole voor deze verplichte tweede pass.
 // Release 6.0.0-test29C: Spot Driver passieve invite-probes zijn volledig onder de Unified Dispatcher gebracht. De eigen Spot-tick mag bij Spot=Nu niet meer zelfstandig naar Groepsmisdaden navigeren; alleen een centrale Spot-wake geeft exact één probe-permit. Crimes/Cars, Race en Heist houden daardoor hun dispatcher-prioriteit. Na een lege probe keert Driver terug naar Mijn Account en wacht op een nieuwe centrale wake. Actieve Spot-flow na echte uitnodiging/acceptatie blijft ongewijzigd. Performance/observer-diagnose uit TEST29B blijft behouden.
@@ -3958,6 +3959,7 @@ Naam3"></textarea><br><br>
   needsWork=needsWork===null ? true : !!needsWork;
   let nextCheckAt=Math.max(0,Number(GM_Get(K_NEXT_CHECK,0))||0);
   let detrainPending=!!GM_Get(K_DETRAIN_PENDING,false);
+  if(on && needsWork===false && !nextCheckAt) nextCheckAt=Date.now();
   let lastStatus='Gereed';
   let lastRouteHref=String(location.href);
   let lastRouteChangeAt=Date.now();
@@ -4178,8 +4180,14 @@ Naam3"></textarea><br><br>
     GM_Set(K_NEEDS_WORK,needsWork);
     GM_Set(K_NEXT_CHECK,nextCheckAt);
   }
+  const BODYGUARD_RECHECK_MS = 15*60*1000;
   function actionDue(){
-    if(!on||!needsWork)return false;
+    if(!on)return false;
+    // TEST29F: needsWork=false is geen permanente eindstaat. Een eerdere DOM/state-
+    // inspectie kan stale zijn; plan daarom een echte periodieke herinspectie.
+    if(!needsWork){
+      return !nextCheckAt || Date.now()>=nextCheckAt;
+    }
     // De-trainen heeft geen servertrainingstimer. Als uit de laatste inspectie
     // bekend is dat er surplus is, mag Bodyguard ook tijdens een train-cooldown
     // terugkomen voor een untrain-actie.
@@ -4190,7 +4198,9 @@ Naam3"></textarea><br><br>
   }
   function nextDueAt(){
     if(!on) return Date.now()+15000;
-    if(!needsWork) return Date.now()+15*60*1000;
+    if(!needsWork){
+      return nextCheckAt>Date.now() ? nextCheckAt : Date.now()+250;
+    }
     const due=detrainPending
       ? Math.max(nextCheckAt,localCooldownUntil)
       : Math.max(nextCheckAt,cooldownEnd(),localCooldownUntil);
@@ -4303,7 +4313,7 @@ Naam3"></textarea><br><br>
       }
 
       setDetrainPending(false);
-      setWorkState(false,0); lastStatus='Alle geselecteerde bodyguards hebben hun doel bereikt'; paint();
+      setWorkState(false,Date.now()+BODYGUARD_RECHECK_MS); lastStatus='Alle geselecteerde bodyguards hebben hun doel bereikt'; paint();
     } finally { await sleep(700); busy=false; }
   }
 
