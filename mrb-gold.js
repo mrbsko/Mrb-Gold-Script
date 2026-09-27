@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MRB Gold Edition
-// @version      6.0.0-test29C-spot-central-dispatch
+// @version      6.0.0-test29E-source-diag
 // @description  MRB Gold: centrale Unified Scheduler, navigatie-owner, retry-circuitbreaker en strikte actieguards.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -18,65 +18,83 @@
 // @run-at       document-end
 // ==/UserScript==
 
+// Release 6.0.0-test29E: uitsluitend bron-diagnose bovenop TEST29D. MutationObservers tonen nu eerste echte aanmaakframe + moduleclassificatie; centrale scheduler bewaart per task een bronframe/perfLabel zodat zware timeout/interval-callbacks niet meer als generieke dnd:timeout-ID verschijnen. Geen navigatie-, Spot-, Heist-, Race-, Crimes/Cars- of timerflow gewijzigd. Gebruik mrbPerfDiag(true), mrbObserverDiag() en mrbTaskSourceDiag().
+// Release 6.0.0-test29D: Spot Leider second-pass structureel hersteld. Na de eerste Start/Update blijft dezelfde actieve Spot-cyclus eigenaar van zijn bestaande timeout-state en wordt de verplichte tweede doorgang direct hervat: kort settlen -> Groepsmisdaden -> actieve Spot -> tweede Start/Update -> Mijn Account. Geen nieuwe watcher/loop toegevoegd. Leader zonder Crimes/Cars wacht niet meer op de langzame 35s achtergrond-hercontrole voor deze verplichte tweede pass.
 // Release 6.0.0-test29C: Spot Driver passieve invite-probes zijn volledig onder de Unified Dispatcher gebracht. De eigen Spot-tick mag bij Spot=Nu niet meer zelfstandig naar Groepsmisdaden navigeren; alleen een centrale Spot-wake geeft exact één probe-permit. Crimes/Cars, Race en Heist houden daardoor hun dispatcher-prioriteit. Na een lege probe keert Driver terug naar Mijn Account en wacht op een nieuwe centrale wake. Actieve Spot-flow na echte uitnodiging/acceptatie blijft ongewijzigd. Performance/observer-diagnose uit TEST29B blijft behouden.
 // Release 6.0.0-test29B: performance-diagnose uitgebreid met bronlabels/stacks voor iedere MutationObserver. Geen moduleflow gewijzigd. Gebruik mrbPerfDiag() of mrbPerfDiag(true).
 
 
-// TEST29B OBSERVER SOURCE LABELS - READ ONLY
-(function installMRBObserverSourceDiag29B(){
+// TEST29E OBSERVER SOURCE LABELS - READ ONLY
+(function installMRBObserverSourceDiag29E(){
   'use strict';
   try {
     const root = unsafeWindow || window;
-    if (root.__mrbObserverSourceDiag29BInstalled) return;
-    root.__mrbObserverSourceDiag29BInstalled = true;
+    if (root.__mrbObserverSourceDiag29EInstalled) return;
+    root.__mrbObserverSourceDiag29EInstalled = true;
     const NativeMO = root.MutationObserver || window.MutationObserver;
-    if (!NativeMO || NativeMO.__mrb29bWrapped) return;
+    if (!NativeMO || NativeMO.__mrb29eWrapped) return;
     const obsStats = new Map();
     let seq = 0;
-    function cleanStack(st){
-      return String(st||'').split('\n').slice(2,8).map(x=>x.trim()).filter(Boolean).join(' <- ');
+    function lines(st){ return String(st||'').split('\n').map(x=>x.trim()).filter(Boolean); }
+    function meaningfulFrame(st){
+      const ls=lines(st).slice(1);
+      const skip=/installMRBObserverSourceDiag29E|WrappedMutationObserver|MRBPerfMutationObserver|new Error|userscript\.html\?name=.*:(?:4[0-9]|5[0-9]|6[0-9]|7[0-9]):/i;
+      return ls.find(x=>!skip.test(x)) || ls[0] || 'unknown';
     }
-    function labelFromStack(st){
-      const s=String(st||'');
-      const m=s.match(/at\s+([A-Za-z0-9_$]+)/);
-      return m?.[1] || 'anonymous-observer';
+    function moduleFrom(st){
+      const x=String(st||'').toLowerCase();
+      if(/spot|raid|groupcrimes|mrbspotoverval/.test(x)) return 'spot';
+      if(/heist/.test(x)) return 'heist';
+      if(/crimes|cars|autojat/.test(x)) return 'crimes-cars';
+      if(/race/.test(x)) return 'race';
+      if(/smuggl|dnd|d&d|drugs|booze/.test(x)) return 'dnd';
+      if(/captcha/.test(x)) return 'captcha';
+      if(/goldmenu|menu|ui|panel/.test(x)) return 'menu';
+      if(/bodyguard/.test(x)) return 'bodyguard';
+      if(/bullet/.test(x)) return 'bullets';
+      if(/lackey/.test(x)) return 'lackey';
+      return 'other';
     }
+    function callbackName(cb){ return (cb && cb.name) ? String(cb.name) : 'anonymous'; }
     function WrappedMutationObserver(cb){
-      const createdStack = cleanStack(new Error().stack);
-      const label = labelFromStack(createdStack);
+      const rawStack = String(new Error().stack||'');
+      const sourceFrame = meaningfulFrame(rawStack);
+      const module = moduleFrom(rawStack+' '+sourceFrame+' '+callbackName(cb));
       const id = ++seq;
-      const key = `${label}#${id}`;
-      const stat = {id,label,source:createdStack,callbacks:0,records:0,totalMs:0,maxMs:0,lastMs:0,lastAt:0,observeCalls:0,targets:[]};
-      obsStats.set(key,stat);
+      const stat = {id,module,callback:callbackName(cb),sourceFrame,sourceStack:lines(rawStack).slice(1,10).join(' <- '),callbacks:0,records:0,totalMs:0,maxMs:0,lastMs:0,lastAt:0,observeCalls:0,targets:[]};
+      obsStats.set(id,stat);
       const wrapped = function(records, observer){
         const t0 = performance.now();
         try { return cb.call(this,records,observer); }
         finally {
           const ms = performance.now()-t0;
           stat.callbacks++; stat.records += records?.length||0; stat.totalMs += ms; stat.maxMs=Math.max(stat.maxMs,ms); stat.lastMs=ms; stat.lastAt=Date.now();
+          try{ root.__mrbPerf29A?.recordObserver?.(`${module}:${sourceFrame}`,ms,records?.length||1); }catch(_){}
         }
       };
       const inst = new NativeMO(wrapped);
       const nativeObserve = inst.observe.bind(inst);
       inst.observe = function(target,options){
         stat.observeCalls++;
-        try { stat.targets.push({tag:target?.tagName||'',id:target?.id||'',subtree:!!options?.subtree,childList:!!options?.childList,characterData:!!options?.characterData,attributes:!!options?.attributes}); } catch(_) {}
+        try { stat.targets.push({tag:target?.tagName||'',id:target?.id||'',className:String(target?.className||'').slice(0,100),subtree:!!options?.subtree,childList:!!options?.childList,characterData:!!options?.characterData,attributes:!!options?.attributes}); } catch(_) {}
         return nativeObserve(target,options);
       };
       return inst;
     }
     WrappedMutationObserver.prototype = NativeMO.prototype;
     Object.setPrototypeOf(WrappedMutationObserver, NativeMO);
-    WrappedMutationObserver.__mrb29bWrapped = true;
+    WrappedMutationObserver.__mrb29eWrapped = true;
     try { root.MutationObserver = WrappedMutationObserver; } catch(_) {}
     try { window.MutationObserver = WrappedMutationObserver; } catch(_) {}
     root.mrbObserverDiag = function(){
-      const rows=[...obsStats.values()].map(x=>({...x,avgMs:+(x.totalMs/Math.max(1,x.callbacks)).toFixed(3),totalMs:+x.totalMs.toFixed(1),maxMs:+x.maxMs.toFixed(1),lastMs:+x.lastMs.toFixed(1)})).sort((a,b)=>b.records-a.records);
+      const rows=[...obsStats.values()].map(x=>({id:x.id,module:x.module,callback:x.callback,records:x.records,callbacks:x.callbacks,totalMs:+x.totalMs.toFixed(1),maxMs:+x.maxMs.toFixed(1),avgMs:+(x.totalMs/Math.max(1,x.callbacks)).toFixed(3),lastMs:+x.lastMs.toFixed(1),sourceFrame:x.sourceFrame,targets:x.targets})).sort((a,b)=>b.records-a.records);
       console.table(rows);
       return rows;
     };
-    console.info('[MRB PERF 29B] MutationObserver bronlabels actief');
-  } catch(e) { console.warn('[MRB PERF 29B] observer bronlabels fout',e); }
+    root.mrbObserverSourceFull = id => obsStats.get(Number(id)) || null;
+    try{ window.mrbObserverDiag=root.mrbObserverDiag; window.mrbObserverSourceFull=root.mrbObserverSourceFull; }catch(_){}
+    console.info('[MRB PERF 29E] MutationObserver bronframes actief');
+  } catch(e) { console.warn('[MRB PERF 29E] observer bronlabels fout',e); }
 })();
 
 // =========================================================
@@ -139,19 +157,19 @@
     }
 
     const api={
-      version:'29A',instanceCount,startedAt,
+      version:'29E',instanceCount,startedAt,
       recordTask:(label,ms)=>record(taskStats,label,ms),
       recordObserver:(label,ms,mutationCount)=>record(observerStats,label,ms,mutationCount||1),
       noteLag:(lag)=>{ lag=Math.max(0,Number(lag)||0); maxLag=Math.max(maxLag,lag); lagSamples.push({at:wall(),lag:+lag.toFixed(1)}); trim(lagSamples,120); },
       snapshot,
       report:(verbose=false)=>{
-        const report={version:'29A',instanceCount,uptimeSec:Math.round((wall()-startedAt)/1000),
+        const report={version:'29E',instanceCount,uptimeSec:Math.round((wall()-startedAt)/1000),
           maxEventLoopLagMs:+maxLag.toFixed(1),recentLag:lagSamples.slice(-20),
           topSchedulerCallbacks:top(taskStats,verbose?30:12),
           topMutationObservers:top(observerStats,verbose?30:12),
           longTasks:longTasks.slice(verbose?-30:-12),latestSnapshot:snapshot(),
           recentSnapshots:verbose?snapshots.slice(-20):undefined};
-        try{ console.group(`[MRB PERF 29A] instances=${instanceCount} maxLag=${report.maxEventLoopLagMs}ms`); console.log(report); console.table(report.topSchedulerCallbacks); console.table(report.topMutationObservers); console.groupEnd(); }catch(_){}
+        try{ console.group(`[MRB PERF 29E] instances=${instanceCount} maxLag=${report.maxEventLoopLagMs}ms`); console.log(report); console.table(report.topSchedulerCallbacks); console.table(report.topMutationObservers); console.groupEnd(); }catch(_){}
         return report;
       }
     };
@@ -159,8 +177,8 @@
     root.mrbPerfDiag=(verbose=false)=>api.report(verbose===true);
     try{ window.mrbPerfDiag=root.mrbPerfDiag; globalThis.mrbPerfDiag=root.mrbPerfDiag; }catch(_){}
 
-    if(instanceCount>1) console.warn(`[MRB PERF 29A] LET OP: ${instanceCount} Gold-instanties in dezelfde pagina-context.`);
-    else console.info('[MRB PERF 29A] runtime instance #1');
+    if(instanceCount>1) console.warn(`[MRB PERF 29E] LET OP: ${instanceCount} Gold-instanties in dezelfde pagina-context.`);
+    else console.info('[MRB PERF 29E] runtime instance #1');
 
     try{
       if(typeof PerformanceObserver==='function' && PerformanceObserver.supportedEntryTypes?.includes?.('longtask')){
@@ -783,15 +801,15 @@ class MRBPerfMutationObserver extends MutationObserver {
           Promise.resolve(result)
             .catch(error=>console.error('[MRB Unified Scheduler]',task.label,error))
             .finally(()=>{
-              try{ const __perfT1=(typeof performance!=='undefined'&&performance.now)?performance.now():Date.now(); unsafeWindow.__mrbPerf29A?.recordTask?.(`${task.module||'other'}:${task.label}`,__perfT1-__perfT0); }catch(_){}
+              try{ const __perfT1=(typeof performance!=='undefined'&&performance.now)?performance.now():Date.now(); unsafeWindow.__mrbPerf29A?.recordTask?.(`${task.module||'other'}:${task.perfLabel||task.label}`,__perfT1-__perfT0); }catch(_){}
               if(!task.once) finishInterval(task);
             });
         } else {
-          try{ const __perfT1=(typeof performance!=='undefined'&&performance.now)?performance.now():Date.now(); unsafeWindow.__mrbPerf29A?.recordTask?.(`${task.module||'other'}:${task.label}`,__perfT1-__perfT0); }catch(_){}
+          try{ const __perfT1=(typeof performance!=='undefined'&&performance.now)?performance.now():Date.now(); unsafeWindow.__mrbPerf29A?.recordTask?.(`${task.module||'other'}:${task.perfLabel||task.label}`,__perfT1-__perfT0); }catch(_){}
           if (!task.once) finishInterval(task);
         }
       } catch(error) {
-        try{ const __perfT1=(typeof performance!=='undefined'&&performance.now)?performance.now():Date.now(); unsafeWindow.__mrbPerf29A?.recordTask?.(`${task.module||'other'}:${task.label}`,__perfT1-__perfT0); }catch(_){}
+        try{ const __perfT1=(typeof performance!=='undefined'&&performance.now)?performance.now():Date.now(); unsafeWindow.__mrbPerf29A?.recordTask?.(`${task.module||'other'}:${task.perfLabel||task.label}`,__perfT1-__perfT0); }catch(_){}
         console.error('[MRB Unified Scheduler]',task.label,error);
         if (!task.once) finishInterval(task);
       }
@@ -807,13 +825,22 @@ class MRBPerfMutationObserver extends MutationObserver {
       stopPulseWhenIdle();
       ensurePulse();
     }
+    function taskPerfSource(stack,label=''){
+      const ls=String(stack||'').split('\n').map(x=>x.trim()).filter(Boolean).slice(1);
+      const skip=/taskPerfSource|\badd\s*\(|addTimeout|addInterval|mrbSetTimeout|mrbSetInterval|mrbUnifiedTimers/i;
+      const frame=ls.find(x=>!skip.test(x)) || ls[0] || 'unknown';
+      const fn=(frame.match(/at\s+([^\s(]+)/)||[])[1] || String(label||'callback');
+      const loc=(frame.match(/([^/\\\s]+:\d+:\d+)\)?$/)||[])[1] || frame;
+      return {frame,perfLabel:`${fn}@${loc}`};
+    }
     function add(callback, delay, args, once){
       if (typeof callback!=='function') return 0;
       const id=++sequence;
       const normalized=normalizeDelay(delay, once?0:MIN_WAKE_MS);
       let stack=''; try{ stack=new Error().stack||''; }catch(_){}
       const label=callback.name || `${once?'timeout':'interval'}-${id}`;
-      tasks.set(id,{id,callback,args,delay:normalized,nextAt:Date.now()+normalized,running:false,once:!!once,label,module:inferModule(stack,label),priority:inferPriority(stack,label)});
+      const perf=taskPerfSource(stack,label);
+      tasks.set(id,{id,callback,args,delay:normalized,nextAt:Date.now()+normalized,running:false,once:!!once,label,perfLabel:perf.perfLabel,source:perf.frame,module:inferModule(stack,label),priority:inferPriority(stack,label)});
       ensurePulse();
       return id;
     }
@@ -822,7 +849,7 @@ class MRBPerfMutationObserver extends MutationObserver {
     function remove(id){ tasks.delete(Number(id)); stopPulseWhenIdle(); }
     function state(){
       return {mode:'deadline',minWakeMs:MIN_WAKE_MS,activeTasks:tasks.size,runningTasks:Array.from(tasks.values()).filter(t=>t.running).length,
-        tasks:Array.from(tasks.values()).map(t=>({id:t.id,label:t.label,module:t.module,kind:t.once?'timeout':'interval',priority:t.priority,effectivePriority:dynamicPriority(t),delay:t.delay,nextAt:t.nextAt,running:t.running}))};
+        tasks:Array.from(tasks.values()).map(t=>({id:t.id,label:t.label,perfLabel:t.perfLabel,source:t.source,module:t.module,kind:t.once?'timeout':'interval',priority:t.priority,effectivePriority:dynamicPriority(t),delay:t.delay,nextAt:t.nextAt,running:t.running}))};
     }
     return {addInterval,addTimeout,remove,state};
   })();
@@ -832,6 +859,8 @@ class MRBPerfMutationObserver extends MutationObserver {
   const mrbSetTimeout=(callback,delay,...args)=>mrbCentralPulse.addTimeout(callback,delay,...args);
   const mrbClearTimeout=id=>mrbCentralPulse.remove(id);
   unsafeWindow.mrbCentralPulse={state:()=>mrbCentralPulse.state()};
+  unsafeWindow.mrbTaskSourceDiag=()=>{ const rows=(mrbCentralPulse.state()?.tasks||[]).map(t=>({id:t.id,module:t.module,kind:t.kind,label:t.label,perfLabel:t.perfLabel,delay:t.delay,running:t.running,nextInMs:Math.max(0,Number(t.nextAt||0)-Date.now()),source:t.source})); try{console.table(rows);}catch(_){} return rows; };
+  try{window.mrbTaskSourceDiag=unsafeWindow.mrbTaskSourceDiag;}catch(_){}
   unsafeWindow.mrbUnifiedScheduler={version:'6.0.0-test25',state:()=>mrbCentralPulse.state()};
   // TEST3: ook later aangeplakte modules (zoals de Heist-core) gebruiken exact
   // dezelfde centrale timerkernel; geen native/losse timers buiten de scheduler.
@@ -2240,7 +2269,7 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
   const PAGE_RECHECK = 2200;
   const COOLDOWN_RECHECK = 30000;
   const START_RETRY = 8000;
-  const SECOND_PASS_SETTLE = 5000;
+  const SECOND_PASS_SETTLE = 3500;
   const START_BACKGROUND_RECHECK = 35000;
   const START_MAX_CLICKS = 2;
   const START_FINALIZE_WAIT = 9000;
@@ -2972,7 +3001,7 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
       set(K.spotOpenedAt, 0);
       // Een opnieuw zichtbaar doel-/formulieroverzicht betekent dat een vorige cyclus is geannuleerd
       // of niet meer actief is. Wis daarom uitsluitend de tijdelijke Spot-cyclusgegevens.
-      if (get(K.leaderGo, false) || Number(get(K.startCount, 0) || 0) > 0) {
+      if ((get(K.leaderGo, false) || Number(get(K.startCount, 0) || 0) > 0) && !validFreshSecondPass()) {
         set(K.leaderGo, false); set(K.startCount, 0); set(K.lastReadyCheck, 0); set(K.lastAction, 0); set(K.startClickedAt, 0); set(K.secondPass, '');
       }
       const target = bestTarget(); if (!target) { setStatus('NO_TARGET', 'Geen winstgevend doel op Nu buiten de eigen familie gevonden.'); return; }
@@ -3015,6 +3044,26 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
         const lastStartClick = Number(get(K.startClickedAt, 0) || 0);
         if (startClicks > 0 && lastStartClick) {
           const elapsed = Date.now() - lastStartClick;
+
+          // TEST29D: na de EERSTE Start/Update is dit geen gewone achtergrond-
+          // hercontrole maar de verplichte tweede Spot-doorgang. Laat deze nooit
+          // 35 seconden wachten. De bestaande second-pass state-machine hierboven
+          // bezit deze overgang en blijft binnen dezelfde Spot-timeout werken.
+          if (startClicks === 1) {
+            if (!get(K.secondPass, '')) set(K.secondPass, 'need_group');
+            if (elapsed < SECOND_PASS_SETTLE) {
+              setStatus('SECOND_PASS_SETTLE', `Eerste Start/Update uitgevoerd. Verplichte tweede Spot-doorgang start over ongeveer ${Math.ceil((SECOND_PASS_SETTLE - elapsed) / 1000)} sec.`);
+              return;
+            }
+            if (loadGroupCrimesForSecondPass()) {
+              set(K.secondPass, 'need_spot');
+              setStatus('SECOND_PASS_OPEN_GROUP', 'Verplichte tweede Spot-doorgang gestart; Groepsmisdaden opnieuw geopend.');
+            } else {
+              setStatus('SECOND_PASS_NAV_WAIT', 'Verplichte tweede Spot-doorgang wacht kort op navigatievrijgave.');
+            }
+            return;
+          }
+
           if (elapsed < START_BACKGROUND_RECHECK) {
             setStatus('WAIT_START_SETTLE', `Start/Update is verzonden. Andere modules zijn vrij; Spot controleert opnieuw over ongeveer ${Math.ceil((START_BACKGROUND_RECHECK - elapsed) / 1000)} sec.`);
             return;
