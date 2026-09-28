@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MRB Gold Edition
-// @version      6.0.0-test29G-spot-second-pass-enforced
+// @version      6.0.0-test29S-spot-leader-flow-fix
 // @description  MRB Gold: centrale Unified Scheduler, navigatie-owner, retry-circuitbreaker en strikte actieguards.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -18,204 +18,35 @@
 // @run-at       document-end
 // ==/UserScript==
 
+
+
+// Release 6.0.0-test29R: CLEAN RUNTIME bovenop TEST29Q/29M. Alle tijdelijke performance-, selector-, leak-, observer-source-, hot-path- en disabled-module diagnose-instrumentatie verwijderd. De functionele CPU-observer-cleanup van 29Q en de Spot/Bodyguard-fixes blijven behouden. Geen moduleflow, prioriteit, navigatie-eigenaar of actietiming gewijzigd.
+// Release 6.0.0-test29Q: aanvullende CPU-cleanup. Permanente brede observers voor Detectives UI, Travel-enterfocus, Race/OC prefill, Lackey-knoppen, Jail-focus, GroupCrimes/OC-autofill en Milestones zijn vervangen door route-/state-aware rustige controles.
+// Functionele moduleflows, prioriteiten en navigatie-eigenaars zijn niet gewijzigd.
+// Release 6.0.0-test29P: gerichte CPU-fix op de twee breedste permanente observers.
+// Crimes/Cars captcha-detectie gebruikt geen document-wide MutationObserver meer maar een rustige
+// centrale 2s-poll; Prefill gebruikt geen documentElement-observer meer maar een 3s fallback +
+// SPA-navigatie-events. Moduleflows, prioriteiten, Spot/Race/Heist en actiegedrag blijven ongewijzigd.
+
+// Release 6.0.0-test29S: gerichte Spot-Leader flowfix bovenop TEST29R. Na een live Go-submit blijft leaderGo actief en wordt de flow via GroupCrimes geverifieerd in plaats van op het nog zichtbare target-overzicht direct gereset/opnieuw verstuurd. Bij startCount=1 heeft de verplichte second-pass altijd voorrang op generieke target-page cleanup, zodat de tweede afronding niet meer kan worden gewist door een SPA-rerender. Overige modules en timings ongewijzigd.
+
+// Release 6.0.0-test29M: Spot Leider robuuster gemaakt zonder overige moduleflow te wijzigen. Na het invullen van Driver/0 kogels wordt het gekozen doel opnieuw uit de live DOM opgezocht, zodat een Omerta SPA-rerender geen losgekoppelde Go/form meer kan opleveren. Eerste Spot-resultaat wordt bovendien altijd als verplichte second-pass hersteld zolang dezelfde Leider-cyclus actief is; target-overzicht met startCount=1 mag geen nieuwe invite starten maar hervat second-pass via GroupCrimes.
+
+
+
+
+
+
 // Release 6.0.0-test29G: Spot Leader second-pass verplicht gemaakt. Na eerste Start/Update (startCount=1) mag een resultaatpagina nooit COMPLETE worden en mag een opnieuw zichtbare Spot-link op Groepsmisdaden nooit als CANCELLED_RESET gelden. In beide gevallen wordt de bestaande actieve Spot opnieuw geopend voor de tweede Start/Update; pas na startCount=2 mag de flow afronden en terug naar Mijn Account. Overige modules ongewijzigd.
 
 
 // Release 6.0.0-test29F: Bodyguard Trainer herstelt stale needsWork=false. Ook bij eerder bereikte doelen plant hij elke 15 minuten een echte Bodyguards-herinspectie; oude false/nextCheck=0 state wordt na update direct opnieuw gevalideerd. Geen wijzigingen aan Race/Heist/Spot/Crimes/Cars/D&D.
-// Release 6.0.0-test29E: uitsluitend bron-diagnose bovenop TEST29D. MutationObservers tonen nu eerste echte aanmaakframe + moduleclassificatie; centrale scheduler bewaart per task een bronframe/perfLabel zodat zware timeout/interval-callbacks niet meer als generieke dnd:timeout-ID verschijnen. Geen navigatie-, Spot-, Heist-, Race-, Crimes/Cars- of timerflow gewijzigd. Gebruik mrbPerfDiag(true), mrbObserverDiag() en mrbTaskSourceDiag().
 // Release 6.0.0-test29D: Spot Leider second-pass structureel hersteld. Na de eerste Start/Update blijft dezelfde actieve Spot-cyclus eigenaar van zijn bestaande timeout-state en wordt de verplichte tweede doorgang direct hervat: kort settlen -> Groepsmisdaden -> actieve Spot -> tweede Start/Update -> Mijn Account. Geen nieuwe watcher/loop toegevoegd. Leader zonder Crimes/Cars wacht niet meer op de langzame 35s achtergrond-hercontrole voor deze verplichte tweede pass.
 // Release 6.0.0-test29C: Spot Driver passieve invite-probes zijn volledig onder de Unified Dispatcher gebracht. De eigen Spot-tick mag bij Spot=Nu niet meer zelfstandig naar Groepsmisdaden navigeren; alleen een centrale Spot-wake geeft exact één probe-permit. Crimes/Cars, Race en Heist houden daardoor hun dispatcher-prioriteit. Na een lege probe keert Driver terug naar Mijn Account en wacht op een nieuwe centrale wake. Actieve Spot-flow na echte uitnodiging/acceptatie blijft ongewijzigd. Performance/observer-diagnose uit TEST29B blijft behouden.
-// Release 6.0.0-test29B: performance-diagnose uitgebreid met bronlabels/stacks voor iedere MutationObserver. Geen moduleflow gewijzigd. Gebruik mrbPerfDiag() of mrbPerfDiag(true).
 
 
-// TEST29E OBSERVER SOURCE LABELS - READ ONLY
-(function installMRBObserverSourceDiag29E(){
-  'use strict';
-  try {
-    const root = unsafeWindow || window;
-    if (root.__mrbObserverSourceDiag29EInstalled) return;
-    root.__mrbObserverSourceDiag29EInstalled = true;
-    const NativeMO = root.MutationObserver || window.MutationObserver;
-    if (!NativeMO || NativeMO.__mrb29eWrapped) return;
-    const obsStats = new Map();
-    let seq = 0;
-    function lines(st){ return String(st||'').split('\n').map(x=>x.trim()).filter(Boolean); }
-    function meaningfulFrame(st){
-      const ls=lines(st).slice(1);
-      const skip=/installMRBObserverSourceDiag29E|WrappedMutationObserver|MRBPerfMutationObserver|new Error|userscript\.html\?name=.*:(?:4[0-9]|5[0-9]|6[0-9]|7[0-9]):/i;
-      return ls.find(x=>!skip.test(x)) || ls[0] || 'unknown';
-    }
-    function moduleFrom(st){
-      const x=String(st||'').toLowerCase();
-      if(/spot|raid|groupcrimes|mrbspotoverval/.test(x)) return 'spot';
-      if(/heist/.test(x)) return 'heist';
-      if(/crimes|cars|autojat/.test(x)) return 'crimes-cars';
-      if(/race/.test(x)) return 'race';
-      if(/smuggl|dnd|d&d|drugs|booze/.test(x)) return 'dnd';
-      if(/captcha/.test(x)) return 'captcha';
-      if(/goldmenu|menu|ui|panel/.test(x)) return 'menu';
-      if(/bodyguard/.test(x)) return 'bodyguard';
-      if(/bullet/.test(x)) return 'bullets';
-      if(/lackey/.test(x)) return 'lackey';
-      return 'other';
-    }
-    function callbackName(cb){ return (cb && cb.name) ? String(cb.name) : 'anonymous'; }
-    function WrappedMutationObserver(cb){
-      const rawStack = String(new Error().stack||'');
-      const sourceFrame = meaningfulFrame(rawStack);
-      const module = moduleFrom(rawStack+' '+sourceFrame+' '+callbackName(cb));
-      const id = ++seq;
-      const stat = {id,module,callback:callbackName(cb),sourceFrame,sourceStack:lines(rawStack).slice(1,10).join(' <- '),callbacks:0,records:0,totalMs:0,maxMs:0,lastMs:0,lastAt:0,observeCalls:0,targets:[]};
-      obsStats.set(id,stat);
-      const wrapped = function(records, observer){
-        const t0 = performance.now();
-        try { return cb.call(this,records,observer); }
-        finally {
-          const ms = performance.now()-t0;
-          stat.callbacks++; stat.records += records?.length||0; stat.totalMs += ms; stat.maxMs=Math.max(stat.maxMs,ms); stat.lastMs=ms; stat.lastAt=Date.now();
-          try{ root.__mrbPerf29A?.recordObserver?.(`${module}:${sourceFrame}`,ms,records?.length||1); }catch(_){}
-        }
-      };
-      const inst = new NativeMO(wrapped);
-      const nativeObserve = inst.observe.bind(inst);
-      inst.observe = function(target,options){
-        stat.observeCalls++;
-        try { stat.targets.push({tag:target?.tagName||'',id:target?.id||'',className:String(target?.className||'').slice(0,100),subtree:!!options?.subtree,childList:!!options?.childList,characterData:!!options?.characterData,attributes:!!options?.attributes}); } catch(_) {}
-        return nativeObserve(target,options);
-      };
-      return inst;
-    }
-    WrappedMutationObserver.prototype = NativeMO.prototype;
-    Object.setPrototypeOf(WrappedMutationObserver, NativeMO);
-    WrappedMutationObserver.__mrb29eWrapped = true;
-    try { root.MutationObserver = WrappedMutationObserver; } catch(_) {}
-    try { window.MutationObserver = WrappedMutationObserver; } catch(_) {}
-    root.mrbObserverDiag = function(){
-      const rows=[...obsStats.values()].map(x=>({id:x.id,module:x.module,callback:x.callback,records:x.records,callbacks:x.callbacks,totalMs:+x.totalMs.toFixed(1),maxMs:+x.maxMs.toFixed(1),avgMs:+(x.totalMs/Math.max(1,x.callbacks)).toFixed(3),lastMs:+x.lastMs.toFixed(1),sourceFrame:x.sourceFrame,targets:x.targets})).sort((a,b)=>b.records-a.records);
-      console.table(rows);
-      return rows;
-    };
-    root.mrbObserverSourceFull = id => obsStats.get(Number(id)) || null;
-    try{ window.mrbObserverDiag=root.mrbObserverDiag; window.mrbObserverSourceFull=root.mrbObserverSourceFull; }catch(_){}
-    console.info('[MRB PERF 29E] MutationObserver bronframes actief');
-  } catch(e) { console.warn('[MRB PERF 29E] observer bronlabels fout',e); }
-})();
-
-// =========================================================
-// TEST29A PERFORMANCE DIAG - READ ONLY
-// =========================================================
-(function installMRBPerf29A(){
-  'use strict';
-  try {
-    const root = unsafeWindow || window;
-    const now = () => (typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now());
-    const wall = () => Date.now();
-    const prevCount = Number(root.__mrbGoldInstanceCount || 0);
-    const instanceCount = prevCount + 1;
-    root.__mrbGoldInstanceCount = instanceCount;
-    const startedAt = wall();
-    const taskStats = new Map();
-    const observerStats = new Map();
-    const longTasks = [];
-    const lagSamples = [];
-    const snapshots = [];
-    let maxLag = 0;
-
-    function stat(map,key){
-      key=String(key||'anonymous');
-      let x=map.get(key);
-      if(!x){ x={count:0,totalMs:0,maxMs:0,lastMs:0,lastAt:0}; map.set(key,x); }
-      return x;
-    }
-    function record(map,key,ms,extraCount=1){
-      const x=stat(map,key);
-      x.count += Math.max(1,Number(extraCount)||1);
-      x.totalMs += Math.max(0,Number(ms)||0);
-      x.lastMs = Math.max(0,Number(ms)||0);
-      x.maxMs = Math.max(x.maxMs,x.lastMs);
-      x.lastAt = wall();
-    }
-    function trim(arr,max){ if(arr.length>max) arr.splice(0,arr.length-max); }
-    function top(map,n=15){
-      return [...map.entries()].map(([name,x])=>({
-        name,count:x.count,totalMs:+x.totalMs.toFixed(1),maxMs:+x.maxMs.toFixed(1),
-        avgMs:+(x.totalMs/Math.max(1,x.count)).toFixed(2),lastMs:+x.lastMs.toFixed(1),lastAt:x.lastAt
-      })).sort((a,b)=>b.totalMs-a.totalMs).slice(0,n);
-    }
-    function snapshot(){
-      let sched=null, group=null, cc=null, spot=null, race=null, heist=null;
-      try{ sched=root.mrbCentralPulse?.state?.()||null; }catch(_){}
-      try{ group=root.mrbGroupTransaction?.state?.()||null; }catch(_){}
-      try{ cc=root.mrbV9CrimesCars?.state?.()||null; }catch(_){}
-      try{ spot=root.mrbSpotRaidCoreV3?.getState?.()||null; }catch(_){}
-      try{ race=root.mrbModuleStateRegistry?.get?.('Race')||root.mrbModuleStateRegistry?.get?.('race')||null; }catch(_){}
-      try{ heist=root.mrbHeistCoreControl?.getState?.()||null; }catch(_){}
-      const x={at:wall(),href:String(location.href||''),hidden:!!document.hidden,
-        sched:sched?{activeTasks:sched.activeTasks,runningTasks:sched.runningTasks}:null,group,
-        cc:cc?{busy:!!cc.busy,current:cc.current||'',confirmPendingKind:cc.confirmPendingKind||'',forcedRetryKind:cc.forcedRetryKind||''}:null,
-        spot:spot?{role:spot.role,state:spot.state,nextAt:spot.nextAt}:null,
-        race:race?{phase:race.phase||race.state||'',running:race.running}:null,
-        heist:heist?{phase:heist.phase||heist.state||'',role:heist.role||''}:null};
-      snapshots.push(x); trim(snapshots,40);
-      return x;
-    }
-
-    const api={
-      version:'29E',instanceCount,startedAt,
-      recordTask:(label,ms)=>record(taskStats,label,ms),
-      recordObserver:(label,ms,mutationCount)=>record(observerStats,label,ms,mutationCount||1),
-      noteLag:(lag)=>{ lag=Math.max(0,Number(lag)||0); maxLag=Math.max(maxLag,lag); lagSamples.push({at:wall(),lag:+lag.toFixed(1)}); trim(lagSamples,120); },
-      snapshot,
-      report:(verbose=false)=>{
-        const report={version:'29E',instanceCount,uptimeSec:Math.round((wall()-startedAt)/1000),
-          maxEventLoopLagMs:+maxLag.toFixed(1),recentLag:lagSamples.slice(-20),
-          topSchedulerCallbacks:top(taskStats,verbose?30:12),
-          topMutationObservers:top(observerStats,verbose?30:12),
-          longTasks:longTasks.slice(verbose?-30:-12),latestSnapshot:snapshot(),
-          recentSnapshots:verbose?snapshots.slice(-20):undefined};
-        try{ console.group(`[MRB PERF 29E] instances=${instanceCount} maxLag=${report.maxEventLoopLagMs}ms`); console.log(report); console.table(report.topSchedulerCallbacks); console.table(report.topMutationObservers); console.groupEnd(); }catch(_){}
-        return report;
-      }
-    };
-    root.__mrbPerf29A=api;
-    root.mrbPerfDiag=(verbose=false)=>api.report(verbose===true);
-    try{ window.mrbPerfDiag=root.mrbPerfDiag; globalThis.mrbPerfDiag=root.mrbPerfDiag; }catch(_){}
-
-    if(instanceCount>1) console.warn(`[MRB PERF 29E] LET OP: ${instanceCount} Gold-instanties in dezelfde pagina-context.`);
-    else console.info('[MRB PERF 29E] runtime instance #1');
-
-    try{
-      if(typeof PerformanceObserver==='function' && PerformanceObserver.supportedEntryTypes?.includes?.('longtask')){
-        const po=new PerformanceObserver(list=>{ for(const e of list.getEntries()){ longTasks.push({at:wall(),duration:+e.duration.toFixed(1),name:e.name||'longtask'}); trim(longTasks,80); } });
-        po.observe({entryTypes:['longtask']});
-      }
-    }catch(_){}
-
-    const nativeSetTimeout = root.setTimeout?.bind(root) || setTimeout;
-    let expected=now()+2000;
-    function lagTick(){
-      const t=now(); api.noteLag(Math.max(0,t-expected)); expected=t+2000;
-      nativeSetTimeout(lagTick,2000);
-    }
-    nativeSetTimeout(lagTick,2000);
-    function sampleTick(){ snapshot(); nativeSetTimeout(sampleTick,10000); }
-    nativeSetTimeout(sampleTick,10000);
-  } catch(e) { try{ console.warn('[MRB PERF 29A] init fout',e); }catch(_){} }
-})();
-
-class MRBPerfMutationObserver extends MutationObserver {
-  constructor(callback){
-    const label=(callback&&callback.name)||'anonymous-observer';
-    super((mutations,observer)=>{
-      const t0=(typeof performance!=='undefined'&&performance.now)?performance.now():Date.now();
-      try { return callback(mutations,observer); }
-      finally {
-        const t1=(typeof performance!=='undefined'&&performance.now)?performance.now():Date.now();
-        try{ unsafeWindow.__mrbPerf29A?.recordObserver?.(label,t1-t0,mutations?.length||1); }catch(_){}
-      }
-    });
-  }
-}
+// TEST29R CLEAN RUNTIME: functionele modules gebruiken native MutationObserver zonder profiling-wrapper.
+const MRBPerfMutationObserver = MutationObserver;
 
 // Release 6.0.0-test27Z-CCSPOT-BACKOFFFIX: CC-bevestiging aangescherpt: DOM-knopverdwijnen/module-overgang gelden niet langer als bewijs van een uitgevoerde actie; bij ontbreken van echt resultaat/cooldown volgt serververificatie via Mijn Account. Globale HTTP-403 backoff negeert bekende passieve/diagnostische requests (ntp.php, ajax_debug.php, Statistics/global_stats, Services.Account) maar blijft actief voor echte game/module-requests. mrbLogoutDiag wordt ook via window/globalThis gepubliceerd. Overige moduleflows ongewijzigd.
 // Release 6.0.0-test27Z-CCSPOT-LOGOUTDIAG: read-only persistente logout-diagnose toegevoegd bovenop de bestaande Flight Recorder. Geen navigatie, clicks, timers of module-state gewijzigd. Gebruik mrbLogoutDiag() na onverwachte logout; mrbLogoutDiag(true) toont ruimer eventdetail.
@@ -714,33 +545,41 @@ class MRBPerfMutationObserver extends MutationObserver {
       const n = Number(value);
       return Number.isFinite(n) ? Math.max(minimum, Math.floor(n)) : minimum;
     }
-    function inferPriority(stack='', label=''){
-      const hay=(String(stack)+' '+String(label)).toLowerCase();
+    function schedulerClassifyHay(source='', label=''){
+      // TEST29K: alleen de echte callbackbron + callbacknaam gebruiken.
+      // De volledige scheduler-stack bevat frames van allerlei eerder gedefinieerde
+      // modules en veroorzaakte daardoor foutieve D&D-classificatie.
+      return (String(source)+' '+String(label)).toLowerCase();
+    }
+    function inferPriority(source='', label=''){
+      const hay=schedulerClassifyHay(source,label);
       if(/crimes|cars|autojat/.test(hay)) return 100;
       if(/race/.test(hay)) return 90;
       if(/heist/.test(hay)) return 80;
       if(/spot|raid|groupcrimes/.test(hay)) return 75;
-      if(/d&d|dnd|smugglingcore/.test(hay)) return 60;
+      if(/bodyguard/.test(hay)) return 74;
+      if(/d&d|dnd|smugglingcore|smokkel|smuggl/.test(hay)) return 60;
       if(/bullets/.test(hay)) return 55;
       if(/travel/.test(hay)) return 45;
       if(/filllackey|lackey/.test(hay)) return 35;
-      if(/bodyguard/.test(hay)) return 74;
       if(/boozen/.test(hay)) return 25;
-      if(/sessionmanager|refresh/.test(hay)) return 15;
+      if(/sessionmanager|session|refresh/.test(hay)) return 15;
       return 10;
     }
-    function inferModule(stack='', label=''){
-      const hay=(String(stack)+' '+String(label)).toLowerCase();
+    function inferModule(source='', label=''){
+      const hay=schedulerClassifyHay(source,label);
       if(/crimes|cars|autojat/.test(hay)) return 'crimes-cars';
       if(/race/.test(hay)) return 'race';
       if(/heist/.test(hay)) return 'heist';
       if(/spot|raid|groupcrimes/.test(hay)) return 'spot';
-      if(/d&d|dnd|smugglingcore/.test(hay)) return 'dnd';
+      if(/bodyguard/.test(hay)) return 'bodyguard';
+      if(/d&d|dnd|smugglingcore|smokkel|smuggl/.test(hay)) return 'dnd';
       if(/bullets/.test(hay)) return 'bullets';
       if(/filllackey|lackey/.test(hay)) return 'lackey';
-      if(/bodyguard/.test(hay)) return 'bodyguard';
       if(/boozen/.test(hay)) return 'boozen';
       if(/travel/.test(hay)) return 'travel';
+      if(/sessionmanager|session|refresh/.test(hay)) return 'session';
+      if(/milestone/.test(hay)) return 'milestones';
       return 'other';
     }
     function dynamicPriority(task){
@@ -798,22 +637,16 @@ class MRBPerfMutationObserver extends MutationObserver {
       if (!tasks.has(task.id) || task.running) return;
       if (task.once) tasks.delete(task.id);
       else task.running=true;
-      const __perfT0=(typeof performance!=='undefined'&&performance.now)?performance.now():Date.now();
       try {
         const result=task.callback(...task.args);
         if (result && typeof result.then === 'function') {
           Promise.resolve(result)
             .catch(error=>console.error('[MRB Unified Scheduler]',task.label,error))
-            .finally(()=>{
-              try{ const __perfT1=(typeof performance!=='undefined'&&performance.now)?performance.now():Date.now(); unsafeWindow.__mrbPerf29A?.recordTask?.(`${task.module||'other'}:${task.perfLabel||task.label}`,__perfT1-__perfT0); }catch(_){}
-              if(!task.once) finishInterval(task);
-            });
+            .finally(()=>{ if(!task.once) finishInterval(task); });
         } else {
-          try{ const __perfT1=(typeof performance!=='undefined'&&performance.now)?performance.now():Date.now(); unsafeWindow.__mrbPerf29A?.recordTask?.(`${task.module||'other'}:${task.perfLabel||task.label}`,__perfT1-__perfT0); }catch(_){}
           if (!task.once) finishInterval(task);
         }
       } catch(error) {
-        try{ const __perfT1=(typeof performance!=='undefined'&&performance.now)?performance.now():Date.now(); unsafeWindow.__mrbPerf29A?.recordTask?.(`${task.module||'other'}:${task.perfLabel||task.label}`,__perfT1-__perfT0); }catch(_){}
         console.error('[MRB Unified Scheduler]',task.label,error);
         if (!task.once) finishInterval(task);
       }
@@ -844,7 +677,7 @@ class MRBPerfMutationObserver extends MutationObserver {
       let stack=''; try{ stack=new Error().stack||''; }catch(_){}
       const label=callback.name || `${once?'timeout':'interval'}-${id}`;
       const perf=taskPerfSource(stack,label);
-      tasks.set(id,{id,callback,args,delay:normalized,nextAt:Date.now()+normalized,running:false,once:!!once,label,perfLabel:perf.perfLabel,source:perf.frame,module:inferModule(stack,label),priority:inferPriority(stack,label)});
+      tasks.set(id,{id,callback,args,delay:normalized,nextAt:Date.now()+normalized,running:false,once:!!once,label,perfLabel:perf.perfLabel,source:perf.frame,module:inferModule(perf.frame,label),priority:inferPriority(perf.frame,label)});
       ensurePulse();
       return id;
     }
@@ -863,8 +696,6 @@ class MRBPerfMutationObserver extends MutationObserver {
   const mrbSetTimeout=(callback,delay,...args)=>mrbCentralPulse.addTimeout(callback,delay,...args);
   const mrbClearTimeout=id=>mrbCentralPulse.remove(id);
   unsafeWindow.mrbCentralPulse={state:()=>mrbCentralPulse.state()};
-  unsafeWindow.mrbTaskSourceDiag=()=>{ const rows=(mrbCentralPulse.state()?.tasks||[]).map(t=>({id:t.id,module:t.module,kind:t.kind,label:t.label,perfLabel:t.perfLabel,delay:t.delay,running:t.running,nextInMs:Math.max(0,Number(t.nextAt||0)-Date.now()),source:t.source})); try{console.table(rows);}catch(_){} return rows; };
-  try{window.mrbTaskSourceDiag=unsafeWindow.mrbTaskSourceDiag;}catch(_){}
   unsafeWindow.mrbUnifiedScheduler={version:'6.0.0-test25',state:()=>mrbCentralPulse.state()};
   // TEST3: ook later aangeplakte modules (zoals de Heist-core) gebruiken exact
   // dezelfde centrale timerkernel; geen native/losse timers buiten de scheduler.
@@ -2262,7 +2093,7 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
     startCount: P + 'start_count', lastAction: P + 'last_action', driverName: P + 'driver_name',
     lastReadyCheck: P + 'last_ready_check', driverAcceptedAt: P + 'driver_accepted_at',
     startClickedAt: P + 'start_clicked_at', secondPass: P + 'second_pass', spotOpenedAt: P + 'spot_opened_at',
-    driverLastVerify: P + 'driver_last_verify', driverProbeAt: P + 'driver_probe_at'
+    driverLastVerify: P + 'driver_last_verify', driverProbeAt: P + 'driver_probe_at', inviteSentAt: P + 'invite_sent_at'
   };
 
   const DRIVER_SETTING_KEYS = ['race_partner_name', 'driver_name', 'mrb_driver_name', 'partner_name'];
@@ -2342,7 +2173,7 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
 
   function resetFlow(keepTimer = true) {
     set(K.state, 'IDLE'); set(K.leaderGo, false); set(K.driverAccepted, false);
-    set(K.startCount, 0); set(K.lastAction, 0); set(K.lastNav, 0); set(K.lastReadyCheck, 0); set(K.driverAcceptedAt, 0); set(K.driverLastVerify, 0); set(K.startClickedAt, 0); set(K.secondPass, ''); set(K.spotOpenedAt, 0); set(K.driverProbeAt, 0);
+    set(K.startCount, 0); set(K.lastAction, 0); set(K.lastNav, 0); set(K.lastReadyCheck, 0); set(K.driverAcceptedAt, 0); set(K.driverLastVerify, 0); set(K.startClickedAt, 0); set(K.secondPass, ''); set(K.spotOpenedAt, 0); set(K.driverProbeAt, 0); set(K.inviteSentAt, 0);
     if (!keepTimer) { set(K.timerReady, false); set(K.timerAt, 0); }
   }
 
@@ -2968,10 +2799,18 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
     }
 
     if (isFinalResultPage()) {
-      // TEST29G: door de bekende gamebug is de EERSTE uitslag nog niet definitief.
-      // Zolang slechts één Start/Update is uitgevoerd, is een tweede volledige
-      // Spot-doorgang verplicht. Resultaatpagina mag deze state nooit wissen.
-      if (Number(get(K.startCount, 0) || 0) === 1) {
+      // TEST29M: door de bekende gamebug is de EERSTE uitslag nog niet definitief.
+      // Een actieve Leider-cyclus met minder dan twee geregistreerde Start/Update-klikken
+      // wordt altijd hersteld naar exact startCount=1, ook als een SPA-rerender de teller
+      // eerder niet netjes heeft vastgelegd. Zo kan de eerste uitslag nooit COMPLETE worden.
+      let resultClicks = Number(get(K.startCount, 0) || 0);
+      const activeLeaderCycle = !!get(K.leaderGo, false) || /^(?:INVITE_SENT|WAIT_DRIVER_READY|RECHECK_DRIVER_READY|WAIT_START_CONTROL|SPOT_FINALIZE|SECOND_PASS)/i.test(state());
+      if (resultClicks < 2 && activeLeaderCycle) {
+        if (resultClicks !== 1) {
+          resultClicks = 1;
+          set(K.startCount, 1);
+          if (!Number(get(K.startClickedAt, 0) || 0)) set(K.startClickedAt, Date.now() - SECOND_PASS_SETTLE);
+        }
         if (!get(K.secondPass, '')) set(K.secondPass, 'need_group');
         set(K.leaderGo, true);
         const lastClick = Number(get(K.startClickedAt, 0) || 0);
@@ -2992,6 +2831,7 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
       set(K.leaderGo, false);
       set(K.driverAccepted, false);
       set(K.secondPass, '');
+      set(K.inviteSentAt, 0);
       if (canNavigate()) {
         markNav();
         unsafeWindow.mrbNavigate?.('/information.php',{source:'spot-result'});
@@ -3000,6 +2840,7 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
     }
 
     if (isActiveSpotDetailsPage()) {
+      set(K.inviteSentAt, 0);
       if (!activeDriverReady()) {
         const lastCheck = Number(get(K.lastReadyCheck, 0) || 0);
         const elapsed = Date.now() - lastCheck;
@@ -3021,15 +2862,76 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
 
     if (isSpotTargetPage()) {
       set(K.spotOpenedAt, 0);
-      // Een opnieuw zichtbaar doel-/formulieroverzicht betekent dat een vorige cyclus is geannuleerd
-      // of niet meer actief is. Wis daarom uitsluitend de tijdelijke Spot-cyclusgegevens.
-      if ((get(K.leaderGo, false) || Number(get(K.startCount, 0) || 0) > 0) && !validFreshSecondPass()) {
-        set(K.leaderGo, false); set(K.startCount, 0); set(K.lastReadyCheck, 0); set(K.lastAction, 0); set(K.startClickedAt, 0); set(K.secondPass, '');
+      const targetClicks = Number(get(K.startCount, 0) || 0);
+      const targetLeaderGo = !!get(K.leaderGo, false);
+      const inviteSentAt = Number(get(K.inviteSentAt, 0) || 0);
+
+      // TEST29S: de verplichte tweede gamebug-doorgang heeft ALTIJD voorrang op
+      // generieke target-page cleanup. Een SPA-rerender naar dit overzicht mag
+      // startCount=1 nooit wissen voordat dezelfde Spot opnieuw is geopend.
+      if (targetClicks === 1) {
+        if (!get(K.secondPass, '')) set(K.secondPass, 'need_group');
+        set(K.leaderGo, true);
+        if (loadGroupCrimesForSecondPass()) {
+          set(K.secondPass, 'need_spot');
+          setStatus('SECOND_PASS_TARGET_TO_GROUP', 'Target-overzicht verscheen tijdens second-pass; dezelfde Spot wordt opnieuw via Groepsmisdaden geopend.');
+        } else {
+          setStatus('SECOND_PASS_TARGET_NAV_WAIT', 'Second-pass actief; wachten op navigatievrijgave naar Groepsmisdaden.');
+        }
+        return;
       }
-      const target = bestTarget(); if (!target) { setStatus('NO_TARGET', 'Geen winstgevend doel op Nu buiten de eigen familie gevonden.'); return; }
+
+      // TEST29S: na de eerste Go-submit kan Omerta het target-overzicht nog even
+      // laten staan. Dat is geen annulering. Verifieer de zojuist verstuurde raid
+      // via GroupCrimes in plaats van leaderGo direct te wissen of nogmaals Go te klikken.
+      if (targetLeaderGo && targetClicks === 0 && inviteSentAt > 0) {
+        const age = Date.now() - inviteSentAt;
+        if (age < 2500) {
+          setStatus('INVITE_SUBMIT_SETTLE', 'Spot-uitnodiging is verstuurd; korte serververwerking voordat de actieve raid wordt gecontroleerd.');
+          return;
+        }
+        if (navigateToGroup()) {
+          setStatus('INVITE_VERIFY_GROUP', 'Spot-uitnodiging verstuurd; Groepsmisdaden geopend om de actieve raid te bevestigen.');
+        } else {
+          setStatus('INVITE_VERIFY_WAIT', 'Spot-uitnodiging verstuurd; wachten op navigatievrijgave voor verificatie.');
+        }
+        return;
+      }
+
+      // Alleen buiten een geldige verzend-/second-pass cyclus mag een oud
+      // target-overzicht tijdelijke Spot-state opruimen.
+      if ((targetLeaderGo || targetClicks > 0) && !validFreshSecondPass()) {
+        set(K.leaderGo, false); set(K.startCount, 0); set(K.lastReadyCheck, 0); set(K.lastAction, 0); set(K.startClickedAt, 0); set(K.secondPass, ''); set(K.inviteSentAt, 0);
+      }
+
+      const targetBeforeFill = bestTarget(); if (!targetBeforeFill) { setStatus('NO_TARGET', 'Geen winstgevend doel op Nu buiten de eigen familie gevonden.'); return; }
       const filled = fillLeaderForm(); if (!filled.ok) { setStatus('WAIT_FORM', filled.reason); return; }
-      if (clickOnce(target.action)) { set(K.leaderGo, true); setStatus('INVITE_SENT', `Driver ${filled.name}, 0 kogels en beste doel ${target.type} gekozen; Go exact één keer geklikt.`); }
-      else setStatus('WAIT_GO', 'Formulier is gereed. Wachten tot de eenmalige klikbeveiliging vrij is.');
+
+      // Omerta kan na input/change het Spot-formulier/tabel opnieuw renderen.
+      // Gebruik daarom nooit de DOM-node die VOOR het invullen is opgeslagen.
+      // Zoek het beste doel opnieuw in de live DOM en submit alleen een verbonden knop/formulier.
+      const target = bestTarget();
+      if (!target || !target.action || !target.action.isConnected) {
+        setStatus('WAIT_LIVE_GO', 'Spot-formulier is na invullen opnieuw opgebouwd; wachten op de actuele Go-knop.');
+        return;
+      }
+      let sent = false;
+      if (actionAllowed()) {
+        const liveAction = target.action;
+        const liveForm = liveAction.form || liveAction.closest?.('form');
+        markAction();
+        try {
+          if (liveForm?.isConnected && typeof liveForm.requestSubmit === 'function' && /submit/i.test(String(liveAction.type || 'submit'))) {
+            liveForm.requestSubmit(liveAction);
+            sent = true;
+          } else if (liveAction.isConnected) {
+            liveAction.click();
+            sent = true;
+          }
+        } catch (_) { sent = false; }
+      }
+      if (sent) { set(K.leaderGo, true); set(K.inviteSentAt, Date.now()); setStatus('INVITE_SENT', `Driver ${filled.name}, 0 kogels en beste doel ${target.type} gekozen; actuele Go exact één keer verstuurd.`); }
+      else setStatus('WAIT_GO', 'Formulier is gereed. Wachten op actuele verbonden Go-knop/actiebeveiliging.');
       return;
     }
 
@@ -3611,28 +3513,21 @@ Naam3"></textarea><br><br>
     await new Promise(r=>mrbSetTimeout(r,1000));                        // (6) oorspronkelijke 1000ms
   }
 
-  // persistente (re)injectie zoals origineel bedoeld, maar zonder herlaad nodig
-  // CPU-hotfix: niet meer bij iedere wijziging de volledige pagina doorzoeken.
+  // TEST29Q CPU-cleanup: geen permanente brede observer meer voor Detectives UI.
+  // Alleen bij SPA-routewissel en een rustige fallback, en alleen als de relevante DOM bestaat.
   let injectScheduled = false;
   const scheduleInject = () => {
     if (injectScheduled) return;
     injectScheduled = true;
     mrbSetTimeout(() => { injectScheduled = false; injectUI(); }, 250);
   };
-  const mo = new MRBPerfMutationObserver(mutations=>{
-    for (const m of mutations) {
-      for (const node of m.addedNodes || []) {
-        if (node.nodeType !== 1) continue;
-        if (node.id === 'detectivesMain' || node.id === 'detectives-search-div' ||
-            node.querySelector?.('#detectivesMain, #detectives-search-div')) {
-          scheduleInject();
-          return;
-        }
-      }
-    }
-  });
-  const detectiveRoot = document.querySelector('#game_container') || document.body;
-  if (detectiveRoot) mo.observe(detectiveRoot,{childList:true,subtree:true});
+  const maybeInjectDetectives = () => {
+    if (document.hidden) return;
+    if (document.querySelector('#detectivesMain, #detectives-search-div')) scheduleInject();
+  };
+  window.addEventListener('hashchange', maybeInjectDetectives, true);
+  window.addEventListener('popstate', maybeInjectDetectives, true);
+  mrbSetInterval(maybeInjectDetectives, 3000);
 
   // eerste poging
   injectUI();
@@ -3690,26 +3585,12 @@ Naam3"></textarea><br><br>
     // 1) Probeer direct te focussen als knop er al is
     focusBtn(findBtn());
 
-    // 2) Observeer latere injecties
-    let focusScheduled = false;
-    mo = new MRBPerfMutationObserver((mutations) => {
-      if (focusScheduled) return;
-      let relevant = false;
-      for (const m of mutations) {
-        for (const node of m.addedNodes || []) {
-          if (node.nodeType !== 1) continue;
-          if (node.matches?.(BTN_SELECTOR) || node.querySelector?.(BTN_SELECTOR)) { relevant = true; break; }
-        }
-        if (relevant) break;
-      }
-      if (!relevant) return;
-      focusScheduled = true;
-      requestAnimationFrame(() => { focusScheduled = false; focusBtn(findBtn()); });
-    });
-    const travelRoot = document.querySelector('#game_container') || document.body;
-    if (travelRoot) {
-      mo.observe(travelRoot, { childList: true, subtree: true });
-    }
+    // 2) TEST29Q: geen brede DOM-observer. Travel-confirm verschijnt kort na een route/action;
+    // route-events plus een rustige fallback zijn voldoende en voorkomen observer-microtaskspam.
+    const refreshFocus = () => focusBtn(findBtn());
+    window.addEventListener('hashchange', refreshFocus, true);
+    window.addEventListener('popstate', refreshFocus, true);
+    mrbSetInterval(refreshFocus, 2000);
 
     // 3) Enter-listener (capture om modals te pakken)
     document.addEventListener('keydown', onKeyDown, true);
@@ -3855,18 +3736,17 @@ Naam3"></textarea><br><br>
     }
   }
 
-  // CPU-hotfix: alleen op relevante pagina's en maximaal eenmaal per 250 ms.
+  // TEST29Q CPU-cleanup: Race/OC prefill heeft geen permanente observer nodig.
+  // Alleen relevante pagina's worden bij routewisseling en rustig elke 3s gecontroleerd.
   let prefillTimer = 0;
   function schedulePrefill(){
     if (!(onPageRaces() || onPageOC())) return;
     mrbClearTimeout(prefillTimer);
     prefillTimer = mrbSetTimeout(prefillOnce, 250);
   }
-  const mo = new MRBPerfMutationObserver(schedulePrefill);
-  const prefillRoot = document.querySelector('#game_container') || document.body;
-  if (prefillRoot) mo.observe(prefillRoot, { childList:true, subtree:true });
   window.addEventListener('hashchange', schedulePrefill, true);
   window.addEventListener('popstate', schedulePrefill, true);
+  mrbSetInterval(()=>{ if (onPageRaces() || onPageOC()) prefillOnce(); }, 3000);
   mrbSetTimeout(prefillOnce, 300);
   mrbSetTimeout(prefillOnce, 1000);
   mrbSetTimeout(prefillOnce, 2000);
@@ -9136,7 +9016,7 @@ try {
   // ===================================================================
   // JAIL DETECT
   // ===================================================================
-  function jailNowDetected(){
+  function jailNowDetectedCore(){
     const gc = gameContainer();
     if (!gc) return false;
     if (!onRelevantJailModule()) return false;
@@ -9153,6 +9033,8 @@ try {
 
     return (hasMain && hasTimer) || (hasMain && hasCops) || (hasMain && hasWing);
   }
+  function jailNowDetected(){ return ccHot('jailNowDetected',()=>jailNowDetectedCore()); }
+
   function jailFreeDetected(){
     const t = gameText();
     return /Thanks to your contacts, you are free again! But favours don't last forever|Je zit niet in de gevangenis!?|Je bent niet langer in de gevangenis|Je bent weer vrij|Je hebt je borgsom van\s*\$?[\d.,]+\s*betaald|You (?:have )?paid (?:your )?bail/i.test(t);
@@ -9340,23 +9222,35 @@ if (pausedCaptcha){
     paint();
   }
 
+  // TEST29P CPU root-cause fix:
+  // De oude captcha-watcher observeerde document.documentElement + subtree en werd daardoor
+  // bij vrijwel iedere Omerta DOM-mutatie wakker. Dat leverde duizenden observer-microtasks op.
+  // Captcha hoeft niet op sub-seconde niveau ontdekt te worden: een centrale 2s-poll is
+  // voldoende snel en voorkomt de mutation-storm volledig.
+  let captchaPollId = null;
   function attachCaptchaObserver(){
-    if (captchaObserver) try{captchaObserver.disconnect();}catch{}
-    captchaObserver = new MRBPerfMutationObserver(()=> setCaptchaPaused(captchaActief()) );
-    captchaObserver.observe(document.documentElement, {childList:true,subtree:true});
-    setCaptchaPaused(captchaActief());
+    if (captchaObserver) { try{captchaObserver.disconnect();}catch{} captchaObserver = null; }
+    if (captchaPollId) { try{mrbClearInterval(captchaPollId);}catch{} captchaPollId = null; }
+    const captchaSample = ()=>{
+      if (!running) return;
+      setCaptchaPaused(captchaActief());
+    };
+    captchaSample();
+    captchaPollId = mrbSetInterval(captchaSample, 2000);
   }
 
   function detachCaptchaObserver(){
-    if (!captchaObserver) return;
-    try{captchaObserver.disconnect();}catch{}
-    captchaObserver = null;
+    if (captchaObserver) { try{captchaObserver.disconnect();}catch{} captchaObserver = null; }
+    if (captchaPollId) { try{mrbClearInterval(captchaPollId);}catch{} captchaPollId = null; }
     pausedCaptcha = false;
     beeped = false;
     resumeNeeded = false;
     resumeKind = '';
     resumePhase = '';
   }
+
+  // TEST29R: profiler verwijderd; functionele callstructuur blijft gelijk.
+  function ccHot(label, fn){ return fn(); }
 
   // ===================================================================
   // INFO TIMER LEZEN
@@ -9398,7 +9292,7 @@ if (pausedCaptcha){
     return joined || norm(row.textContent);
   }
 
-  function readTimersFromRoot(root=document){
+  function readTimersFromRootCore(root=document){
     const tables = root.querySelectorAll('.thinline');
     const t1 = tables?.[1] || null;
     if (!t1) return {
@@ -9456,7 +9350,9 @@ if (pausedCaptcha){
     };
   }
 
-  function syncAllFromInfoOnce(){
+  function readTimersFromRoot(root=document){ return ccHot('readTimersFromRoot',()=>readTimersFromRootCore(root)); }
+
+  function syncAllFromInfoOnceCore(){
     if (!onInfoPage()) return false;
     // Terug op Mijn Account = vorige Crimes/Cars navigatielease is afgerond.
     ccNavLeaseTarget=''; ccNavLeaseUntil=0;
@@ -9483,6 +9379,8 @@ if (pausedCaptcha){
 
     return true;
   }
+
+  function syncAllFromInfoOnce(){ return ccHot('syncAllFromInfoOnce',()=>syncAllFromInfoOnceCore()); }
 
   // ===================================================================
   // ACHTERGROND TIMER-SYNC
@@ -9625,7 +9523,7 @@ paint();
     paint();
   }
 
-  function maybePassiveInfoSync(){
+  function maybePassiveInfoSyncCore(){
     if (!running) return;
     if (!onInfoPage()) return;
     if (busy || pausedCaptcha || gatePaused) return;
@@ -9639,6 +9537,8 @@ paint();
       paint();
     }
   }
+
+  function maybePassiveInfoSync(){ return ccHot('maybePassiveInfoSync',()=>maybePassiveInfoSyncCore()); }
 
   // ===================================================================
   // RESULT DETECTIE
@@ -10164,7 +10064,7 @@ paint();
     paint();
   }
 
-  function tick(){
+  function tickCore(){
     if (!running) return;
 
     if (isLoggedOut()){
@@ -10237,6 +10137,8 @@ paint();
 
     paint();
   }
+
+  function tick(){ return ccHot('tick.total',()=>tickCore()); }
 
   function ccOutcomeEvidence(kind, chosen){
     try{
@@ -13047,18 +12949,20 @@ paint();
   });
 
   // ---------------------------
-  // Observer (SPA/partial reloads) - debounced
+  // TEST29P CPU root-cause fix: geen document-wide MutationObserver meer.
+  // Prefill hoeft alleen na een SPA-routewissel of af en toe als fallback te controleren.
+  // Daarmee verdwijnen duizenden nutteloze observer-callbacks terwijl dezelfde prefill-functie
+  // behouden blijft zodra de relevante velden daadwerkelijk aanwezig zijn.
   // ---------------------------
-  let tObs = null;
-  const mo = new MRBPerfMutationObserver(()=>{
-    if (tObs) return;
-    tObs = mrbSetTimeout(()=>{
-      tObs = null;
-      applyAll();
-    }, 200);
-  });
-
-  mo.observe(document.documentElement, { childList:true, subtree:true });
+  let prefillApplyBusy = false;
+  const safeApplyAll = ()=>{
+    if (prefillApplyBusy || document.hidden) return;
+    prefillApplyBusy = true;
+    try { applyAll(); } finally { prefillApplyBusy = false; }
+  };
+  window.addEventListener('hashchange', safeApplyAll, true);
+  window.addEventListener('popstate', safeApplyAll, true);
+  mrbSetInterval(safeApplyAll, 3000);
 
   applyAll();
 })();
@@ -13804,13 +13708,8 @@ paint();
     }
   }
 
-  const observer=new MRBPerfMutationObserver(()=>{
-    if(!active||busy)return;
-    mrbClearTimeout(unsafeWindow.__mrbMilestonePopupDebounce);
-    unsafeWindow.__mrbMilestonePopupDebounce=mrbSetTimeout(processPopup,350);
-  });
-  const milestoneRoot=document.querySelector('#game_container');
-  if(milestoneRoot) observer.observe(milestoneRoot,{childList:true,subtree:true});
+  // TEST29Q: de bestaande 1s active-only fallback is voldoende; geen permanente
+  // game_container-observer meer wanneer Milestones uit staat.
   mrbSetInterval(()=>{ if(active&&!busy&&popupRoot())processPopup(); },1000);
 
 
@@ -14338,14 +14237,11 @@ paint();
     return { ok:true };
   };
 
-  // Initial try + persistente watchers (AJAX/tabs)
+  // TEST29Q: geen permanente Lackey-observer. Alleen actief op de Lackeys-pagina.
   ensureButtons();
-  const target = document.getElementById('game_container') || document.body;
-  const mo = new MRBPerfMutationObserver(()=>ensureButtons());
-  mo.observe(target, {childList:true, subtree:true});
-
   window.addEventListener('hashchange', ensureButtons, true);
   window.addEventListener('popstate',  ensureButtons, true);
+  mrbSetInterval(()=>{ if (onLackeys()) ensureButtons(); }, 3000);
 })();
 
 
@@ -14627,29 +14523,17 @@ paint();
     if (el && (el.value||'').trim().length === 3) trySubmit(el);
   })();
 
-  // Als Jail de input vervangt via AJAX: guard leegmaken + focus burst
-  const mo = new MRBPerfMutationObserver(muts=>{
-    if (!onJail()) return;
-    for (const m of muts){
-      if (!m.addedNodes?.length) continue;
-      for (const node of m.addedNodes){
-        if (node.nodeType !== 1) continue;
-
-        if (node.id === FIELD_ID) {
-          node.dataset.mrbGoldLastSubmit = '';
-          focusBurst(1500);
-        }
-
-        const el = node.querySelector?.('#' + FIELD_ID);
-        if (el) {
-          el.dataset.mrbGoldLastSubmit = '';
-          focusBurst(1500);
-        }
-      }
-    }
-  });
-  const jailRoot = document.querySelector('#game_container');
-  if (jailRoot) mo.observe(jailRoot, {childList:true, subtree:true});
+  // TEST29Q: geen permanente Jail-observer. Alleen op Jail-pagina rustig controleren
+  // of AJAX het invoerveld heeft vervangen; de input/keyup/change listeners blijven leidend.
+  let lastJailField = null;
+  mrbSetInterval(()=>{
+    if (!onJail()) { lastJailField = null; return; }
+    const el = document.getElementById(FIELD_ID);
+    if (!el || el === lastJailField) return;
+    lastJailField = el;
+    el.dataset.mrbGoldLastSubmit = '';
+    focusBurst(1500);
+  }, 2000);
 })();
 
 // === GroupCrimes + OrgCrime auto-gedrag (altijd actief) ===
@@ -14814,17 +14698,15 @@ paint();
     // Meteen één keer draaien
     handlePages();
 
-    // CPU fix: alleen de spelcontainer observeren en wijzigingen bundelen.
-    const target = document.querySelector('#game_container');
-    if (target) {
-        let prefillTimer = 0;
-        new MRBPerfMutationObserver(() => {
-            const href = String(location.href || '');
-            if (!/module=(GroupCrimes|OrgCrime)/i.test(href)) return;
-            mrbClearTimeout(prefillTimer);
-            prefillTimer = mrbSetTimeout(handlePages, 500);
-        }).observe(target, { childList:true, subtree:true });
-    }
+    // TEST29Q: geen permanente GroupCrimes/OrgCrime-observer.
+    // Alleen op relevante routes rustig controleren; dit behoudt autofill zonder globale mutation-storm.
+    const maybeHandlePages = () => {
+        const href = String(location.href || '');
+        if (/module=(GroupCrimes|OrgCrime)/i.test(href)) handlePages();
+    };
+    window.addEventListener('hashchange', maybeHandlePages, true);
+    window.addEventListener('popstate', maybeHandlePages, true);
+    mrbSetInterval(maybeHandlePages, 2000);
 
 })();
 
