@@ -28,6 +28,7 @@
 // centrale 2s-poll; Prefill gebruikt geen documentElement-observer meer maar een 3s fallback +
 // SPA-navigatie-events. Moduleflows, prioriteiten, Spot/Race/Heist en actiegedrag blijven ongewijzigd.
 
+// Release 6.0.0-test29T: Spot stale-raid herstel: wanneer Omerta na het openen meldt "Spot bestaat niet", wordt exact die zojuist geopende Spot-link tijdelijk afgekeurd. De Leader keert terug naar Groepsmisdaden en kiest alleen een andere geldige Spot-link; dezelfde verdwenen raid wordt niet opnieuw geopend. Geen wijzigingen aan overige modules.
 // Release 6.0.0-test29S: gerichte Spot-Leader flowfix bovenop TEST29R. Na een live Go-submit blijft leaderGo actief en wordt de flow via GroupCrimes geverifieerd in plaats van op het nog zichtbare target-overzicht direct gereset/opnieuw verstuurd. Bij startCount=1 heeft de verplichte second-pass altijd voorrang op generieke target-page cleanup, zodat de tweede afronding niet meer kan worden gewist door een SPA-rerender. Overige modules en timings ongewijzigd.
 
 // Release 6.0.0-test29M: Spot Leider robuuster gemaakt zonder overige moduleflow te wijzigen. Na het invullen van Driver/0 kogels wordt het gekozen doel opnieuw uit de live DOM opgezocht, zodat een Omerta SPA-rerender geen losgekoppelde Go/form meer kan opleveren. Eerste Spot-resultaat wordt bovendien altijd als verplichte second-pass hersteld zolang dezelfde Leider-cyclus actief is; target-overzicht met startCount=1 mag geen nieuwe invite starten maar hervat second-pass via GroupCrimes.
@@ -2093,7 +2094,8 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
     startCount: P + 'start_count', lastAction: P + 'last_action', driverName: P + 'driver_name',
     lastReadyCheck: P + 'last_ready_check', driverAcceptedAt: P + 'driver_accepted_at',
     startClickedAt: P + 'start_clicked_at', secondPass: P + 'second_pass', spotOpenedAt: P + 'spot_opened_at',
-    driverLastVerify: P + 'driver_last_verify', driverProbeAt: P + 'driver_probe_at', inviteSentAt: P + 'invite_sent_at'
+    driverLastVerify: P + 'driver_last_verify', driverProbeAt: P + 'driver_probe_at',
+    lastSpotHref: P + 'last_spot_href', invalidSpotHref: P + 'invalid_spot_href', invalidSpotUntil: P + 'invalid_spot_until', inviteSentAt: P + 'invite_sent_at'
   };
 
   const DRIVER_SETTING_KEYS = ['race_partner_name', 'driver_name', 'mrb_driver_name', 'partner_name'];
@@ -2235,9 +2237,16 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
       [...document.querySelectorAll('a')].find(a => visible(a) && /module=GroupCrimes/i.test(a.getAttribute('href') || '')) || null;
   }
   function findSpotEntry() {
+    const invalidHref = String(get(K.invalidSpotHref, '') || '');
+    const invalidUntil = Number(get(K.invalidSpotUntil, 0) || 0);
+    if (invalidUntil && invalidUntil <= Date.now()) {
+      set(K.invalidSpotHref, ''); set(K.invalidSpotUntil, 0);
+    }
     const links = [...document.querySelectorAll('a')].filter(visible).filter(a => {
       const label = low(a.textContent || '');
-      const href = low(a.getAttribute('href') || '');
+      const rawHref = String(a.getAttribute('href') || '');
+      const href = low(rawHref);
+      if (invalidUntil > Date.now() && invalidHref && rawHref === invalidHref) return false;
       return !/annuleer|cancel|wijs af|decline|reject/.test(label) && !/cancel|decline|reject/.test(href);
     });
     return links.find(a => /module=Spot/i.test(a.getAttribute('href') || '')) ||
@@ -2245,7 +2254,7 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
   }
   function clickOnce(el) { if (!visible(el) || !actionAllowed()) return false; markAction(); el.click(); return true; }
   function navigateToGroup() { if (isGroupPage()) return true; if (!canNavigate()) return false; const link = findGroupLink(); if (!link) return false; markNav(); link.click(); return true; }
-  function openSpot() { if (!canNavigate()) return false; const link = findSpotEntry(); if (!link) return false; markNav(); set(K.spotOpenedAt, Date.now()); link.click(); return true; }
+  function openSpot() { if (!canNavigate()) return false; const link = findSpotEntry(); if (!link) return false; const href=String(link.getAttribute('href')||''); set(K.lastSpotHref, href); markNav(); set(K.spotOpenedAt, Date.now()); link.click(); return true; }
   function findDriverInviteEntry() {
     // Driver mag een generieke Spot-link nooit als uitnodiging behandelen.
     // Alleen een entry waarvan de eigen rij/kaart expliciet een uitnodiging of
@@ -2759,6 +2768,24 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
   }
 
   async function leaderTick() {
+    // TEST29T: een verdwenen/ingepikte raid kan nog als oude Spot-link in
+    // Groepsmisdaden staan. Omerta antwoordt dan met "Spot bestaat niet".
+    // Markeer exact de laatst geopende href tijdelijk ongeldig en ga terug naar
+    // Groepsmisdaden. findSpotEntry() slaat alleen die stale raid vervolgens over.
+    if (/\bspot\s+bestaat\s+niet\b|\bspot\s+does\s+not\s+exist\b/i.test(pageText())) {
+      const badHref = String(get(K.lastSpotHref, '') || '');
+      if (badHref) {
+        set(K.invalidSpotHref, badHref);
+        set(K.invalidSpotUntil, Date.now() + 120000);
+      }
+      set(K.spotOpenedAt, 0);
+      set(K.leaderGo, false);
+      set(K.inviteSentAt, 0);
+      if (navigateToGroup()) setStatus('STALE_SPOT_RECOVER', 'Deze raid bestaat niet meer; exact deze Spot is tijdelijk overgeslagen en Groepsmisdaden wordt opnieuw gecontroleerd.');
+      else setStatus('STALE_SPOT_WAIT', 'Deze raid bestaat niet meer; exact deze Spot is tijdelijk overgeslagen. Wachten op navigatievrijgave.');
+      return;
+    }
+
     // 5.8.44: servercooldown controleren VOOR enige second-pass/recovery-navigatie.
     // Dit voorkomt precies de GroupCrimes -> Mijn Account -> GroupCrimes lus van een stale secondPass.
     const freshSecondPass = validFreshSecondPass();
