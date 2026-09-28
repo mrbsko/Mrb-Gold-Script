@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MRB Gold Edition
-// @version      6.0.0-test29Y-spot-native-go-click
+// @version      6.0.0-test29Z-spot-driver-ready-refresh
 // @description  MRB Gold: centrale Unified Scheduler, navigatie-owner, retry-circuitbreaker en strikte actieguards.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -2306,7 +2306,7 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
       if (untilReady < COOLDOWN_RECHECK) return untilReady;
     }
     if (/COOLDOWN/i.test(st)) return COOLDOWN_RECHECK;
-    if (/WAIT_DRIVER_READY|RECHECK_DRIVER_READY|INVITE_SENT|WAIT_ACTIVE_DETAILS/i.test(st)) return DRIVER_READY_RECHECK;
+    if (/WAIT_DRIVER_READY|RECHECK_DRIVER_READY|RECHECK_DRIVER_READY_HOME|RECHECK_DRIVER_READY_GROUP|INVITE_SENT|WAIT_ACTIVE_DETAILS/i.test(st)) return DRIVER_READY_RECHECK;
     if (/WAIT_SERVER_AFTER_START|WAIT_START_SETTLE|START_RECHECK_PENDING|SECOND_PASS/i.test(st)) return 1200;
     if (role() === 'driver' && /DRIVER_(?:WAIT_INVITE|WAIT_LEADER|WAIT_SERVER|TIMER_READY|GO_GROUP|OPEN_SPOT|READY)/i.test(st)) return 4000;
     if (/COMPLETE|LEADER_START_CLICKED|DRIVER_READY/i.test(st)) return 5000;
@@ -2568,7 +2568,7 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
 
   function spotOwnsSharedGroupPage() {
     const st = String(state() || '').toUpperCase();
-    const activeState = /^(?:GO_GROUP|OPEN_SPOT|INVITE_SENT|WAIT_ACTIVE_DETAILS|WAIT_DRIVER_READY|RECHECK_DRIVER_READY|WAIT_START_CONTROL|WAIT_START_SETTLE|RECHECK_AFTER_START|WAIT_START_RECHECK_NAV|SECOND_PASS(?:_|$)|SPOT_FINALIZE(?:_|$)|DRIVER_GO_GROUP|DRIVER_OPEN_SPOT|DRIVER_ACCEPT_CLICKED|DRIVER_READY|DRIVER_RECHECK_INVITE|DRIVER_WAIT_SERVER)$/i.test(st);
+    const activeState = /^(?:GO_GROUP|OPEN_SPOT|INVITE_SENT|WAIT_ACTIVE_DETAILS|WAIT_DRIVER_READY|RECHECK_DRIVER_READY|RECHECK_DRIVER_READY_HOME|RECHECK_DRIVER_READY_GROUP|WAIT_START_CONTROL|WAIT_START_SETTLE|RECHECK_AFTER_START|WAIT_START_RECHECK_NAV|SECOND_PASS(?:_|$)|SPOT_FINALIZE(?:_|$)|DRIVER_GO_GROUP|DRIVER_OPEN_SPOT|DRIVER_ACCEPT_CLICKED|DRIVER_READY|DRIVER_RECHECK_INVITE|DRIVER_WAIT_SERVER)$/i.test(st);
     const activeFlags = !!get(K.leaderGo, false)
       || !!get(K.driverAccepted, false)
       || Number(get(K.startCount, 0) || 0) > 0
@@ -2931,7 +2931,7 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
 
       // Spot krijgt pas ownership zodra er werkelijk een Spot-opdracht bestaat:
       // Leider-flow na openen/invite, of Driver na echte acceptatie/auto-ready.
-      const active=/^(?:GO_GROUP|OPEN_SPOT|WAIT_ACTIVE_DETAILS|INVITE_SENT|WAIT_DRIVER_READY|RECHECK_DRIVER_READY|WAIT_START_CONTROL|WAIT_START_SETTLE|RECHECK_AFTER_START|WAIT_START_RECHECK_NAV|WAIT_START_BACKGROUND|RECOVER_GROUP|SECOND_PASS_|SPOT_FINALIZE_|SPOT_PAGE_SETTLE|DRIVER_ACCEPT_CLICKED|DRIVER_READY|DRIVER_WAIT_LEADER|DRIVER_WAIT_SERVER)/.test(st);
+      const active=/^(?:GO_GROUP|OPEN_SPOT|WAIT_ACTIVE_DETAILS|INVITE_SENT|WAIT_DRIVER_READY|RECHECK_DRIVER_READY|RECHECK_DRIVER_READY_HOME|RECHECK_DRIVER_READY_GROUP|WAIT_START_CONTROL|WAIT_START_SETTLE|RECHECK_AFTER_START|WAIT_START_RECHECK_NAV|WAIT_START_BACKGROUND|RECOVER_GROUP|SECOND_PASS_|SPOT_FINALIZE_|SPOT_PAGE_SETTLE|DRIVER_ACCEPT_CLICKED|DRIVER_READY|DRIVER_WAIT_LEADER|DRIVER_WAIT_SERVER)/.test(st);
 
       if(passiveDriverProbe) {
         unsafeWindow.mrbGroupTransaction?.release?.('spot','spot driver probe yield '+st.toLowerCase());
@@ -2995,7 +2995,7 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
       // wordt altijd hersteld naar exact startCount=1. Zo kan de eerste uitslag nooit
       // per ongeluk COMPLETE worden voordat de verplichte tweede doorgang is uitgevoerd.
       let resultClicks = Number(get(K.startCount, 0) || 0);
-      const activeLeaderCycle = !!get(K.leaderGo, false) || /^(?:INVITE_SENT|WAIT_DRIVER_READY|RECHECK_DRIVER_READY|WAIT_START_CONTROL|SPOT_FINALIZE|SECOND_PASS)/i.test(state());
+      const activeLeaderCycle = !!get(K.leaderGo, false) || /^(?:INVITE_SENT|WAIT_DRIVER_READY|RECHECK_DRIVER_READY|RECHECK_DRIVER_READY_HOME|RECHECK_DRIVER_READY_GROUP|WAIT_START_CONTROL|SPOT_FINALIZE|SECOND_PASS)/i.test(state());
       if (resultClicks < 2 && activeLeaderCycle) {
         if (resultClicks !== 1) {
           resultClicks = 1;
@@ -3034,10 +3034,15 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
         const lastCheck = Number(get(K.lastReadyCheck, 0) || 0);
         const elapsed = Date.now() - lastCheck;
         if (elapsed >= DRIVER_READY_RECHECK && canNavigate()) {
+          // TEST29Z: opnieuw naar exact dezelfde GroupCrimes-hash navigeren kan door
+          // Omerta's SPA-router een no-op zijn. Daardoor bleef de Leader naar een
+          // oude detailweergave kijken met "Auto: None Yet", ook nadat de Driver
+          // elders al geaccepteerd en een auto gekozen had. Forceer daarom bewust
+          // een twee-staps refresh: eerst Mijn Account, daarna terug naar GroupCrimes.
           set(K.lastReadyCheck, Date.now());
+          setStatus('RECHECK_DRIVER_READY_HOME', 'Driver of auto is nog niet gereed. Mijn Account wordt kort geopend om de serverstatus echt te verversen; daarna direct terug naar Groepsmisdaden.');
           markNav();
-          unsafeWindow.mrbNavigate?.('/?module=GroupCrimes',{source:'spot-driver-recheck'});
-          setStatus('RECHECK_DRIVER_READY', 'Driver of auto is nog niet gereed. Alleen de huidige Groepsmisdaden-status wordt ververst; Mijn Account blijft ongemoeid.');
+          unsafeWindow.mrbNavigate?.('/information.php',{source:'spot-driver-recheck-home'});
           return;
         }
         const remaining = Math.max(0, DRIVER_READY_RECHECK - elapsed);
@@ -3098,6 +3103,24 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
     }
     if (isInfoPage()) {
       syncFamilyFromInfo();
+
+      // TEST29Z: tweede helft van de Leader refresh. Een actieve Spot-uitnodiging
+      // met startCount 0 is nog niet afgerond; gebruik Mijn Account hier alleen als
+      // harde refresh-hop en ga daarna terug naar GroupCrimes om Driver + Auto opnieuw
+      // uit de actuele serverweergave te lezen. Timerlogica mag deze pending raid niet
+      // tussendoor resetten.
+      if (role() === 'leader' && get(K.leaderGo, false) && Number(get(K.startCount, 0) || 0) === 0 &&
+          /^(?:RECHECK_DRIVER_READY_HOME|RECHECK_DRIVER_READY_GROUP)$/i.test(state())) {
+        if (canNavigate()) {
+          setStatus('RECHECK_DRIVER_READY_GROUP', 'Serverstatus is ververst. Terug naar Groepsmisdaden om Driver en auto opnieuw te controleren.');
+          markNav();
+          unsafeWindow.mrbNavigate?.('/?module=GroupCrimes',{source:'spot-driver-recheck-group'});
+        } else {
+          setStatus('RECHECK_DRIVER_READY_HOME', 'Mijn Account is geladen; wachten op navigatievrijgave om Groepsmisdaden opnieuw te openen.');
+        }
+        return;
+      }
+
       if (spotDriverYieldForHeist('Mijn Account')) return;
       const timer = readSpotTimer();
       if (!timer.found) { setStatus('WAIT_TIMER_READ', 'Spot Overval-timer nog niet gevonden op Mijn Account.'); return; }
