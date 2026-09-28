@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MRB Gold Edition
-// @version      6.0.0-test29U-spot-fresh-target-recovery
+// @version      6.0.0-test29W-spot-target-rules
 // @description  MRB Gold: centrale Unified Scheduler, navigatie-owner, retry-circuitbreaker en strikte actieguards.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -29,6 +29,8 @@
 // SPA-navigatie-events. Moduleflows, prioriteiten, Spot/Race/Heist en actiegedrag blijven ongewijzigd.
 
 // Release 6.0.0-test29U: Spot Leader stale-target herstel. "Spot bestaat niet" markeert nu exact het zojuist gekozen doel (type + owner) als tijdelijk ongeldig, niet de generieke Spot-link. De Leader blijft in een korte recovery-cyclus: GroupCrimes -> verse Spot-lijst -> ander beschikbaar Local Mob-doel met Next raid Nu/Now. Tijdens deze recovery mag Spot niet terugvallen naar Mijn Account. TEST29S second-pass/finalize-logica blijft behouden; overige modules ongewijzigd.
+// Release 6.0.0-test29V: Spot Leader-selectie vereenvoudigd naar serverwaarheid. Kies uitsluitend een zichtbare Local Mob-rij met Next raid = Nu/Now, sla de eigen familie en tijdelijk stale target over, en neem de eerste geldige Go in tabelvolgorde. Profit is geen selectievoorwaarde meer; ook $0-doelen zijn geldig. Overige Spot-flow en modules ongewijzigd.
+// Release 6.0.0-test29W: Spot Leader-doelregel gecorrigeerd. Alleen Next raid = Nu/Now en een zichtbare Go komen in aanmerking. Local Mob-doelen zijn alleen geldig bij minimaal $1 profit. Familie-doelen zijn geldig zolang het NIET de eigen familie is. Eigen familie blijft altijd uitgesloten; stale target recovery en TEST29S second-pass blijven behouden.
 // Release 6.0.0-test29S: gerichte Spot-Leader flowfix bovenop TEST29R. Na een live Go-submit blijft leaderGo actief en wordt de flow via GroupCrimes geverifieerd in plaats van op het nog zichtbare target-overzicht direct gereset/opnieuw verstuurd. Bij startCount=1 heeft de verplichte second-pass altijd voorrang op generieke target-page cleanup, zodat de tweede afronding niet meer kan worden gewist door een SPA-rerender. Overige modules en timings ongewijzigd.
 
 // Release 6.0.0-test29M: Spot Leider robuuster gemaakt zonder overige moduleflow te wijzigen. Na het invullen van Driver/0 kogels wordt het gekozen doel opnieuw uit de live DOM opgezocht, zodat een Omerta SPA-rerender geen losgekoppelde Go/form meer kan opleveren. Eerste Spot-resultaat wordt bovendien altijd als verplichte second-pass hersteld zolang dezelfde Leider-cyclus actief is; target-overzicht met startCount=1 mag geen nieuwe invite starten maar hervat second-pass via GroupCrimes.
@@ -2485,24 +2487,37 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
     for (const row of found.table.querySelectorAll('tr')) {
       if (row === found.header) continue;
       const cells = [...row.querySelectorAll(':scope > th, :scope > td')]; if (!cells.length) continue;
-      const owner = norm(cells[idx('owner')]?.textContent); const profit = parseMoney(cells[idx('profit')]?.textContent);
+      const owner = norm(cells[idx('owner')]?.textContent);
+      const profit = parseMoney(cells[idx('profit')]?.textContent);
       const ownerParts = owner.match(/^(.*?)\s*\(([^()]*)\)\s*$/);
       const ownerName = norm(ownerParts?.[1] || owner);
       const ownerFamily = norm(ownerParts?.[2] || '');
       const type = norm(cells[idx('type')]?.textContent);
-      const next = norm(cells[idx('next raid')]?.textContent); const actionCell = cells[idx('invite')];
+      const next = norm(cells[idx('next raid')]?.textContent);
+      const actionCell = cells[idx('invite')];
       const action = actionCell?.querySelector('a,button,input[type="button"],input[type="submit"]');
       const actionText = norm(action?.textContent || action?.value);
       const sig = spotTargetSig(type, owner);
-      // Spot Overval gebruikt uitsluitend Local Mob-doelen. Eigen familie blijft uitgesloten.
-      if (low(ownerFamily) !== 'local mob' && !/\(\s*local mob\s*\)/i.test(owner)) continue;
-      if (own && (low(ownerName) === own || low(ownerFamily) === own)) continue;
+
+      // TEST29W: alleen live beschikbare Nu/Now-doelen met een echte Go-knop.
+      // - Local Mob: minimaal $1 profit; $0 is niet aanklikbaar/bruikbaar.
+      // - Familie-spot: toegestaan zolang het niet de eigen familie is.
+      // Eigen familie en het zojuist stale verklaarde doel worden altijd overgeslagen.
+      const isLocalMob = low(ownerFamily) === 'local mob' || /\(\s*local mob\s*\)/i.test(owner);
+      const isFamilySpot = !!ownerFamily && !isLocalMob;
+      if (own && (low(ownerName) === own || low(owner) === own || low(ownerFamily) === own)) continue;
       if (invalidUntil > Date.now() && invalidSig && sig === invalidSig) continue;
-      if (profit <= 0 || !/^(nu|now)$/i.test(next)) continue;
+      if (!/^(nu|now)$/i.test(next)) continue;
       if (!visible(action) || !/^(go|ga)$/i.test(actionText)) continue;
-      candidates.push({ row, action, profit, type, owner, sig });
+      if (isLocalMob) {
+        if (!(profit >= 1)) continue;
+      } else if (!isFamilySpot) {
+        continue;
+      }
+      candidates.push({ row, action, profit, type, owner, sig, isLocalMob, isFamilySpot });
     }
-    candidates.sort((a,b) => b.profit - a.profit); return candidates[0] || null;
+    // TEST29W: pak de eerste geldige Nu/Now-rij in de live tabelvolgorde.
+    return candidates[0] || null;
   }
 
   function setInputValue(input, value) {
@@ -2967,7 +2982,7 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
         set(K.leaderGo, false); set(K.startCount, 0); set(K.lastReadyCheck, 0); set(K.lastAction, 0); set(K.startClickedAt, 0); set(K.secondPass, ''); set(K.inviteSentAt, 0);
       }
 
-      const targetBeforeFill = bestTarget(); if (!targetBeforeFill) { setStatus('NO_TARGET', 'Geen winstgevend doel op Nu buiten de eigen familie gevonden.'); return; }
+      const targetBeforeFill = bestTarget(); if (!targetBeforeFill) { setStatus('NO_TARGET', 'Geen geldige Nu/Now-spot gevonden: Local Mob vereist minimaal $1 profit; familie-spots mogen niet van de eigen familie zijn.'); return; }
       const filled = fillLeaderForm(); if (!filled.ok) { setStatus('WAIT_FORM', filled.reason); return; }
 
       // Omerta kan na input/change het Spot-formulier/tabel opnieuw renderen.
