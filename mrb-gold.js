@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MRB Gold Edition
-// @version      6.0.0-test29F-bodyguard-recheck-fix
+// @version      6.0.0-test29G-spot-second-pass-enforced
 // @description  MRB Gold: centrale Unified Scheduler, navigatie-owner, retry-circuitbreaker en strikte actieguards.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -17,6 +17,9 @@
 // @connect      script.googleusercontent.com
 // @run-at       document-end
 // ==/UserScript==
+
+// Release 6.0.0-test29G: Spot Leader second-pass verplicht gemaakt. Na eerste Start/Update (startCount=1) mag een resultaatpagina nooit COMPLETE worden en mag een opnieuw zichtbare Spot-link op Groepsmisdaden nooit als CANCELLED_RESET gelden. In beide gevallen wordt de bestaande actieve Spot opnieuw geopend voor de tweede Start/Update; pas na startCount=2 mag de flow afronden en terug naar Mijn Account. Overige modules ongewijzigd.
+
 
 // Release 6.0.0-test29F: Bodyguard Trainer herstelt stale needsWork=false. Ook bij eerder bereikte doelen plant hij elke 15 minuten een echte Bodyguards-herinspectie; oude false/nextCheck=0 state wordt na update direct opnieuw gevalideerd. Geen wijzigingen aan Race/Heist/Spot/Crimes/Cars/D&D.
 // Release 6.0.0-test29E: uitsluitend bron-diagnose bovenop TEST29D. MutationObservers tonen nu eerste echte aanmaakframe + moduleclassificatie; centrale scheduler bewaart per task een bronframe/perfLabel zodat zware timeout/interval-callbacks niet meer als generieke dnd:timeout-ID verschijnen. Geen navigatie-, Spot-, Heist-, Race-, Crimes/Cars- of timerflow gewijzigd. Gebruik mrbPerfDiag(true), mrbObserverDiag() en mrbTaskSourceDiag().
@@ -2965,6 +2968,24 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
     }
 
     if (isFinalResultPage()) {
+      // TEST29G: door de bekende gamebug is de EERSTE uitslag nog niet definitief.
+      // Zolang slechts één Start/Update is uitgevoerd, is een tweede volledige
+      // Spot-doorgang verplicht. Resultaatpagina mag deze state nooit wissen.
+      if (Number(get(K.startCount, 0) || 0) === 1) {
+        if (!get(K.secondPass, '')) set(K.secondPass, 'need_group');
+        set(K.leaderGo, true);
+        const lastClick = Number(get(K.startClickedAt, 0) || 0);
+        const elapsed = lastClick ? Date.now() - lastClick : Infinity;
+        if (elapsed < SECOND_PASS_SETTLE) {
+          setStatus('SECOND_PASS_RESULT_SETTLE', `Eerste Spot-uitkomst ontvangen; verplichte tweede doorgang start over ongeveer ${Math.ceil((SECOND_PASS_SETTLE - elapsed) / 1000)} sec.`);
+        } else if (loadGroupCrimesForSecondPass()) {
+          set(K.secondPass, 'need_spot');
+          setStatus('SECOND_PASS_RESULT_TO_GROUP', 'Eerste Spot-uitkomst ontvangen; Groepsmisdaden opnieuw geopend voor verplichte tweede afronding.');
+        } else {
+          setStatus('SECOND_PASS_RESULT_NAV_WAIT', 'Eerste Spot-uitkomst ontvangen; tweede afronding wacht kort op navigatievrijgave.');
+        }
+        return;
+      }
       setStatus('COMPLETE', 'Definitieve Spot Overval-uitkomst zichtbaar. Terug naar Mijn Account; daarna volledig passief tijdens cooldown.');
       set(K.timerReady, false);
       set(K.timerAt, 0);
@@ -3096,8 +3117,24 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
       const groupCooldown = readGroupSpotCooldown();
       if (groupCooldown && hardStopSpotCooldown(groupCooldown, 'Groepsmisdaden')) return;
       const entry = findSpotEntry();
-      if (entry && (get(K.leaderGo, false) || Number(get(K.startCount, 0) || 0) > 0)) {
-        // De gewone Spot-link is opnieuw zichtbaar: de vorige overval is geannuleerd/verdwenen.
+      const _spotClicks = Number(get(K.startCount, 0) || 0);
+      const _spotSecond = String(get(K.secondPass, '') || '');
+      if (entry && _spotClicks === 1) {
+        // TEST29G: na de eerste afronding is een opnieuw zichtbare Spot-link juist
+        // de verplichte tweede gamebug-doorgang. Nooit als annulering/reset zien.
+        set(K.leaderGo, true);
+        if (!_spotSecond) set(K.secondPass, 'need_spot');
+        if (openSpot()) {
+          set(K.secondPass, 'reopened');
+          setStatus('SECOND_PASS_OPEN_SPOT', 'Spot opnieuw geopend voor de verplichte tweede Start/Update.');
+        } else {
+          setStatus('SECOND_PASS_WAIT_SPOT', 'Verplichte tweede Spot-doorgang zichtbaar; wachten op korte actiebeveiliging.');
+        }
+        return;
+      }
+      if (entry && (get(K.leaderGo, false) || _spotClicks > 0)) {
+        // Alleen buiten een geldige first-pass/second-pass cyclus geldt een opnieuw
+        // zichtbare Spot-link als geannuleerde of verdwenen oude flow.
         set(K.leaderGo, false); set(K.startCount, 0); set(K.lastReadyCheck, 0); set(K.lastAction, 0); set(K.startClickedAt, 0); set(K.secondPass, '');
         setStatus('CANCELLED_RESET', 'Vorige Spot Overval is geannuleerd of verdwenen. Tijdelijke cyclus gewist; nieuwe Spot wordt opnieuw geopend.');
       }
