@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MRB Gold Edition
-// @version      6.0.0-test29X-spot-rollback-leader-only-fixes
+// @version      6.0.0-test29Y-spot-native-go-click
 // @description  MRB Gold: centrale Unified Scheduler, navigatie-owner, retry-circuitbreaker en strikte actieguards.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -18,6 +18,7 @@
 // @run-at       document-end
 // ==/UserScript==
 
+// Release 6.0.0-test29Y: bovenop TEST29X uitsluitend Spot Leider submit gecorrigeerd. Na Driver/0 kogels wordt exact hetzelfde gekozen target opnieuw in de live DOM gevonden en de actuele Go-knop weer via de bewezen native .click()-route bediend. requestSubmit is verwijderd omdat dit Omerta-knoplogica kan omzeilen en ten onrechte "Spot bestaat niet" kan opleveren. Target-selectie en TEST29X second-pass blijven ongewijzigd.
 // Release 6.0.0-test29X: exact TEST29F als functionele basis behouden. Alleen twee Spot-Leiderproblemen aangepast: (1) na Driver/0 kogels wordt het gekozen doel opnieuw uit de live DOM opgezocht en via de actuele verbonden Go/form verstuurd, zodat een SPA-rerender de invite niet verliest; (2) de eerste Spot-uitkomst blijft verplicht dezelfde cyclus hervatten via GroupCrimes -> actieve Spot -> tweede Start/Update voordat COMPLETE/Mijn Account is toegestaan. Target-selectie, Driver-flow en overige modules zijn verder ongewijzigd.
 // Release 6.0.0-test29F: Bodyguard Trainer herstelt stale needsWork=false. Ook bij eerder bereikte doelen plant hij elke 15 minuten een echte Bodyguards-herinspectie; oude false/nextCheck=0 state wordt na update direct opnieuw gevalideerd. Geen wijzigingen aan Race/Heist/Spot/Crimes/Cars/D&D.
 // Release 6.0.0-test29E: uitsluitend bron-diagnose bovenop TEST29D. MutationObservers tonen nu eerste echte aanmaakframe + moduleclassificatie; centrale scheduler bewaart per task een bronframe/perfLabel zodat zware timeout/interval-callbacks niet meer als generieke dnd:timeout-ID verschijnen. Geen navigatie-, Spot-, Heist-, Race-, Crimes/Cars- of timerflow gewijzigd. Gebruik mrbPerfDiag(true), mrbObserverDiag() en mrbTaskSourceDiag().
@@ -2650,6 +2651,29 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
     candidates.sort((a,b) => b.profit - a.profit); return candidates[0] || null;
   }
 
+  // TEST29Y: na het invullen kan Omerta de tabel opnieuw renderen.
+  // Herpak exact hetzelfde doel uit de verse DOM; verander de targetkeuze niet.
+  function refindSameTarget(previous) {
+    if (!previous) return null;
+    const found = findTargetTable(); if (!found) return null;
+    const headers = [...found.header.querySelectorAll('th,td')].map(c => low(c.textContent));
+    const idx = n => headers.indexOf(n);
+    for (const row of found.table.querySelectorAll('tr')) {
+      if (row === found.header) continue;
+      const cells = [...row.querySelectorAll(':scope > th, :scope > td')]; if (!cells.length) continue;
+      const type = norm(cells[idx('type')]?.textContent);
+      const owner = norm(cells[idx('owner')]?.textContent);
+      const profit = parseMoney(cells[idx('profit')]?.textContent);
+      const next = norm(cells[idx('next raid')]?.textContent);
+      if (type !== previous.type || owner !== previous.owner || profit !== previous.profit || !/^(nu|now)$/i.test(next)) continue;
+      const action = cells[idx('invite')]?.querySelector('a,button,input[type="button"],input[type="submit"]');
+      const actionText = norm(action?.textContent || action?.value);
+      if (!visible(action) || !/^(go|ga)$/i.test(actionText)) return null;
+      return { row, action, profit, type, owner };
+    }
+    return null;
+  }
+
   function setInputValue(input, value) {
     if (!input) return false;
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
@@ -3049,30 +3073,20 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
       const targetBeforeFill = bestTarget(); if (!targetBeforeFill) { setStatus('NO_TARGET', 'Geen winstgevend doel op Nu buiten de eigen familie gevonden.'); return; }
       const filled = fillLeaderForm(); if (!filled.ok) { setStatus('WAIT_FORM', filled.reason); return; }
 
-      // Omerta kan na input/change het Spot-formulier/tabel opnieuw renderen.
-      // Zoek daarom het doel opnieuw in de live DOM in plaats van de oude Go-node te gebruiken.
-      const target = bestTarget();
+      // TEST29Y: Omerta kan na input/change de tabel opnieuw renderen. Herpak
+      // exact hetzelfde doel en gebruik daarna dezelfde native .click()-route als
+      // de bewezen 29F-flow. Geen requestSubmit: de Go-knop kan eigen clicklogica hebben.
+      const target = refindSameTarget(targetBeforeFill);
       if (!target || !target.action || !target.action.isConnected) {
-        setStatus('WAIT_LIVE_GO', 'Spot-formulier is na invullen opnieuw opgebouwd; wachten op de actuele Go-knop.');
+        setStatus('WAIT_LIVE_GO', `Doel ${targetBeforeFill.type} wordt na formulieropbouw opnieuw opgezocht; wachten op de actuele Go-knop.`);
         return;
       }
-      let sent = false;
-      if (actionAllowed()) {
-        const liveAction = target.action;
-        const liveForm = liveAction.form || liveAction.closest?.('form');
-        markAction();
-        try {
-          if (liveForm?.isConnected && typeof liveForm.requestSubmit === 'function' && /submit/i.test(String(liveAction.type || 'submit'))) {
-            liveForm.requestSubmit(liveAction);
-            sent = true;
-          } else if (liveAction.isConnected) {
-            liveAction.click();
-            sent = true;
-          }
-        } catch (_) { sent = false; }
+      if (clickOnce(target.action)) {
+        set(K.leaderGo, true);
+        setStatus('INVITE_SENT', `Driver ${filled.name}, 0 kogels en doel ${target.type} via de actuele Go-knop geklikt.`);
+      } else {
+        setStatus('WAIT_GO', 'Formulier is gereed. Wachten tot de actuele Go-knop klikbaar is.');
       }
-      if (sent) { set(K.leaderGo, true); setStatus('INVITE_SENT', `Driver ${filled.name}, 0 kogels en beste doel ${target.type} gekozen; actuele Go exact één keer verstuurd.`); }
-      else setStatus('WAIT_GO', 'Formulier is gereed. Wachten op actuele verbonden Go-knop/actiebeveiliging.');
       return;
     }
 
