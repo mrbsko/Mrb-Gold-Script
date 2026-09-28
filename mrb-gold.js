@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MRB Gold Edition
-// @version      6.0.0-test29S-spot-leader-flow-fix
+// @version      6.0.0-test29U-spot-fresh-target-recovery
 // @description  MRB Gold: centrale Unified Scheduler, navigatie-owner, retry-circuitbreaker en strikte actieguards.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -28,7 +28,7 @@
 // centrale 2s-poll; Prefill gebruikt geen documentElement-observer meer maar een 3s fallback +
 // SPA-navigatie-events. Moduleflows, prioriteiten, Spot/Race/Heist en actiegedrag blijven ongewijzigd.
 
-// Release 6.0.0-test29T: Spot stale-raid herstel: wanneer Omerta na het openen meldt "Spot bestaat niet", wordt exact die zojuist geopende Spot-link tijdelijk afgekeurd. De Leader keert terug naar Groepsmisdaden en kiest alleen een andere geldige Spot-link; dezelfde verdwenen raid wordt niet opnieuw geopend. Geen wijzigingen aan overige modules.
+// Release 6.0.0-test29U: Spot Leader stale-target herstel. "Spot bestaat niet" markeert nu exact het zojuist gekozen doel (type + owner) als tijdelijk ongeldig, niet de generieke Spot-link. De Leader blijft in een korte recovery-cyclus: GroupCrimes -> verse Spot-lijst -> ander beschikbaar Local Mob-doel met Next raid Nu/Now. Tijdens deze recovery mag Spot niet terugvallen naar Mijn Account. TEST29S second-pass/finalize-logica blijft behouden; overige modules ongewijzigd.
 // Release 6.0.0-test29S: gerichte Spot-Leader flowfix bovenop TEST29R. Na een live Go-submit blijft leaderGo actief en wordt de flow via GroupCrimes geverifieerd in plaats van op het nog zichtbare target-overzicht direct gereset/opnieuw verstuurd. Bij startCount=1 heeft de verplichte second-pass altijd voorrang op generieke target-page cleanup, zodat de tweede afronding niet meer kan worden gewist door een SPA-rerender. Overige modules en timings ongewijzigd.
 
 // Release 6.0.0-test29M: Spot Leider robuuster gemaakt zonder overige moduleflow te wijzigen. Na het invullen van Driver/0 kogels wordt het gekozen doel opnieuw uit de live DOM opgezocht, zodat een Omerta SPA-rerender geen losgekoppelde Go/form meer kan opleveren. Eerste Spot-resultaat wordt bovendien altijd als verplichte second-pass hersteld zolang dezelfde Leider-cyclus actief is; target-overzicht met startCount=1 mag geen nieuwe invite starten maar hervat second-pass via GroupCrimes.
@@ -2095,7 +2095,8 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
     lastReadyCheck: P + 'last_ready_check', driverAcceptedAt: P + 'driver_accepted_at',
     startClickedAt: P + 'start_clicked_at', secondPass: P + 'second_pass', spotOpenedAt: P + 'spot_opened_at',
     driverLastVerify: P + 'driver_last_verify', driverProbeAt: P + 'driver_probe_at',
-    lastSpotHref: P + 'last_spot_href', invalidSpotHref: P + 'invalid_spot_href', invalidSpotUntil: P + 'invalid_spot_until', inviteSentAt: P + 'invite_sent_at'
+    lastSpotHref: P + 'last_spot_href', invalidSpotHref: P + 'invalid_spot_href', invalidSpotUntil: P + 'invalid_spot_until', inviteSentAt: P + 'invite_sent_at',
+    lastTargetSig: P + 'last_target_sig', invalidTargetSig: P + 'invalid_target_sig', invalidTargetUntil: P + 'invalid_target_until', staleRecoveryUntil: P + 'stale_recovery_until'
   };
 
   const DRIVER_SETTING_KEYS = ['race_partner_name', 'driver_name', 'mrb_driver_name', 'partner_name'];
@@ -2467,10 +2468,20 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
     return null;
   }
 
+  function spotTargetSig(type, owner) {
+    return `${low(norm(type))}|${low(norm(owner))}`;
+  }
+
   function bestTarget() {
     const found = findTargetTable(); if (!found) return null;
     const headers = [...found.header.querySelectorAll('th,td')].map(c => low(c.textContent));
     const idx = n => headers.indexOf(n); const own = low(family()); const candidates = [];
+    let invalidSig = String(get(K.invalidTargetSig, '') || '');
+    let invalidUntil = Number(get(K.invalidTargetUntil, 0) || 0);
+    if (invalidUntil && invalidUntil <= Date.now()) {
+      invalidSig = ''; invalidUntil = 0;
+      set(K.invalidTargetSig, ''); set(K.invalidTargetUntil, 0);
+    }
     for (const row of found.table.querySelectorAll('tr')) {
       if (row === found.header) continue;
       const cells = [...row.querySelectorAll(':scope > th, :scope > td')]; if (!cells.length) continue;
@@ -2478,16 +2489,18 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
       const ownerParts = owner.match(/^(.*?)\s*\(([^()]*)\)\s*$/);
       const ownerName = norm(ownerParts?.[1] || owner);
       const ownerFamily = norm(ownerParts?.[2] || '');
+      const type = norm(cells[idx('type')]?.textContent);
       const next = norm(cells[idx('next raid')]?.textContent); const actionCell = cells[idx('invite')];
       const action = actionCell?.querySelector('a,button,input[type="button"],input[type="submit"]');
       const actionText = norm(action?.textContent || action?.value);
-      // Elk doel is toegestaan, ongeacht Local Mob/Lonewolf/Sanctum-status.
-      // Layouts kunnen de familie vóór of tussen haakjes tonen; alleen een
-      // exacte overeenkomst met de eigen familie wordt uitgesloten.
+      const sig = spotTargetSig(type, owner);
+      // Spot Overval gebruikt uitsluitend Local Mob-doelen. Eigen familie blijft uitgesloten.
+      if (low(ownerFamily) !== 'local mob' && !/\(\s*local mob\s*\)/i.test(owner)) continue;
       if (own && (low(ownerName) === own || low(ownerFamily) === own)) continue;
+      if (invalidUntil > Date.now() && invalidSig && sig === invalidSig) continue;
       if (profit <= 0 || !/^(nu|now)$/i.test(next)) continue;
       if (!visible(action) || !/^(go|ga)$/i.test(actionText)) continue;
-      candidates.push({ row, action, profit, type: norm(cells[idx('type')]?.textContent), owner });
+      candidates.push({ row, action, profit, type, owner, sig });
     }
     candidates.sort((a,b) => b.profit - a.profit); return candidates[0] || null;
   }
@@ -2768,23 +2781,46 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
   }
 
   async function leaderTick() {
-    // TEST29T: een verdwenen/ingepikte raid kan nog als oude Spot-link in
-    // Groepsmisdaden staan. Omerta antwoordt dan met "Spot bestaat niet".
-    // Markeer exact de laatst geopende href tijdelijk ongeldig en ga terug naar
-    // Groepsmisdaden. findSpotEntry() slaat alleen die stale raid vervolgens over.
+    // TEST29U: "Spot bestaat niet" betekent dat het gekozen DOEL stale was, niet
+    // dat de generieke Spot-modulelink ongeldig is. Markeer exact type+owner en
+    // blijf in een korte GroupCrimes -> verse Spot-lijst recovery.
     if (/\bspot\s+bestaat\s+niet\b|\bspot\s+does\s+not\s+exist\b/i.test(pageText())) {
-      const badHref = String(get(K.lastSpotHref, '') || '');
-      if (badHref) {
-        set(K.invalidSpotHref, badHref);
-        set(K.invalidSpotUntil, Date.now() + 120000);
+      const badSig = String(get(K.lastTargetSig, '') || '');
+      if (badSig) {
+        set(K.invalidTargetSig, badSig);
+        set(K.invalidTargetUntil, Date.now() + 120000);
       }
+      set(K.staleRecoveryUntil, Date.now() + 30000);
       set(K.spotOpenedAt, 0);
       set(K.leaderGo, false);
       set(K.inviteSentAt, 0);
-      if (navigateToGroup()) setStatus('STALE_SPOT_RECOVER', 'Deze raid bestaat niet meer; exact deze Spot is tijdelijk overgeslagen en Groepsmisdaden wordt opnieuw gecontroleerd.');
-      else setStatus('STALE_SPOT_WAIT', 'Deze raid bestaat niet meer; exact deze Spot is tijdelijk overgeslagen. Wachten op navigatievrijgave.');
+      if (canNavigate()) {
+        markNav();
+        unsafeWindow.mrbNavigate?.('/?module=GroupCrimes',{source:'spot-stale-target-recover'});
+        setStatus('STALE_TARGET_TO_GROUP', 'Dit doel bestaat niet meer; alleen dit doel is tijdelijk overgeslagen. Groepsmisdaden wordt geopend voor een verse Local Mob-raid.');
+      } else {
+        setStatus('STALE_TARGET_NAV_WAIT', 'Dit doel bestaat niet meer; wachten op navigatievrijgave voor een verse Local Mob-raid.');
+      }
       return;
     }
+
+    const staleRecoveryUntil = Number(get(K.staleRecoveryUntil, 0) || 0);
+    if (staleRecoveryUntil > Date.now() && Number(get(K.startCount, 0) || 0) === 0 && !isSpotTargetPage()) {
+      if (isGroupPage()) {
+        const entry = findSpotEntry();
+        if (entry && openSpot()) {
+          setStatus('STALE_TARGET_OPEN_FRESH_SPOT', 'Verse Spot-lijst wordt geopend; het verdwenen doel blijft tijdelijk uitgesloten.');
+        } else {
+          setStatus('STALE_TARGET_WAIT_SPOT_LINK', 'Groepsmisdaden is open; wachten op de verse Spot-link. Niet terug naar Mijn Account.');
+        }
+      } else if (canNavigate()) {
+        markNav();
+        unsafeWindow.mrbNavigate?.('/?module=GroupCrimes',{source:'spot-stale-target-hold'});
+        setStatus('STALE_TARGET_HOLD_GROUP', 'Stale-target recovery actief; terug naar Groepsmisdaden in plaats van Mijn Account.');
+      }
+      return;
+    }
+    if (staleRecoveryUntil && staleRecoveryUntil <= Date.now()) set(K.staleRecoveryUntil, 0);
 
     // 5.8.44: servercooldown controleren VOOR enige second-pass/recovery-navigatie.
     // Dit voorkomt precies de GroupCrimes -> Mijn Account -> GroupCrimes lus van een stale secondPass.
@@ -2957,7 +2993,7 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
           }
         } catch (_) { sent = false; }
       }
-      if (sent) { set(K.leaderGo, true); set(K.inviteSentAt, Date.now()); setStatus('INVITE_SENT', `Driver ${filled.name}, 0 kogels en beste doel ${target.type} gekozen; actuele Go exact één keer verstuurd.`); }
+      if (sent) { set(K.leaderGo, true); set(K.inviteSentAt, Date.now()); set(K.lastTargetSig, target.sig || spotTargetSig(target.type, target.owner)); set(K.staleRecoveryUntil, 0); setStatus('INVITE_SENT', `Driver ${filled.name}, 0 kogels en Local Mob-doel ${target.type} gekozen; actuele Go exact één keer verstuurd.`); }
       else setStatus('WAIT_GO', 'Formulier is gereed. Wachten op actuele verbonden Go-knop/actiebeveiliging.');
       return;
     }
