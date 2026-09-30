@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MRB Gold Edition
-// @version      6.0.0-test29Z-spot-driver-ready-refresh
+// @version      6.0.0-test30A-cc-403-release-recovery
 // @description  MRB Gold: centrale Unified Scheduler, navigatie-owner, retry-circuitbreaker en strikte actieguards.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -18,6 +18,7 @@
 // @run-at       document-end
 // ==/UserScript==
 
+// Release 6.0.0-test30A: Crimes/Cars 403-recovery root-cause fix. Een HTTP-403 server-backoff breekt nu een lopende CC-cyclus atomair af: waiters/confirm/pending-click/nav-lease worden vrijgegeven, busy/current gaan terug naar idle en de bestaande Unified Dispatcher wordt exact na de backoff opnieuw gewekt. De globale navigatiegate blijft andere modules tijdens backoff stilhouden; geen extra poller/watchdog toegevoegd.
 // Release 6.0.0-test29Y: bovenop TEST29X uitsluitend Spot Leider submit gecorrigeerd. Na Driver/0 kogels wordt exact hetzelfde gekozen target opnieuw in de live DOM gevonden en de actuele Go-knop weer via de bewezen native .click()-route bediend. requestSubmit is verwijderd omdat dit Omerta-knoplogica kan omzeilen en ten onrechte "Spot bestaat niet" kan opleveren. Target-selectie en TEST29X second-pass blijven ongewijzigd.
 // Release 6.0.0-test29X: exact TEST29F als functionele basis behouden. Alleen twee Spot-Leiderproblemen aangepast: (1) na Driver/0 kogels wordt het gekozen doel opnieuw uit de live DOM opgezocht en via de actuele verbonden Go/form verstuurd, zodat een SPA-rerender de invite niet verliest; (2) de eerste Spot-uitkomst blijft verplicht dezelfde cyclus hervatten via GroupCrimes -> actieve Spot -> tweede Start/Update voordat COMPLETE/Mijn Account is toegestaan. Target-selectie, Driver-flow en overige modules zijn verder ongewijzigd.
 // Release 6.0.0-test29F: Bodyguard Trainer herstelt stale needsWork=false. Ook bij eerder bereikte doelen plant hij elke 15 minuten een echte Bodyguards-herinspectie; oude false/nextCheck=0 state wordt na update direct opnieuw gevalideerd. Geen wijzigingen aan Race/Heist/Spot/Crimes/Cars/D&D.
@@ -1035,6 +1036,10 @@ class MRBPerfMutationObserver extends MutationObserver {
       try { sessionStorage.setItem('mrb_server_backoff_until_test10', String(until)); sessionStorage.setItem('mrb_server_backoff_reason_test10', serverBackoffReason); } catch(_) {}
       try { console.warn('[MRB Unified TEST10] SERVER BACKOFF', serverBackoffReason, Math.ceil((until-Date.now())/1000)+'s'); } catch(_) {}
       try { unsafeWindow.mrbFlightRecorder?.add?.('SERVER_BACKOFF',{reason:serverBackoffReason,until}); } catch(_) {}
+      // TEST30A: als de 403 ontstond midden in Crimes/Cars mag die atomaire
+      // cyclus niet met busy/current blijven hangen. Laat de CC-owner zichzelf
+      // direct vrijgeven; de centrale dispatcher hervat pas na de backoff.
+      try { unsafeWindow.mrbV9CrimesCars?.onServerBackoff?.({until,reason:serverBackoffReason}); } catch(_) {}
       return until;
     }
     function serverBackoffActive(){ return Date.now() < serverBackoffUntil; }
@@ -8611,6 +8616,7 @@ try {
       const gui = unsafeWindow?.omerta?.GUI?.container;
       if (unsafeWindow.mrbNavigate) return h=>{
         if (blocked()) return false;
+        try { if (unsafeWindow.mrbServerBackoff?.active?.()) return false; } catch(_) {}
         const now=Date.now();
         if (h===ccNavLeaseTarget && now<ccNavLeaseUntil){
           try { console.debug('[MRB CCFIX] NAV lease actief', {target:h,remainingMs:ccNavLeaseUntil-now}); } catch(_) {}
@@ -8626,6 +8632,7 @@ try {
       };
       if (gui && typeof gui.loadPage === 'function') return h=>{
         if (blocked()) return false;
+        try { if (unsafeWindow.mrbServerBackoff?.active?.()) return false; } catch(_) {}
         const now=Date.now();
         if (h===ccNavLeaseTarget && now<ccNavLeaseUntil) return true;
         ccNavLeaseTarget=h; ccNavLeaseUntil=now+8000;
@@ -9136,6 +9143,48 @@ try {
     if (clickTimeoutId){ mrbClearTimeout(clickTimeoutId); clickTimeoutId=null; }
     if (outcomeTimeoutId){ mrbClearTimeout(outcomeTimeoutId); outcomeTimeoutId=null; }
     if (crimeActionTimerId){ mrbClearTimeout(crimeActionTimerId); crimeActionTimerId=null; }
+  }
+
+  // TEST30A: één begrensde wake na server-backoff. Geen extra loop: iedere
+  // nieuwe 403 herarmeert uitsluitend deze ene timeout op de nieuwste until.
+  let ccBackoffWakeTimerId = null;
+  function releaseForServerBackoff(meta={}){
+    let st={};
+    try { st=unsafeWindow.mrbServerBackoff?.state?.()||{}; } catch(_) {}
+    const until=Math.max(Date.now()+250, Number(meta?.until||st?.until||0)||Date.now()+120000);
+    const reason=String(meta?.reason||st?.reason||'HTTP 403');
+    const hadActiveCycle=!!(busy || current || confirmPendingKind || forcedRetryKind || ccPendingClickKind);
+
+    clearForcedRetry();
+    stopConfirmSync();
+    stopWaiters();
+    clearPendingClick();
+    ccNavLeaseTarget='';
+    ccNavLeaseUntil=0;
+    busy=false;
+    current='';
+
+    if (ccBackoffWakeTimerId){ mrbClearTimeout(ccBackoffWakeTimerId); ccBackoffWakeTimerId=null; }
+    ccBackoffWakeTimerId=mrbSetTimeout(()=>{
+      ccBackoffWakeTimerId=null;
+      if (!running) return;
+      try {
+        const live=unsafeWindow.mrbServerBackoff?.state?.()||{};
+        if (live.active){ releaseForServerBackoff(live); return; }
+      } catch(_) {}
+      // Hervat via dezelfde centrale owner. Op Mijn Account worden timers eerst
+      // opnieuw server-side bevestigd; elders laat de dispatcher de normale
+      // CC-preempt naar Mijn Account uitvoeren.
+      try { unsafeWindow.mrbUnifiedRunnableDispatcher?.dispatch?.(); } catch(_) {}
+      paint();
+    }, Math.max(250, until-Date.now()+250));
+
+    if (hadActiveCycle){
+      try { console.warn('[MRB TEST30A] CC vrijgegeven door server-backoff', {reason,until,current:'idle'}); } catch(_) {}
+      try { unsafeWindow.mrbFlightRecorder?.add?.('CC_403_RELEASE',{reason,until}); } catch(_) {}
+    }
+    paint();
+    return true;
   }
 
   function clearForcedRetry(){
@@ -10312,7 +10361,14 @@ paint();
     busy = true;
     current = job;
 
-    loadPage(kindToPage(job));
+    const navOk = loadPage(kindToPage(job));
+    if (!navOk){
+      let backoff=false, backoffState={};
+      try { backoffState=unsafeWindow.mrbServerBackoff?.state?.()||{}; backoff=!!backoffState.active; } catch(_) {}
+      if (backoff) releaseForServerBackoff(backoffState);
+      else { busy=false; current=''; stopWaiters(); paint(); }
+      return;
+    }
     waitAndClick(job);
 
     paint();
@@ -10651,6 +10707,7 @@ paint();
     nextAt:schedulerNextAt,
     isRunning:()=>running,
     isBusy:()=>busy,
+    onServerBackoff:releaseForServerBackoff,
     state:()=>({
       running, busy, current, doCrimes, doCars, doDD:false,
       crimesNext, carsNext, crimesServerReady, carsServerReady, crimesServerSyncAt, carsServerSyncAt,
