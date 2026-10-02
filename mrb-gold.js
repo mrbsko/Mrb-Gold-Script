@@ -1,6 +1,6 @@
 // ==UserScript==
-// @name         MRB Gold Edition TEST30J - Obay Clean Rewrite
-// @version      6.0.0-test30I-obay-confirmed-bid
+// @name         MRB Gold Edition TEST30K - Freeze Recovery Rewrite
+// @version      6.0.0-test30K-freeze-recovery-rewrite
 // @description  MRB Gold: centrale Unified Scheduler, navigatie-owner, retry-circuitbreaker en strikte actieguards.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -18,6 +18,7 @@
 // @run-at       document-end
 // ==/UserScript==
 
+// Release 6.0.0-test30K: Freeze Recovery schoon herschreven. Een stabiele grijze overlay / zichtbare modal die 20s geen DOM-voortgang toont mag nu herstellen, ook wanneer een stale popup- of module-busy state actief blijft. Normale cooldown-popups en recente handmatige invoer blijven beschermd; aparte 30s freeze-refresh guard voorkomt reload-loops.
 // Release 6.0.0-test30J: Obay Kogels volledig schoon herschreven. Geen 30C-I patchketen meer: live DOM is bron van waarheid, exact 1 listing tegelijk, exact de geopende modal afhandelen, geen lokale bod-reservering, alleen werkelijk huidig saldo/startsaldo voor totaalbudget, en na elk bevestigd bod een volledig verse scan.
 // Release 6.0.0-test30B: TESTVERSIE orchestrator-cleanup. Crimes/Cars behouden absolute server-Nu-prioriteit. Race en Groepsmisdaden worden daarna om-en-om centraal gecontroleerd; passieve wachtfases geven group-ownership direct vrij. Race lokale 2s-watcher uitgeschakeld. Race Leider keert na invite/wachtcontrole terug naar Mijn Account in plaats van Race te blijven pollen. Spot Driver met reeds ingezette auto doet alleen nog een centraal vergunde single-flight controle en houdt GroupCrimes niet vast. Heist Leider geeft ownership vrij tijdens wachten op Driver. Geen actie-selectors/formulieren inhoudelijk gewijzigd.
 // Release 6.0.0-test30A: Crimes/Cars 403-recovery root-cause fix. Een HTTP-403 server-backoff breekt nu een lopende CC-cyclus atomair af: waiters/confirm/pending-click/nav-lease worden vrijgegeven, busy/current gaan terug naar idle en de bestaande Unified Dispatcher wordt exact na de backoff opnieuw gewekt. De globale navigatiegate blijft andere modules tijdens backoff stilhouden; geen extra poller/watchdog toegevoegd.
@@ -13135,7 +13136,9 @@ paint();
   const K_FIXED_MIN='rf_fixed_refresh_minutes_v515';
   const K_FIXED_DUE='rf_fixed_refresh_due_v515';
   const PERIOD_MS=30*1000;
-  const FREEZE_CONFIRM_MS=15*1000;
+  const FREEZE_CONFIRM_MS=20*1000;
+  const FREEZE_REFRESH_GUARD_MS=30*1000;
+  const K_FREEZE_LAST_REFRESH='mrb_freeze_last_refresh_v30K';
   const REFRESH_GUARD_MS=90*1000;
   const FIXED_MAX_DEFER_MS=20*1000;
 
@@ -13249,8 +13252,9 @@ paint();
   }
   function safeForForcedPeriodicRefresh(){
     if(gateVisible()||inputBusy()||document.hidden) return false;
-    // Een bekende Crimes/Cars-cooldownpopup mag een vaste herstelrefresh niet
-    // onbeperkt blokkeren. Onbekende formulieren/dialogen blijven beschermd.
+    // Periodieke refresh blijft conservatief: onbekende actieve dialogen worden
+    // niet zomaar afgebroken. Freeze Recovery heeft hieronder zijn eigen,
+    // streng op visuele stilstand gebaseerde veiligheidscheck.
     if(realPopupVisible() && !knownCooldownPopupVisible()) return false;
     if(Date.now()-lastActivity<10_000) return false;
     return true;
@@ -13266,12 +13270,59 @@ paint();
     });
     return [...new Set([...direct,...large])].filter(visible);
   }
-  function orphanOverlayState(){
-    if(realPopupVisible()) return {orphan:false,signature:''};
-    const list=overlayCandidates();
-    if(!list.length) return {orphan:false,signature:''};
-    const signature=list.map(el=>`${el.tagName}#${el.id}.${String(el.className)}`).sort().join('|');
-    return {orphan:true,signature};
+  function visibleDialogCandidates(){
+    const sels=['.jqi','.ui-dialog','.modal.show','.modal[style*="display: block"]','[role="dialog"]'];
+    const out=[];
+    for(const sel of sels){
+      try{
+        document.querySelectorAll(sel).forEach(el=>{
+          if(visible(el) && !el.closest?.('#mrbGoldMenu')) out.push(el);
+        });
+      }catch(e){}
+    }
+    return [...new Set(out)];
+  }
+  function compactFreezeText(el){
+    return String(el?.innerText||el?.textContent||'').replace(/\s+/g,' ').trim().slice(0,500);
+  }
+  function freezeVisualState(){
+    const overlays=overlayCandidates();
+    const dialogs=visibleDialogCandidates();
+    if(!overlays.length && !dialogs.length) return {candidate:false,signature:'',reason:''};
+
+    // Een gewone Too tired / Nu cooldown-popup is functioneel en mag niet als
+    // wazig scherm worden herladen. De countdown/knop wordt door de normale
+    // Crimes/Cars-flow afgehandeld.
+    if(knownCooldownPopupVisible()) return {candidate:false,signature:'cooldown',reason:'bekende cooldown-popup'};
+
+    const parts=[];
+    overlays.forEach(el=>parts.push(`O:${el.tagName}#${el.id}.${String(el.className)}`));
+    dialogs.forEach(el=>{
+      const buttons=[...el.querySelectorAll('button,input[type="button"],input[type="submit"],a')].filter(visible)
+        .map(b=>String(b.value||b.textContent||'').replace(/\s+/g,' ').trim().slice(0,80))
+        .filter(Boolean).join(',');
+      parts.push(`D:${el.tagName}#${el.id}.${String(el.className)}:${compactFreezeText(el)}:B[${buttons}]`);
+    });
+    const route=`${location.pathname}${location.search}${location.hash}`;
+    return {candidate:true,signature:`${route}|${parts.sort().join('|')}`,reason:dialogs.length?'dialoog/overlay staat stil':'overlay staat stil'};
+  }
+  function safeForFreezeRecovery(){
+    if(gateVisible()||inputBusy()||document.hidden) return false;
+    // Recente echte gebruikersactiviteit krijgt altijd voorrang. Stale
+    // planner/module-busy flags blokkeren freeze recovery bewust NIET meer.
+    if(Date.now()-lastActivity<8_000) return false;
+    return true;
+  }
+  function doFreezeRefresh(reason){
+    const last=Number(GM_Get(K_FREEZE_LAST_REFRESH,0))||0;
+    if(Date.now()-last<FREEZE_REFRESH_GUARD_MS) return false;
+    if(!safeForFreezeRecovery()) return false;
+    GM_Set(K_FREEZE_LAST_REFRESH,Date.now());
+    GM_Set(K_LAST_REFRESH,Date.now());
+    try{sessionStorage.setItem('mrb_session_refresh_reason',String(reason||'freeze recovery'));}catch(e){}
+    ui(`Freeze Recovery: ${reason}`);
+    mrbSetTimeout(()=>{ try{location.reload();}catch(e){} },250);
+    return true;
   }
   function markActivity(){ lastActivity=Date.now(); }
   ['click','keydown','pointerdown','touchstart'].forEach(type=>document.addEventListener(type,e=>{
@@ -13350,16 +13401,24 @@ paint();
     }
 
     if(freezeRecoveryOn){
-      const state=orphanOverlayState();
-      if(state.orphan){
-        if(state.signature!==lastOverlaySignature){ lastOverlaySignature=state.signature; overlaySince=Date.now(); }
+      const state=freezeVisualState();
+      if(state.candidate){
+        // Alleen echte voortgang reset de 20s teller. Een stale .jqi/.jqiform mag
+        // hem dus niet meer eeuwig op nul houden doordat hij simpelweg bestaat.
+        if(state.signature!==lastOverlaySignature){
+          lastOverlaySignature=state.signature;
+          overlaySince=Date.now();
+        }
         if(!overlaySince) overlaySince=Date.now();
-        if(Date.now()-overlaySince>=FREEZE_CONFIRM_MS && safeForForcedPeriodicRefresh()){
-          if(doSafeRefresh('verweesde schermoverlay', true)) return {delayMs:PERIOD_MS,status:'freeze recovery refresh'};
+        const frozenFor=Date.now()-overlaySince;
+        if(frozenFor>=FREEZE_CONFIRM_MS){
+          if(doFreezeRefresh(state.reason||'wazig/grijs scherm zonder voortgang')){
+            return {delayMs:PERIOD_MS,status:'freeze recovery refresh'};
+          }
         }
         nextTs=Date.now()+3000; GM_Set(K_NEXTTS,nextTs);
-        ui(`Mogelijke freeze controleren (${fmt(FREEZE_CONFIRM_MS-(Date.now()-overlaySince))})`);
-        return {nextAt:nextTs,status:'overlay wordt geverifieerd'};
+        ui(`Freeze Recovery controle (${fmt(Math.max(0,FREEZE_CONFIRM_MS-frozenFor))})`);
+        return {nextAt:nextTs,status:'freeze wordt geverifieerd'};
       }
       overlaySince=0; lastOverlaySignature='';
     }
