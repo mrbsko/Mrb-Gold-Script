@@ -1,6 +1,6 @@
 // ==UserScript==
-// @name         MRB Gold Edition
-// @version      6.0.0-test30A-cc-403-release-recovery
+// @name         MRB Gold Edition TEST30J - Obay Clean Rewrite
+// @version      6.0.0-test30I-obay-confirmed-bid
 // @description  MRB Gold: centrale Unified Scheduler, navigatie-owner, retry-circuitbreaker en strikte actieguards.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -18,6 +18,8 @@
 // @run-at       document-end
 // ==/UserScript==
 
+// Release 6.0.0-test30J: Obay Kogels volledig schoon herschreven. Geen 30C-I patchketen meer: live DOM is bron van waarheid, exact 1 listing tegelijk, exact de geopende modal afhandelen, geen lokale bod-reservering, alleen werkelijk huidig saldo/startsaldo voor totaalbudget, en na elk bevestigd bod een volledig verse scan.
+// Release 6.0.0-test30B: TESTVERSIE orchestrator-cleanup. Crimes/Cars behouden absolute server-Nu-prioriteit. Race en Groepsmisdaden worden daarna om-en-om centraal gecontroleerd; passieve wachtfases geven group-ownership direct vrij. Race lokale 2s-watcher uitgeschakeld. Race Leider keert na invite/wachtcontrole terug naar Mijn Account in plaats van Race te blijven pollen. Spot Driver met reeds ingezette auto doet alleen nog een centraal vergunde single-flight controle en houdt GroupCrimes niet vast. Heist Leider geeft ownership vrij tijdens wachten op Driver. Geen actie-selectors/formulieren inhoudelijk gewijzigd.
 // Release 6.0.0-test30A: Crimes/Cars 403-recovery root-cause fix. Een HTTP-403 server-backoff breekt nu een lopende CC-cyclus atomair af: waiters/confirm/pending-click/nav-lease worden vrijgegeven, busy/current gaan terug naar idle en de bestaande Unified Dispatcher wordt exact na de backoff opnieuw gewekt. De globale navigatiegate blijft andere modules tijdens backoff stilhouden; geen extra poller/watchdog toegevoegd.
 // Release 6.0.0-test29Y: bovenop TEST29X uitsluitend Spot Leider submit gecorrigeerd. Na Driver/0 kogels wordt exact hetzelfde gekozen target opnieuw in de live DOM gevonden en de actuele Go-knop weer via de bewezen native .click()-route bediend. requestSubmit is verwijderd omdat dit Omerta-knoplogica kan omzeilen en ten onrechte "Spot bestaat niet" kan opleveren. Target-selectie en TEST29X second-pass blijven ongewijzigd.
 // Release 6.0.0-test29X: exact TEST29F als functionele basis behouden. Alleen twee Spot-Leiderproblemen aangepast: (1) na Driver/0 kogels wordt het gekozen doel opnieuw uit de live DOM opgezocht en via de actuele verbonden Go/form verstuurd, zodat een SPA-rerender de invite niet verliest; (2) de eerste Spot-uitkomst blijft verplicht dezelfde cyclus hervatten via GroupCrimes -> actieve Spot -> tweede Start/Update voordat COMPLETE/Mijn Account is toegestaan. Target-selectie, Driver-flow en overige modules zijn verder ongewijzigd.
@@ -1809,8 +1811,8 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
     {
       id:'overige',
       title:'Overige',
-      ids:['xx-fill-lackey','xx-bullets','10-milestones'],
-      titles:['Fill lackey','Bullets','Milestones']
+      ids:['xx-fill-lackey','xx-bullets','13-obay-bullets','10-milestones'],
+      titles:['Fill lackey','Bullets','Obay Kogels','Milestones']
     }
   ];
 
@@ -2936,7 +2938,7 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
 
       // Spot krijgt pas ownership zodra er werkelijk een Spot-opdracht bestaat:
       // Leider-flow na openen/invite, of Driver na echte acceptatie/auto-ready.
-      const active=/^(?:GO_GROUP|OPEN_SPOT|WAIT_ACTIVE_DETAILS|INVITE_SENT|WAIT_DRIVER_READY|RECHECK_DRIVER_READY|RECHECK_DRIVER_READY_HOME|RECHECK_DRIVER_READY_GROUP|WAIT_START_CONTROL|WAIT_START_SETTLE|RECHECK_AFTER_START|WAIT_START_RECHECK_NAV|WAIT_START_BACKGROUND|RECOVER_GROUP|SECOND_PASS_|SPOT_FINALIZE_|SPOT_PAGE_SETTLE|DRIVER_ACCEPT_CLICKED|DRIVER_READY|DRIVER_WAIT_LEADER|DRIVER_WAIT_SERVER)/.test(st);
+      const active=/^(?:GO_GROUP|OPEN_SPOT|WAIT_ACTIVE_DETAILS|INVITE_SENT|WAIT_DRIVER_READY|RECHECK_DRIVER_READY|RECHECK_DRIVER_READY_HOME|RECHECK_DRIVER_READY_GROUP|WAIT_START_CONTROL|WAIT_START_SETTLE|RECHECK_AFTER_START|WAIT_START_RECHECK_NAV|WAIT_START_BACKGROUND|RECOVER_GROUP|SECOND_PASS_|SPOT_FINALIZE_|SPOT_PAGE_SETTLE|DRIVER_ACCEPT_CLICKED|DRIVER_READY)/.test(st);
 
       if(passiveDriverProbe) {
         unsafeWindow.mrbGroupTransaction?.release?.('spot','spot driver probe yield '+st.toLowerCase());
@@ -2944,7 +2946,7 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
         unsafeWindow.mrbGroupTransaction?.acquire?.('spot',st);
       }
 
-      if(/^(?:IDLE|STOPPED|COOLDOWN|COMPLETE|COMPLETE_COOLDOWN|DRIVER_COOLDOWN|LOCAL_COOLDOWN|DRIVER_LOCAL_COOLDOWN|DRIVER_YIELD_HEIST)$/.test(st)) {
+      if(/^(?:IDLE|STOPPED|COOLDOWN|COMPLETE|COMPLETE_COOLDOWN|DRIVER_COOLDOWN|LOCAL_COOLDOWN|DRIVER_LOCAL_COOLDOWN|DRIVER_YIELD_HEIST|DRIVER_WAIT_LEADER|DRIVER_WAIT_SERVER|DRIVER_PASSIVE_READY|DRIVER_WAIT_CENTRAL_WAKE|DRIVER_PASSIVE_GROUP)$/.test(st)) {
         unsafeWindow.mrbGroupTransaction?.release?.('spot','spot '+st.toLowerCase());
       }
     } catch(_) {}
@@ -3305,17 +3307,17 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
         if (!timer.ready) {
           set(K.driverAccepted, false); set(K.driverAcceptedAt, 0); set(K.driverLastVerify, 0); set(K.lastAction, 0);
           setStatus('DRIVER_COOLDOWN', `Spot Overval is voorbij. Cooldown: ${timer.raw || '-'}. Driver-opdracht gewist.`);
-        } else {
-          const lastVerify = Number(get(K.driverLastVerify, 0) || 0);
-          const elapsed = Date.now() - lastVerify;
-          if (elapsed >= DRIVER_REINVITE_RECHECK && canNavigate()) {
+        } else if (hasDriverCentralProbe() && spotDriverProbeAllowed() && canNavigate()) {
+          // TEST30B: na auto-inzet mag uitsluitend een centraal toegekende beurt
+          // nog één GroupCrimes-verificatie doen. Geen lokale recheck-loop meer.
+          if (consumeDriverCentralProbe()) {
             set(K.driverLastVerify, Date.now());
-            if (navigateToGroup()) setStatus('DRIVER_RECHECK_INVITE', 'Auto was ingezet; Driver controleert kort of de Leider inmiddels heeft geannuleerd en opnieuw uitgenodigd.');
-            else setStatus('DRIVER_RECHECK_WAIT_NAV', 'Nieuwe uitnodigingscontrole wacht op de navigatiebeveiliging.');
-          } else {
-            const remaining = Math.max(0, DRIVER_REINVITE_RECHECK - elapsed);
-            setStatus('DRIVER_WAIT_LEADER', `Auto is ingezet. Nieuwe uitnodiging wordt over ongeveer ${Math.ceil(remaining / 1000)} sec gecontroleerd.`);
+            markSpotDriverProbe();
+            if (navigateToGroup()) setStatus('DRIVER_RECHECK_INVITE', 'Centrale groepsbeurt: één korte controle op annulering/nieuwe Spot-uitnodiging.');
+            else setStatus('DRIVER_WAIT_LEADER', 'Auto is ingezet; centrale controle wacht op vrije navigatie.');
           }
+        } else {
+          setStatus('DRIVER_WAIT_LEADER', 'Auto is ingezet. Driver wacht passief; Race/Crimes/Cars en de centrale groepscyclus blijven vrij.');
         }
         return;
       }
@@ -7290,12 +7292,24 @@ try {
         raceSelectFirstAvailableCar();
         raceSafeClick(inviteBtn);
         if(failsafeTimer) clearTimeout(failsafeTimer);
-        next(()=> leader_checkPartner(0), randomDelay(10000,15000));
+        // TEST30B: uitnodiging is verzonden; wachten is passief. Terug naar
+        // Mijn Account zodat Crimes/Cars en GroupCrimes hun beurt krijgen.
+        raceRegistryState('WAITING_DRIVER', 'uitnodiging verzonden; passief wachten');
+        next(goInfo, randomDelay(1200,2200));
       }, actionDelay());
       return;
     }
 
-    // 3) Bekende starttekst, maar knoppen nog niet gevonden: blijf kort pollen.
+    // TEST30B: een reeds verzonden/geaccepteerde uitnodiging is een wachtfase,
+    // geen reden om /races.php opnieuw te blijven openen.
+    if (/invited|accepted|uitgenodigd|geaccepteerd|waiting|wachten/i.test(body)){
+      raceRegistryState('WAITING_DRIVER', 'partnerstatus nog niet startklaar; yield');
+      next(goInfo, randomDelay(900,1600));
+      return;
+    }
+
+    // 3) Bekende starttekst, maar knoppen nog niet gevonden: blijf alleen heel kort
+    // op dezelfde DOM wachten; geen nieuwe navigatie.
     if (/You can start a race with your car against|Please fill in the names|invites?|uitnodigingen/i.test(body)){
       next(leader_raceFlow, randomDelay(1000,2000));
       return;
@@ -7330,11 +7344,15 @@ try {
       }
 
       if (/invited|accepted|uitgenodigd|geaccepteerd|waiting|wachten/i.test(body)){
-        next(()=> leader_checkPartner(retries+1), randomDelay(10000,15000));
+        raceRegistryState('WAITING_DRIVER', 'partner nog niet startklaar; centrale cyclus neemt over');
+        next(goInfo, randomDelay(900,1600));
         return;
       }
 
-      next(leader_raceFlow, randomDelay(2000,4000));
+      // Onbekende niet-startklare toestand: ook yielden. De volgende centrale
+      // Race-inspectie leest de server opnieuw; geen lokale Race-loop.
+      raceRegistryState('WAITING_DRIVER', 'geen directe Race-actie; yield naar centrale cyclus');
+      next(goInfo, randomDelay(900,1600));
     }, randomDelay(1000,2000));
   }
 
@@ -7701,21 +7719,10 @@ try {
   }
   try { unsafeWindow.mrbRacePriorityWake = unifiedRaceWake; } catch(_) {}
 
-  // Zelfstandige lokale Race-watcher.
+  // TEST30B: geen zelfstandige Race-watcher meer. Alleen de Unified Dispatcher
+  // mag Race vanuit een passieve toestand wakker maken. Dit voorkomt dat Race
+  // naast GroupCrimes/Spot/Heist een tweede navigatie-owner wordt.
   let raceLocalWatchBusy = false;
-  mrbSetInterval(()=>{
-    if (!scriptAan || raceLocalWatchBusy) return;
-    if (isLoggedOut()) return;
-    if (!/information\.php/i.test(location.href)) return;
-
-    const existing = loadRacePlan();
-    if (existing && Number(existing.at) > Date.now() + 250) return;
-
-    raceLocalWatchBusy = true;
-    try { checkAvailability(true); }
-    catch(e) { try { console.warn('[Race local watcher]', e); } catch(_) {} }
-    finally { setTimeout(()=>{ raceLocalWatchBusy = false; }, 1500); }
-  }, 2000);
 
   // ------------------ UI handlers ------------------
   block.querySelectorAll('input[name="raceRole"]').forEach(r=>{
@@ -10708,6 +10715,13 @@ paint();
     isRunning:()=>running,
     isBusy:()=>busy,
     onServerBackoff:releaseForServerBackoff,
+    setKinds:(crimes,cars,reason='external')=>{
+      if (typeof crimes === 'boolean') { doCrimes = crimes; GM_Set(K_DOCR, doCrimes); }
+      if (typeof cars === 'boolean')   { doCars   = cars;   GM_Set(K_DOCA, doCars); }
+      try { console.log('[Crimes/Cars] Externe moduswijziging:', {doCrimes,doCars,reason}); } catch(_) {}
+      paint();
+      return {doCrimes,doCars};
+    },
     state:()=>({
       running, busy, current, doCrimes, doCars, doDD:false,
       crimesNext, carsNext, crimesServerReady, carsServerReady, crimesServerSyncAt, carsServerSyncAt,
@@ -10747,12 +10761,26 @@ paint();
   });
 
   q('#ccDoCr', block).addEventListener('change', (e)=>{
+    if (e.target.checked && GM_Get('mrb_obay_bullets_enabled', false)) {
+      e.target.checked = false;
+      doCrimes = false; GM_Set(K_DOCR, false);
+      try { console.warn('[Obay Kogels] Crimes blijft uit zolang Obay actief is.'); } catch(_) {}
+      paint();
+      return;
+    }
     doCrimes = !!e.target.checked;
     GM_Set(K_DOCR, doCrimes);
     paint();
   });
 
   q('#ccDoCa', block).addEventListener('change', (e)=>{
+    if (e.target.checked && GM_Get('mrb_obay_bullets_enabled', false)) {
+      e.target.checked = false;
+      doCars = false; GM_Set(K_DOCA, false);
+      try { console.warn('[Obay Kogels] Cars blijft uit zolang Obay actief is.'); } catch(_) {}
+      paint();
+      return;
+    }
     doCars = !!e.target.checked;
     GM_Set(K_DOCA, doCars);
     paint();
@@ -10779,6 +10807,459 @@ paint();
 })();
 
 // =====================================================================
+// OBAY KOGELS - TEST30J CLEAN REWRITE
+// - Uitsluitend Pak met kogels (3000).
+// - Geen eigen poll-loop; alleen centrale round-robin wake vanaf Mijn Account.
+// - Exact 1 listing tegelijk: open -> modal lezen -> bieden/annuleren -> serverstatus afwachten -> verse scan.
+// - Nooit overbieden: alleen rows die server-side ONGOING_EMPTY / N/A zijn.
+// - Geen lokale reservering van biedbedragen. Budgetbron is uitsluitend:
+//     startsaldo - werkelijk huidig saldo op zak.
+//   Geld dat later bijkomt vergroot dus automatisch de beschikbare ruimte.
+// - Een bod telt alleen als geplaatst nadat de serverrow niet meer N/A/ONGOING_EMPTY is.
+// =====================================================================
+;(function ObayBullets30J(){
+  'use strict';
+
+  const K_ENABLED = 'mrb_obay_bullets_enabled';
+  const K_MAX_M   = 'mrb_obay_bullets_max_per_pack_m';
+  const K_TOTAL_M = 'mrb_obay_bullets_total_budget_m';
+  const K_ANON    = 'mrb_obay_bullets_anonymous';
+  const K_START   = 'mrb_obay_bullets_start_balance';
+  const K_NEXT    = 'mrb_obay_bullets_next_check';
+  const K_PREV_CR = 'mrb_obay_bullets_prev_crimes';
+  const K_PREV_CA = 'mrb_obay_bullets_prev_cars';
+  const K_PLAYER  = 'mrb_obay_bullets_player_name';
+  const K_CASH    = 'mrb_obay_bullets_last_cash';
+
+  const INFO = '/information.php';
+  const OBAY = '/?module=Obay&action=auctions';
+  const MAX_BIDS_PER_VISIT = 10;
+  const BETWEEN_BIDS_MIN_MS = 2000;
+  const BETWEEN_BIDS_MAX_MS = 5000;
+  const RECHECK_EMPTY_MS = 12000;
+  const RECHECK_AFTER_BID_MS = 10000;
+
+  let enabled = !!GM_Get(K_ENABLED, false);
+  let maxPerPackM = Number(GM_Get(K_MAX_M, 2.5)) || 2.5;
+  let totalBudgetM = Number(GM_Get(K_TOTAL_M, 25)) || 25;
+  let anonymous = !!GM_Get(K_ANON, false);
+  let startBalance = Number(GM_Get(K_START, 0)) || 0;
+  let nextCheckAt = Number(GM_Get(K_NEXT, 0)) || 0;
+  let playerName = String(GM_Get(K_PLAYER, '') || '');
+  let busy = false;
+  let lastStatus = enabled ? 'Wacht op centrale beurt' : 'Uit';
+  let lastBid = 0;
+
+  const U = () => unsafeWindow.mrbUnifiedTimers;
+  const sleep = ms => new Promise(resolve => {
+    try { if (U()?.setTimeout) { U().setTimeout(resolve, ms); return; } } catch(_) {}
+    setTimeout(resolve, ms);
+  });
+  const norm = s => String(s || '').replace(/\s+/g, ' ').trim();
+  const fmt = n => '$' + Math.max(0, Math.floor(Number(n) || 0)).toLocaleString('en-US');
+  const parseMoney = s => {
+    const raw = String(s || '').replace(/[^0-9,.-]/g, '').replace(/,/g, '');
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : 0;
+  };
+  const onInfo = () => /information\.php/i.test(String(location.href || ''));
+  const onObay = () => /module=Obay/i.test(String(location.href || '')) && /action=auctions/i.test(String(location.href || ''));
+
+  function readInfoLabelValue(labels){
+    const wanted = labels.map(x => x.toLowerCase());
+    const rows = Array.from(document.querySelectorAll('#game_container tr, #game_container .thinline tr, table.thinline tr'));
+    for (const row of rows){
+      const cells = Array.from(row.querySelectorAll('td,th'));
+      if (cells.length < 2) continue;
+      const left = norm(cells[0]?.textContent).toLowerCase();
+      if (!wanted.some(w => left === w || left.startsWith(w))) continue;
+      return norm(cells[cells.length - 1]?.textContent);
+    }
+    return '';
+  }
+  function readCashFromInfo(){ return onInfo() ? parseMoney(readInfoLabelValue(['Op zak','Cash','Pocket'])) : 0; }
+  function readPlayerFromInfo(){
+    if (!onInfo()) return playerName;
+    const n = readInfoLabelValue(['Naam','Name']);
+    if (n){ playerName = n; GM_Set(K_PLAYER, n); }
+    return playerName;
+  }
+  function config(){
+    return {
+      maxPerPack: Math.max(0, maxPerPackM) * 1_000_000,
+      totalBudget: Math.max(0, totalBudgetM) * 1_000_000
+    };
+  }
+  function spentFromCash(cash){ return startBalance ? startBalance - Number(cash || 0) : 0; }
+  function remainingBudgetFromCash(cash){ return config().totalBudget - spentFromCash(cash); }
+  function saveCash(cash){ if (cash > 0) GM_Set(K_CASH, cash); }
+  function lastCash(){ return Number(GM_Get(K_CASH, 0)) || 0; }
+
+  const block = addBlock(`
+    <h4>Obay Kogels</h4>
+    <div class="gm-row" style="gap:6px;align-items:center;">
+      <button id="obayBulletsToggle" class="gm-btn">${enabled ? 'Stop' : 'Start'}</button>
+      <div id="obayBulletsStatus" class="gm-status" style="margin:0;"></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 92px;gap:5px 7px;align-items:center;margin-top:6px;">
+      <label for="obayMaxM">Max / pak ($ mln)</label>
+      <input id="obayMaxM" type="number" min="0" step="0.1" value="${maxPerPackM}" style="width:88px;">
+      <label for="obayTotalM">Totaalbudget ($ mln)</label>
+      <input id="obayTotalM" type="number" min="0" step="0.5" value="${totalBudgetM}" style="width:88px;">
+    </div>
+    <label style="display:flex;align-items:center;gap:6px;margin-top:6px;">
+      <input id="obayAnon" type="checkbox" ${anonymous ? 'checked' : ''}> Anoniem bieden
+    </label>
+    <div id="obayBudgetLine" style="margin-top:6px;opacity:.9;font-size:12px;"></div>
+    <div style="margin-top:3px;opacity:.75;font-size:11px;">Alleen Pak met kogels (3000). Alleen N/A-listings. Max. 10 bevestigde biedingen per Obay-bezoek.</div>
+  `, '13-obay-bullets');
+
+  const btn = block.querySelector('#obayBulletsToggle');
+  const statusEl = block.querySelector('#obayBulletsStatus');
+  const maxInp = block.querySelector('#obayMaxM');
+  const totalInp = block.querySelector('#obayTotalM');
+  const anonInp = block.querySelector('#obayAnon');
+  const budgetEl = block.querySelector('#obayBudgetLine');
+
+  function paint(){
+    btn.textContent = enabled ? 'Stop' : 'Start';
+    statusEl.innerHTML = enabled ? '<span class="ok">ACTIEF</span>' : '<span class="bad">UIT</span>';
+    maxInp.disabled = enabled;
+    totalInp.disabled = enabled;
+    const cash = lastCash();
+    const spent = startBalance && cash ? Math.max(0, spentFromCash(cash)) : 0;
+    const bidTxt = lastBid ? ` • laatste bod ${fmt(lastBid)}` : '';
+    budgetEl.textContent = `${lastStatus} • startsaldo ${startBalance ? fmt(startBalance) : '-'} • verbruik ${fmt(spent)} / ${fmt(config().totalBudget)}${bidTxt}`;
+  }
+  function saveConfig(){
+    maxPerPackM = Math.max(0, Number(maxInp.value || 0));
+    totalBudgetM = Math.max(0, Number(totalInp.value || 0));
+    anonymous = !!anonInp.checked;
+    GM_Set(K_MAX_M, maxPerPackM);
+    GM_Set(K_TOTAL_M, totalBudgetM);
+    GM_Set(K_ANON, anonymous);
+  }
+  function scheduleNext(ms){ nextCheckAt = Date.now() + Math.max(0, ms); GM_Set(K_NEXT, nextCheckAt); }
+  function rememberCC(){
+    try{
+      const st = unsafeWindow.mrbV9CrimesCars?.state?.() || {};
+      GM_Set(K_PREV_CR, !!st.doCrimes);
+      GM_Set(K_PREV_CA, !!st.doCars);
+    }catch(_){
+      GM_Set(K_PREV_CR, !!GM_Get('cc_doCrimes', true));
+      GM_Set(K_PREV_CA, !!GM_Get('cc_doCars', true));
+    }
+  }
+  function ensureCCOff(){ try { unsafeWindow.mrbV9CrimesCars?.setKinds?.(false, false, 'Obay Kogels actief'); } catch(_) {} }
+  function restoreCC(){
+    const cr = !!GM_Get(K_PREV_CR, false), ca = !!GM_Get(K_PREV_CA, false);
+    try { unsafeWindow.mrbV9CrimesCars?.setKinds?.(cr, ca, 'Obay Kogels gestopt'); }
+    catch(_) { GM_Set('cc_doCrimes', cr); GM_Set('cc_doCars', ca); }
+  }
+  function stop(reason='Gestopt', restore=true){
+    enabled = false;
+    busy = false;
+    nextCheckAt = 0;
+    GM_Set(K_ENABLED, false);
+    GM_Set(K_NEXT, 0);
+    lastStatus = reason;
+    if (restore) restoreCC();
+    paint();
+  }
+  function start(){
+    saveConfig();
+    if (maxPerPackM <= 0 || totalBudgetM <= 0){ lastStatus = 'Vul max / pak en totaalbudget in'; paint(); return; }
+    rememberCC();
+    ensureCCOff();
+    enabled = true;
+    busy = false;
+    startBalance = 0;
+    playerName = '';
+    lastBid = 0;
+    GM_Set(K_ENABLED, true);
+    GM_Set(K_START, 0);
+    GM_Set(K_PLAYER, '');
+    scheduleNext(0);
+    lastStatus = 'Startsaldo wordt op Mijn Account vastgelegd';
+    paint();
+    if (!onInfo()) try { unsafeWindow.mrbNavigate?.(INFO, {source:'obay-bullets-start', yield:true}); } catch(_) {}
+    try { unsafeWindow.mrbUnifiedRunnableDispatcher?.dispatch?.(); } catch(_) {}
+  }
+
+  btn.addEventListener('click', () => enabled ? stop('Handmatig gestopt', true) : start());
+  maxInp.addEventListener('change', saveConfig);
+  totalInp.addEventListener('change', saveConfig);
+  anonInp.addEventListener('change', () => { anonymous = !!anonInp.checked; GM_Set(K_ANON, anonymous); paint(); });
+
+  function auctionRows(){
+    return Array.from(document.querySelectorAll('tr.obay-data, #game_container table tbody tr'))
+      .filter(row => /(?:pak met kogels|pack of bullets)\s*\(\s*3000\s*\)/i.test(norm(row.textContent)));
+  }
+  function cells(row){ return Array.from(row.querySelectorAll(':scope > td')); }
+  function sellerOf(row){
+    const c = cells(row);
+    if (c[1]) return norm(c[1].textContent);
+    return norm(row.querySelector('.obay-person')?.textContent);
+  }
+  function minBidOf(row){
+    const c = cells(row);
+    if (c[2]) return parseMoney(c[2].textContent);
+    return 0;
+  }
+  function bidderOf(row){
+    const c = cells(row);
+    if (c[3]) return norm(c[3].textContent);
+    return '';
+  }
+  function untouched(row){
+    const cls = String(row.className || '');
+    if (/ONGOING_EMPTY/i.test(cls)) return true;
+    if (/ONGOING(?!_EMPTY)/i.test(cls)) return false;
+    return /^(?:n\/?a|-|geen|none)$/i.test(bidderOf(row));
+  }
+  function bidLinkOf(row){
+    return row.querySelector('a[data-bind*="doRaiseBid"]')
+      || Array.from(row.querySelectorAll('a')).find(a => /doRaiseBid/i.test(String(a.getAttribute('data-bind') || '')))
+      || null;
+  }
+  function liveCandidates(failedRows){
+    const max = config().maxPerPack;
+    return auctionRows().map(row => ({
+      row,
+      seller: sellerOf(row),
+      minBid: minBidOf(row),
+      bidder: bidderOf(row),
+      bidLink: bidLinkOf(row)
+    })).filter(x => untouched(x.row))
+      .filter(x => !!x.bidLink)
+      .filter(x => !playerName || !x.seller || x.seller.toLowerCase() !== playerName.toLowerCase())
+      .filter(x => !x.minBid || x.minBid <= max)
+      .filter(x => !failedRows.has(x.row))
+      .sort((a,b) => (a.minBid || Number.MAX_SAFE_INTEGER) - (b.minBid || Number.MAX_SAFE_INTEGER));
+  }
+
+  async function waitRows(timeout=5000){
+    const end = Date.now() + timeout;
+    while (Date.now() < end){
+      if (auctionRows().length) return true;
+      await sleep(150);
+    }
+    return auctionRows().length > 0;
+  }
+  function visible(el){
+    if (!el || !el.isConnected) return false;
+    try{
+      const st = getComputedStyle(el);
+      const r = el.getBoundingClientRect();
+      return st.display !== 'none' && st.visibility !== 'hidden' && Number(st.opacity) !== 0 && r.width > 0 && r.height > 0;
+    }catch(_){ return false; }
+  }
+  function visibleBidModal(){
+    return Array.from(document.querySelectorAll('.jqi')).find(host =>
+      visible(host) && /(?:pak met kogels|pack of bullets)\s*\(\s*3000\s*\)/i.test(norm(host.textContent))
+    ) || null;
+  }
+  function bidAmountFromModal(host){
+    const m = norm(host?.textContent).match(/(?:Raise bid to|Verhoog bod naar)\s*\$?\s*([0-9][0-9,.]*)/i);
+    return m ? parseMoney(m[1]) : 0;
+  }
+  function bidButtonIn(host){
+    if (!host) return null;
+    if (anonymous){
+      return host.querySelector('button[name="jqi_form_buttonBidAnonymously"], input[name="jqi_form_buttonBidAnonymously"]');
+    }
+    return Array.from(host.querySelectorAll('button[name^="jqi_form_buttonBidAs"], input[name^="jqi_form_buttonBidAs"]'))
+      .find(el => !/Anonymously/i.test(String(el.name || ''))) || null;
+  }
+  function cancelButtonIn(host){
+    return host?.querySelector('button[name="jqi_form_buttonCancel"], input[name="jqi_form_buttonCancel"]') || null;
+  }
+  function realClick(el){
+    if (!el || !visible(el) || el.disabled) return false;
+    try { el.scrollIntoView({block:'center', inline:'center'}); } catch(_) {}
+    try { el.focus(); } catch(_) {}
+    try { el.dispatchEvent(new MouseEvent('mousedown', {bubbles:true, cancelable:true, view:window})); } catch(_) {}
+    try { el.dispatchEvent(new MouseEvent('mouseup', {bubbles:true, cancelable:true, view:window})); } catch(_) {}
+    try { el.click(); return true; } catch(_) { return false; }
+  }
+  async function waitModalOpen(timeout=4500){
+    const end = Date.now() + timeout;
+    while (Date.now() < end){
+      const host = visibleBidModal();
+      if (host && bidAmountFromModal(host) > 0) return host;
+      await sleep(100);
+    }
+    return null;
+  }
+  async function waitModalClosed(host, timeout=5500){
+    const end = Date.now() + timeout;
+    while (Date.now() < end){
+      if (!visible(host)) return true;
+      await sleep(100);
+    }
+    return !visible(host);
+  }
+  async function waitRowChanged(row, timeout=5500){
+    const end = Date.now() + timeout;
+    while (Date.now() < end){
+      if (!row?.isConnected || !untouched(row)) return true;
+      await sleep(100);
+    }
+    return !row?.isConnected || !untouched(row);
+  }
+  async function returnHome(reason, delay=400){
+    lastStatus = reason;
+    busy = false;
+    paint();
+    await sleep(delay);
+    try { unsafeWindow.mrbNavigate?.(INFO, {source:'obay-bullets-yield', yield:true}); } catch(_) {}
+  }
+
+  async function inspectAndBid(infoCash){
+    if (!enabled){ busy = false; return false; }
+    if (!onObay()){ scheduleNext(2500); await returnHome('Obay-pagina niet geladen'); return false; }
+    await waitRows(5000);
+
+    const failedRows = new WeakSet();
+    let confirmed = 0;
+    let attempts = 0;
+
+    while (enabled && onObay() && confirmed < MAX_BIDS_PER_VISIT){
+      // Nooit een listing openen terwijl er nog een zichtbare popup actief is.
+      const existing = visibleBidModal();
+      if (existing){
+        lastStatus = 'Wachten tot bestaande biedpopup weg is';
+        paint();
+        const closed = await waitModalClosed(existing, 4000);
+        if (!closed) break;
+      }
+
+      const candidates = liveCandidates(failedRows);
+      try { console.log('[Obay Kogels TEST30J] scan', {rows:auctionRows().length, candidates:candidates.length, maxPerPack:config().maxPerPack, playerName}); } catch(_) {}
+      if (!candidates.length) break;
+
+      const c = candidates[0];
+      attempts++;
+
+      // 1) Open exact deze listing.
+      if (!realClick(c.bidLink)){
+        failedRows.add(c.row);
+        continue;
+      }
+
+      // 2) Wacht op exact één zichtbare biedpopup en lees de echte serverprijs.
+      const modal = await waitModalOpen(4500);
+      if (!modal){
+        failedRows.add(c.row);
+        await sleep(400);
+        continue;
+      }
+      const actual = bidAmountFromModal(modal);
+
+      // Budget wordt uitsluitend afgeleid van het startsaldo en werkelijk actuele
+      // saldo dat bij deze centrale beurt op Mijn Account is gelezen. Geen lokale
+      // bod-reservering meer.
+      const remainingBudget = remainingBudgetFromCash(infoCash);
+      if (actual <= 0 || actual > config().maxPerPack || actual > Number(infoCash || 0) || actual > remainingBudget){
+        realClick(cancelButtonIn(modal));
+        await waitModalClosed(modal, 3500);
+        failedRows.add(c.row);
+        continue;
+      }
+
+      // 3) Klik exact de knop in DEZE modal. Niet opnieuw globaal zoeken.
+      const bidBtn = bidButtonIn(modal);
+      if (!bidBtn || !realClick(bidBtn)){
+        lastStatus = 'Bid-knop in popup niet klikbaar';
+        paint();
+        realClick(cancelButtonIn(modal));
+        await waitModalClosed(modal, 3500);
+        failedRows.add(c.row);
+        continue;
+      }
+
+      // 4) Alleen serverbevestiging telt. Geen bevestiging = geen bod, geen budget.
+      const modalClosed = await waitModalClosed(modal, 5500);
+      if (!modalClosed){
+        lastStatus = 'Bid-knop geklikt maar popup bleef open';
+        paint();
+        failedRows.add(c.row);
+        break;
+      }
+      const rowChanged = await waitRowChanged(c.row, 5500);
+      if (!rowChanged){
+        lastStatus = 'Popup sloot maar serverrow bleef N/A; bod niet meegeteld';
+        paint();
+        failedRows.add(c.row);
+        continue;
+      }
+
+      confirmed++;
+      lastBid = actual;
+      lastStatus = `${confirmed} bevestigd bod${confirmed===1?'':'en'} deze beurt`;
+      paint();
+
+      if (confirmed < MAX_BIDS_PER_VISIT){
+        const gap = BETWEEN_BIDS_MIN_MS + Math.floor(Math.random() * (BETWEEN_BIDS_MAX_MS - BETWEEN_BIDS_MIN_MS + 1));
+        await sleep(gap);
+      }
+    }
+
+    if (confirmed > 0){
+      scheduleNext(RECHECK_AFTER_BID_MS);
+      await returnHome(`${confirmed} bevestigd bod${confirmed===1?'':'en'} geplaatst; volgende centrale ronde scant opnieuw`, 300);
+      return true;
+    }
+
+    scheduleNext(RECHECK_EMPTY_MS);
+    await returnHome(attempts
+      ? `Geen bod bevestigd (${attempts} poging${attempts===1?'':'en'}); volgende ronde probeert actuele N/A-listings opnieuw`
+      : `Geen geldige N/A 3000-kogels listing onder ${fmt(config().maxPerPack)}`);
+    return true;
+  }
+
+  function canWake(){ return enabled && !busy && Date.now() >= nextCheckAt; }
+  function wake(source='dispatcher'){
+    if (!canWake() || !onInfo()) return false;
+    ensureCCOff();
+    const cash = readCashFromInfo();
+    readPlayerFromInfo();
+    if (cash <= 0){ scheduleNext(3000); lastStatus = 'Saldo op Mijn Account kon niet worden gelezen'; paint(); return false; }
+    saveCash(cash);
+    if (!startBalance){
+      startBalance = cash;
+      GM_Set(K_START, startBalance);
+      lastStatus = `Startsaldo vastgelegd: ${fmt(startBalance)}`;
+    }
+    const spent = spentFromCash(cash);
+    if (spent >= config().totalBudget){ stop(`Totaalbudget bereikt (${fmt(Math.max(0, spent))})`, true); return false; }
+
+    busy = true;
+    lastStatus = 'Obay controleren';
+    paint();
+    const nav = unsafeWindow.mrbNavigate?.(OBAY, {source:'obay-bullets'}) === true;
+    if (!nav){ busy = false; scheduleNext(2500); paint(); return false; }
+    sleep(900).then(() => inspectAndBid(cash)).catch(async err => {
+      try { console.warn('[Obay Kogels TEST30J]', err); } catch(_) {}
+      scheduleNext(5000);
+      await returnHome('Fout tijdens Obay-controle');
+    });
+    return true;
+  }
+
+  if (enabled) ensureCCOff();
+  paint();
+
+  unsafeWindow.mrbObayBullets = {
+    version:'6.0.0-test30J-clean',
+    wake,
+    canWake,
+    stop:(reason='Extern gestopt') => stop(reason, true),
+    state:() => ({enabled,busy,maxPerPackM,totalBudgetM,anonymous,startBalance,nextCheckAt,playerName,lastStatus,lastBid,lastCash:lastCash(),spent:startBalance?spentFromCash(lastCash()):0})
+  };
+})();
+
+// =====================================================================
 // TEST6 UNIFIED RUNNABLE DISPATCHER + DEADLINE PREEMPTION
 // - Mijn Account blijft de bron van waarheid voor Nu/Now.
 // - De laatst door de server bevestigde Crimes/Cars-deadlines lopen lokaal af.
@@ -10793,6 +11274,9 @@ paint();
   let preemptPending = false;
   let preemptStartedAt = 0;
   let preemptReason = '';
+  // TEST30C: GroupCrimes, Race en Obay krijgen round-robin een inspectiebeurt zodra CC vrij is.
+  // 'group' omvat Heist + Spot. Obay is alleen runnable wanneer de Obay-module actief en due is.
+  let groupLaneNext = 'group';
 
   // TEST7 diagnostiek: verandert GEEN moduleflow. Alleen beslissingen/stalls loggen.
   const DIAG_KEY='mrb_unified_diag_last_v1';
@@ -11069,71 +11553,124 @@ paint();
       if(ccDue){ if(mayWake('cc')){ diag('CC_WAKE',{crimeTimer:crimeRaw,carsTimer:carsRaw,crReady,caReady},'cc-wake',1000); cc?.wake?.(); } return; }
     } catch(e){ console.warn('[MRB Unified TEST8] CC dispatch',e); }
 
-    // 2) Centrale group-owner: een eenmaal gestarte Race/Heist/Spot wordt
-    // volledig afgemaakt voordat een andere groepsmodule mag starten.
-    // Crimes/Cars hierboven blijft de enige toegestane korte preemption.
+    // 2) TEST30B: alleen een ATOMAIRE groepsactie mag ownership vasthouden.
+    // Wachten op partner/server is passief en mag de centrale ronde nooit gijzelen.
     let groupOwner='';
     try { groupOwner=String(unsafeWindow.mrbGroupTransaction?.owner?.()||''); } catch(_) {}
     if(groupOwner){
-      diag('GROUP_OWNER_HOLD',{owner:groupOwner,raceTimer:raceRaw,heistTimer:heistRaw,spotTimer:spotRaw},'group-owner:'+groupOwner,2500);
-      return;
+      let atomic=true, phase='';
+      try{
+        if(groupOwner==='race'){
+          phase=String(unsafeWindow.mrbRaceTransaction?.phase?.()||'').toUpperCase();
+          atomic=!!unsafeWindow.mrbRaceTransaction?.active?.();
+        } else if(groupOwner==='spot'){
+          phase=String(unsafeWindow.mrbSpotRaidCoreV3?.getState?.()?.state||'').toUpperCase();
+          atomic=!/^(?:IDLE|COOLDOWN|COMPLETE|COMPLETE_COOLDOWN|DRIVER_COOLDOWN|LOCAL_COOLDOWN|DRIVER_LOCAL_COOLDOWN|DRIVER_WAIT_LEADER|DRIVER_WAIT_SERVER|DRIVER_PASSIVE_READY|DRIVER_WAIT_CENTRAL_WAKE|DRIVER_PASSIVE_GROUP|DRIVER_WAIT_INVITE|DRIVER_RECHECK_INVITE)$/.test(phase);
+        } else if(groupOwner==='heist'){
+          phase=String(unsafeWindow.mrbHeistCoreControl?.getState?.()?.phase||'').toLowerCase();
+          atomic=!/^(?:idle|cooldown|check_timer|wait_timer|waiting|wait_race)$/.test(phase);
+        }
+      }catch(_){}
+      if(!atomic){
+        try{ unsafeWindow.mrbGroupTransaction?.release?.(groupOwner,`TEST30B passieve owner vrij: ${phase||'wait'}`); }catch(_){}
+        diag('GROUP_OWNER_PASSIVE_RELEASE',{owner:groupOwner,phase},'group-passive-release:'+groupOwner,1000);
+        groupOwner='';
+      } else {
+        diag('GROUP_OWNER_HOLD',{owner:groupOwner,phase,raceTimer:raceRaw,heistTimer:heistRaw,spotTimer:spotRaw},'group-owner:'+groupOwner,1800);
+        return;
+      }
     }
 
-    // 3) Nieuwe groepsflow. Bestaande volgorde blijft behouden zolang er nog
-    // geen owner is; zodra de wake wordt geaccepteerd claimt die module de cyclus.
-    if(nowish(raceRaw) && GM_Get('race_scriptAan',false)){
+    const tryRaceLane=()=>{
+      if(!(nowish(raceRaw) && GM_Get('race_scriptAan',false))) return false;
       try {
         if(mayWake('race') && unsafeWindow.mrbGroupTransaction?.acquire?.('race','WAKE_PENDING')){
-          diag('RACE_WAKE',{timer:raceRaw},'race-wake',1200);
+          diag('RACE_WAKE',{timer:raceRaw,lane:'race'},'race-wake',900);
           const wake=unsafeWindow.mrbRacePriorityWake;
           if(typeof wake!=='function'){
             unsafeWindow.mrbGroupTransaction?.release?.('race','Race wake ontbreekt');
-          } else {
-            const accepted=wake('unified-dispatcher');
-            if(accepted!==true) unsafeWindow.mrbGroupTransaction?.release?.('race','Race wake geweigerd');
-            else return;
+            return false;
           }
+          const accepted=wake('unified-dispatcher-roundrobin');
+          if(accepted!==true){
+            unsafeWindow.mrbGroupTransaction?.release?.('race','Race wake geweigerd');
+            return false;
+          }
+          groupLaneNext='obay';
+          return true;
         }
       } catch(_) {}
-    }
-    if(nowish(heistRaw) && GM_Get('mrb_heist_integrated_enabled',false)){
+      return false;
+    };
+
+    const tryGroupLane=()=>{
+      // Heist en Spot delen dezelfde GroupCrimes-beurt. Hooguit één wake per ronde.
+      if(nowish(heistRaw) && GM_Get('mrb_heist_integrated_enabled',false)){
+        try {
+          const ctl=unsafeWindow.mrbHeistCoreControl;
+          const hs=ctl?.getState?.()||{};
+          const canWake=ctl?.canWake?.()!==false;
+          if(canWake && mayWake('heist')){
+            let accepted=false;
+            if(String(hs.role||'').toLowerCase()==='driver'){
+              diag('HEIST_DRIVER_PROBE_WAKE',{timer:heistRaw,lane:'group'},'heist-driver-probe-wake',900);
+              accepted=ctl?.wake?.()!==false;
+            } else if(unsafeWindow.mrbGroupTransaction?.acquire?.('heist','WAKE_PENDING')){
+              diag('HEIST_WAKE',{timer:heistRaw,lane:'group'},'heist-wake',900);
+              accepted=ctl?.wake?.()!==false;
+              if(!accepted) unsafeWindow.mrbGroupTransaction?.release?.('heist','heist wake geweigerd');
+            }
+            if(accepted){ groupLaneNext='race'; return true; }
+          }
+        } catch(_) {}
+      }
+      if(nowish(spotRaw) && GM_Get('mrb_spot_complete_v1_enabled',false)){
+        try {
+          const ctl=unsafeWindow.mrbSpotRaidCoreV3;
+          const ss=ctl?.getState?.()||{};
+          let accepted=false;
+          if(String(ss.role||'').toLowerCase()==='driver'){
+            if(mayWake('spot')){
+              diag('SPOT_DRIVER_PROBE_WAKE',{timer:spotRaw,lane:'group'},'spot-driver-probe-wake',900);
+              accepted=ctl?.wake?.()!==false;
+            }
+          } else if(mayWake('spot') && unsafeWindow.mrbGroupTransaction?.acquire?.('spot','WAKE_PENDING')){
+            diag('SPOT_WAKE',{timer:spotRaw,lane:'group'},'spot-wake',900);
+            accepted=ctl?.wake?.()!==false;
+            if(!accepted) unsafeWindow.mrbGroupTransaction?.release?.('spot','spot wake geweigerd');
+          }
+          if(accepted){ groupLaneNext='race'; return true; }
+        } catch(_) {}
+      }
+      return false;
+    };
+
+    const tryObayLane=()=>{
       try {
-        const ctl=unsafeWindow.mrbHeistCoreControl;
-        const hs=ctl?.getState?.()||{};
-        const canWake=ctl?.canWake?.()!==false;
-        if(canWake && mayWake('heist')){
-          // TEST27J: een Driver-wake is slechts een passieve invite-probe en krijgt
-          // daarom nog geen group-owner. Leider blijft wel atomair vanaf WAKE_PENDING.
-          if(String(hs.role||'').toLowerCase()==='driver'){
-            diag('HEIST_DRIVER_PROBE_WAKE',{timer:heistRaw},'heist-driver-probe-wake',1200);
-            const accepted=ctl?.wake?.();
-            if(accepted!==false) return;
-          } else if(unsafeWindow.mrbGroupTransaction?.acquire?.('heist','WAKE_PENDING')){
-            diag('HEIST_WAKE',{timer:heistRaw},'heist-wake',1200);
-            const accepted=ctl?.wake?.();
-            if(accepted===false) unsafeWindow.mrbGroupTransaction?.release?.('heist','heist wake geweigerd');
-            else return;
-          }
-        }
+        const ctl=unsafeWindow.mrbObayBullets;
+        if(!ctl?.canWake?.()) return false;
+        if(!mayWake('obay')) return false;
+        diag('OBAY_WAKE',{lane:'obay'},'obay-wake',900);
+        const accepted=ctl.wake('unified-dispatcher-roundrobin')===true;
+        if(accepted){ groupLaneNext='group'; return true; }
       } catch(_) {}
-    }
-    if(nowish(spotRaw) && GM_Get('mrb_spot_complete_v1_enabled',false)){
-      try {
-        const ctl=unsafeWindow.mrbSpotRaidCoreV3;
-        const ss=ctl?.getState?.()||{};
-        if(String(ss.role||'').toLowerCase()==='driver'){
-          // Driver-wake is alleen een passieve invite-probe en krijgt dus geen
-          // group-owner. Ownership ontstaat pas na echte acceptatie/ready-state.
-          if(mayWake('spot')){
-            diag('SPOT_DRIVER_PROBE_WAKE',{timer:spotRaw},'spot-driver-probe-wake',1200);
-            ctl?.wake?.();
-          }
-        } else if(mayWake('spot') && unsafeWindow.mrbGroupTransaction?.acquire?.('spot','WAKE_PENDING')){
-          diag('SPOT_WAKE',{timer:spotRaw},'spot-wake',1200);
-          const accepted=ctl?.wake?.();
-          if(accepted===false) unsafeWindow.mrbGroupTransaction?.release?.('spot','spot wake geweigerd');
-        }
-      } catch(_) {}
+      return false;
+    };
+
+    // 3) Synchrone ronde: GroupCrimes -> Race -> Obay. Is de geplande lane niet
+    // runnable, dan mogen de andere lanes direct door zodat niets stilvalt.
+    if(groupLaneNext==='group'){
+      if(tryGroupLane()) return;
+      if(tryRaceLane()) return;
+      if(tryObayLane()) return;
+    } else if(groupLaneNext==='race'){
+      if(tryRaceLane()) return;
+      if(tryObayLane()) return;
+      if(tryGroupLane()) return;
+    } else {
+      if(tryObayLane()) return;
+      if(tryGroupLane()) return;
+      if(tryRaceLane()) return;
     }
   }
 
@@ -11186,12 +11723,12 @@ paint();
 
   try {
     unsafeWindow.mrbUnifiedRunnableDispatcher={
-      version:'6.0.0-test25',
+      version:'6.0.0-test30D',
       dispatch:dispatchInfo,
       raceYield:raceYieldWatchdog,
       preempt:preemptDueCrimesCars,
       idleHome:idleHomeWatchdog,
-      state:()=>({preemptPending,preemptStartedAt,preemptReason,idleHomeLastActiveAt,idleHomePendingUntil,idleHomeMs:IDLE_HOME_MS})
+      state:()=>({preemptPending,preemptStartedAt,preemptReason,groupLaneNext,idleHomeLastActiveAt,idleHomePendingUntil,idleHomeMs:IDLE_HOME_MS})
     };
     unsafeWindow.mrbUnifiedDiagnostics=Object.freeze({
       version:'6.0.0-test17b',
@@ -15625,11 +16162,13 @@ paint();
   }
   function scheduleLeaderCheck(){
     acceptChecks++;
-    if(acceptChecks>=MAX_ACCEPT_CHECKS){setInvitePending(false);status('Driver niet gereed na 30 controles; terug naar Mijn Account');next(goInfo,3000);return;}
+    if(acceptChecks>=MAX_ACCEPT_CHECKS){setInvitePending(false);try{unsafeWindow.mrbGroupTransaction?.release?.('heist','driver-wachtlimiet');}catch(_){}status('Driver niet gereed na 30 controles; terug naar Mijn Account');next(goInfo,3000);return;}
     const delay=rand(35000,40000);
+    phase='waiting';
+    try{unsafeWindow.mrbGroupTransaction?.release?.('heist','Heist Leider wacht passief op Driver');}catch(_){}
     status(`Wachten op Driver · controle ${acceptChecks}/${MAX_ACCEPT_CHECKS} over 35-40 sec · overige timers vrij`);
-    // Tussen controles staat de Leider op Mijn Account. Daardoor kunnen Crimes, Cars,
-    // Race en andere actieve modules hun eigen timers blijven lezen en uitvoeren.
+    // TEST30B: wachten bezit GroupCrimes niet. Mijn Account is het rustpunt; de
+    // centrale dispatcher kan Race/Spot/Crimes/Cars tussendoor laten lopen.
     load('/information.php');
     next(()=>inspectLeaderGroup(false),delay);
   }
