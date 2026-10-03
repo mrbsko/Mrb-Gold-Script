@@ -1,6 +1,6 @@
 // ==UserScript==
-// @name         MRB Gold Edition TEST30K - Freeze Recovery Rewrite
-// @version      6.0.0-test30K-freeze-recovery-rewrite
+// @name         MRB Gold Edition TEST30M - Obay Bid Submit Rewrite
+// @version      6.0.0-test30M-obay-bid-submit-rewrite
 // @description  MRB Gold: centrale Unified Scheduler, navigatie-owner, retry-circuitbreaker en strikte actieguards.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -18,6 +18,8 @@
 // @run-at       document-end
 // ==/UserScript==
 
+// Release 6.0.0-test30M: Obay-biedbevestiging schoon herschreven. De zichtbare JQI-popup kiest exact 'Bid Anonymously' of de default/naamgebonden 'Bid as <speler>'-knop. Native klik wordt eerst gebruikt; alleen als modal en serverrow aantoonbaar ongewijzigd blijven volgt maximaal één delegated jQuery-click op dezelfde knop. Een bod telt pas na echte UI/serverstate-wijziging. Scan-, budget-, scheduler- en 403-logica blijven verder ongewijzigd.
+// Release 6.0.0-test30L: Global 403 Recovery herschreven. De eerste echte 403 opent exact een vaste 120s serverpauze; vervolg-403s verlengen die deadline niet meer. Tijdens backoff geeft mrbNavigate false terug zodat modules een geblokkeerde navigatie niet als succes behandelen. Race/group/CC ownership wordt vrijgegeven en na de oorspronkelijke deadline volgt exact een harde full-page recovery naar Mijn Account. Hiermee kan een requeststorm de 120s niet meer eindeloos vooruit schuiven.
 // Release 6.0.0-test30K: Freeze Recovery schoon herschreven. Een stabiele grijze overlay / zichtbare modal die 20s geen DOM-voortgang toont mag nu herstellen, ook wanneer een stale popup- of module-busy state actief blijft. Normale cooldown-popups en recente handmatige invoer blijven beschermd; aparte 30s freeze-refresh guard voorkomt reload-loops.
 // Release 6.0.0-test30J: Obay Kogels volledig schoon herschreven. Geen 30C-I patchketen meer: live DOM is bron van waarheid, exact 1 listing tegelijk, exact de geopende modal afhandelen, geen lokale bod-reservering, alleen werkelijk huidig saldo/startsaldo voor totaalbudget, en na elk bevestigd bod een volledig verse scan.
 // Release 6.0.0-test30B: TESTVERSIE orchestrator-cleanup. Crimes/Cars behouden absolute server-Nu-prioriteit. Race en Groepsmisdaden worden daarna om-en-om centraal gecontroleerd; passieve wachtfases geven group-ownership direct vrij. Race lokale 2s-watcher uitgeschakeld. Race Leider keert na invite/wachtcontrole terug naar Mijn Account in plaats van Race te blijven pollen. Spot Driver met reeds ingezette auto doet alleen nog een centraal vergunde single-flight controle en houdt GroupCrimes niet vast. Heist Leider geeft ownership vrij tijdens wachten op Driver. Geen actie-selectors/formulieren inhoudelijk gewijzigd.
@@ -1032,26 +1034,82 @@ class MRBPerfMutationObserver extends MutationObserver {
     // Handmatige browsernavigatie blijft van de gebruiker zelf.
     let serverBackoffUntil = Number(sessionStorage.getItem('mrb_server_backoff_until_test10') || 0) || 0;
     let serverBackoffReason = String(sessionStorage.getItem('mrb_server_backoff_reason_test10') || '');
+    let serverRecoveryTimer = 0;
+    let serverRecoveryRunning = false;
+
+    function clearServerRecoveryTimer(){
+      if (!serverRecoveryTimer) return;
+      try { clearTimeout(serverRecoveryTimer); } catch(_) {}
+      serverRecoveryTimer = 0;
+    }
+    function releaseAutomationForServerBackoff(until, reason){
+      // Een 403 is een globale yield: geen module mag ownership vasthouden alsof
+      // zijn laatste request nog succesvol onderweg is.
+      try { unsafeWindow.mrbV9CrimesCars?.onServerBackoff?.({until,reason}); } catch(_) {}
+      try { unsafeWindow.mrbRaceTransaction?.release?.(); } catch(_) {}
+      try {
+        const owner=unsafeWindow.mrbGroupTransaction?.owner?.();
+        if(owner) unsafeWindow.mrbGroupTransaction?.release?.(owner,'server-403-backoff');
+      } catch(_) {}
+      try { unsafeWindow.mrbFlightRecorder?.add?.('SERVER_BACKOFF_RELEASE',{reason,until}); } catch(_) {}
+    }
+    function hardRecoverAfterServerBackoff(){
+      if (serverRecoveryRunning) return false;
+      if (Date.now() < serverBackoffUntil) { scheduleServerRecovery(); return false; }
+      serverRecoveryRunning = true;
+      const reason=serverBackoffReason || 'HTTP 403';
+      try { console.warn('[MRB TEST30L] 403-pauze afgelopen; harde recovery naar Mijn Account', reason); } catch(_) {}
+      try { unsafeWindow.mrbFlightRecorder?.add?.('SERVER_BACKOFF_RECOVER',{reason}); } catch(_) {}
+      serverBackoffUntil=0; serverBackoffReason='';
+      try { sessionStorage.removeItem('mrb_server_backoff_until_test10'); sessionStorage.removeItem('mrb_server_backoff_reason_test10'); } catch(_) {}
+      // Bewust GEEN SPA-load/mrbNavigate: na een 403-storm willen we alle oude
+      // callbacks, overlays en half geladen module-DOM in een keer kwijt.
+      try { location.replace('/information.php'); }
+      catch(_) { try { location.href='/information.php'; } catch(__) { serverRecoveryRunning=false; } }
+      return true;
+    }
+    function scheduleServerRecovery(){
+      clearServerRecoveryTimer();
+      if (!serverBackoffUntil) return false;
+      const delay=Math.max(250, serverBackoffUntil-Date.now()+250);
+      serverRecoveryTimer=setTimeout(()=>{ serverRecoveryTimer=0; hardRecoverAfterServerBackoff(); },delay);
+      return true;
+    }
     function tripServerBackoff(reason='HTTP 403', ms=120000){
-      const until = Math.max(serverBackoffUntil, Date.now() + Math.max(30000, Number(ms)||120000));
+      const now=Date.now();
+      // TEST30L root cause: oude code schoof bij IEDERE vervolg-403 de deadline
+      // opnieuw 120s vooruit. Bij een requeststorm kon de 120s dus nooit aflopen.
+      if (serverBackoffUntil > now) {
+        try { console.warn('[MRB TEST30L] extra 403 tijdens bestaande serverpauze; deadline blijft staan', Math.ceil((serverBackoffUntil-now)/1000)+'s'); } catch(_) {}
+        try { unsafeWindow.mrbFlightRecorder?.add?.('SERVER_403_DURING_BACKOFF',{reason:String(reason||''),until:serverBackoffUntil}); } catch(_) {}
+        return serverBackoffUntil;
+      }
+      const until = now + Math.max(30000, Number(ms)||120000);
       serverBackoffUntil = until;
       serverBackoffReason = String(reason||'server backoff');
+      serverRecoveryRunning=false;
       try { sessionStorage.setItem('mrb_server_backoff_until_test10', String(until)); sessionStorage.setItem('mrb_server_backoff_reason_test10', serverBackoffReason); } catch(_) {}
-      try { console.warn('[MRB Unified TEST10] SERVER BACKOFF', serverBackoffReason, Math.ceil((until-Date.now())/1000)+'s'); } catch(_) {}
+      try { console.warn('[MRB TEST30L] SERVER BACKOFF', serverBackoffReason, Math.ceil((until-now)/1000)+'s'); } catch(_) {}
       try { unsafeWindow.mrbFlightRecorder?.add?.('SERVER_BACKOFF',{reason:serverBackoffReason,until}); } catch(_) {}
-      // TEST30A: als de 403 ontstond midden in Crimes/Cars mag die atomaire
-      // cyclus niet met busy/current blijven hangen. Laat de CC-owner zichzelf
-      // direct vrijgeven; de centrale dispatcher hervat pas na de backoff.
-      try { unsafeWindow.mrbV9CrimesCars?.onServerBackoff?.({until,reason:serverBackoffReason}); } catch(_) {}
+      releaseAutomationForServerBackoff(until,serverBackoffReason);
+      scheduleServerRecovery();
       return until;
     }
     function serverBackoffActive(){ return Date.now() < serverBackoffUntil; }
     unsafeWindow.mrbServerBackoff = Object.freeze({
       trip:tripServerBackoff,
       active:serverBackoffActive,
-      state:()=>({active:serverBackoffActive(),until:serverBackoffUntil,remainingMs:Math.max(0,serverBackoffUntil-Date.now()),reason:serverBackoffReason}),
-      clear:()=>{serverBackoffUntil=0;serverBackoffReason='';try{sessionStorage.removeItem('mrb_server_backoff_until_test10');sessionStorage.removeItem('mrb_server_backoff_reason_test10');}catch(_){} return true;}
+      state:()=>({active:serverBackoffActive(),until:serverBackoffUntil,remainingMs:Math.max(0,serverBackoffUntil-Date.now()),reason:serverBackoffReason,recoveryScheduled:!!serverRecoveryTimer}),
+      clear:()=>{clearServerRecoveryTimer();serverBackoffUntil=0;serverBackoffReason='';serverRecoveryRunning=false;try{sessionStorage.removeItem('mrb_server_backoff_until_test10');sessionStorage.removeItem('mrb_server_backoff_reason_test10');}catch(_){} return true;}
     });
+    // Backoff overleeft een gewone SPA/page reload via sessionStorage. Arme de
+    // recovery daarom ook direct opnieuw wanneer Gold tijdens de pauze start.
+    if (serverBackoffUntil > Date.now()) {
+      releaseAutomationForServerBackoff(serverBackoffUntil,serverBackoffReason||'bestaande 403-pauze');
+      scheduleServerRecovery();
+    } else if (serverBackoffUntil) {
+      hardRecoverAfterServerBackoff();
+    }
 
     function navCircuitAllows(source,wanted){
       const now=Date.now();
@@ -1232,7 +1290,7 @@ class MRBPerfMutationObserver extends MutationObserver {
 
       // TEST10: na een server-403 geen automatische requeststorm. De bestaande
       // modulecallbacks mogen blijven leven, maar krijgen tijdelijk geen navigatie.
-      if (!meta?.serverBackoffBypass && serverBackoffActive()) return true;
+      if (!meta?.serverBackoffBypass && serverBackoffActive()) return false;
 
       // Tijdens handmatige bediening blijven timers actief, maar geen enkele
       // gewone module mag de door de speler gekozen pagina vervangen.
@@ -11066,11 +11124,21 @@ paint();
   }
   function bidButtonIn(host){
     if (!host) return null;
+    const buttons = Array.from(host.querySelectorAll('button.jqibutton, input.jqibutton, .jqibuttons button, .jqibuttons input[type="button"], .jqibuttons input[type="submit"]'))
+      .filter(el => visible(el) && !el.disabled);
     if (anonymous){
-      return host.querySelector('button[name="jqi_form_buttonBidAnonymously"], input[name="jqi_form_buttonBidAnonymously"]');
+      return buttons.find(el => String(el.name || '') === 'jqi_form_buttonBidAnonymously')
+        || buttons.find(el => /^Bid Anonymously$/i.test(norm(el.value || el.textContent)))
+        || null;
     }
-    return Array.from(host.querySelectorAll('button[name^="jqi_form_buttonBidAs"], input[name^="jqi_form_buttonBidAs"]'))
-      .find(el => !/Anonymously/i.test(String(el.name || ''))) || null;
+    // Omerta markeert de normale 'Bid as <naam>' knop als jqidefaultbutton.
+    // Gebruik die eerst; dit voorkomt dat een andere JQI-button per ongeluk wordt gekozen.
+    const expected = playerName ? new RegExp('^Bid\\s+as\\s+' + playerName.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&') + '$', 'i') : null;
+    return buttons.find(el => el.classList?.contains('jqidefaultbutton') && /^jqi_form_buttonBidAs/i.test(String(el.name || '')))
+      || (expected ? buttons.find(el => expected.test(norm(el.value || el.textContent))) : null)
+      || buttons.find(el => /^jqi_form_buttonBidAs/i.test(String(el.name || '')))
+      || buttons.find(el => /^Bid\s+as\s+/i.test(norm(el.value || el.textContent)))
+      || null;
   }
   function cancelButtonIn(host){
     return host?.querySelector('button[name="jqi_form_buttonCancel"], input[name="jqi_form_buttonCancel"]') || null;
@@ -11082,6 +11150,44 @@ paint();
     try { el.dispatchEvent(new MouseEvent('mousedown', {bubbles:true, cancelable:true, view:window})); } catch(_) {}
     try { el.dispatchEvent(new MouseEvent('mouseup', {bubbles:true, cancelable:true, view:window})); } catch(_) {}
     try { el.click(); return true; } catch(_) { return false; }
+  }
+  async function submitBidModal(modal, row){
+    const btn = bidButtonIn(modal);
+    if (!btn) return {ok:false, reason:'button-missing'};
+    const beforeBidder = bidderOf(row);
+    const label = norm(btn.value || btn.textContent || btn.name);
+    try { console.log('[Obay Kogels TEST30M] submit', {label, name:btn.name, value:btn.value, anonymous, playerName}); } catch(_) {}
+
+    // Eerste en normale route: echte DOM click op exact de knop in deze modal.
+    if (!realClick(btn)) return {ok:false, reason:'native-click-failed'};
+
+    // Geef Omerta tijd om de Impromptu/JQI handler af te werken. Als de modal
+    // sluit of de serverrow wijzigt, nooit nog een tweede click sturen.
+    const firstDeadline = Date.now() + 1400;
+    while (Date.now() < firstDeadline){
+      if (!visible(modal) || !row?.isConnected || !untouched(row) || bidderOf(row) !== beforeBidder)
+        return {ok:true, route:'native'};
+      await sleep(100);
+    }
+
+    // Sommige Omerta-layouts hangen de button-handler delegated via jQuery aan
+    // de JQI-container. Alleen wanneer de native click aantoonbaar nul effect had,
+    // triggeren we diezelfde knop precies één keer via de pagina-jQuery.
+    try{
+      const jq = unsafeWindow.jQuery || unsafeWindow.$;
+      if (jq && visible(modal) && untouched(row)){
+        jq(btn).trigger('click');
+        try { console.warn('[Obay Kogels TEST30M] native click had geen effect; 1x delegated jQuery click', {label, name:btn.name}); } catch(_) {}
+      }
+    }catch(_){}
+
+    const end = Date.now() + 5000;
+    while (Date.now() < end){
+      if (!visible(modal) || !row?.isConnected || !untouched(row) || bidderOf(row) !== beforeBidder)
+        return {ok:true, route:'jquery-fallback'};
+      await sleep(100);
+    }
+    return {ok:false, reason:'no-state-change'};
   }
   async function waitModalOpen(timeout=4500){
     const end = Date.now() + timeout;
@@ -11136,7 +11242,7 @@ paint();
       }
 
       const candidates = liveCandidates(failedRows);
-      try { console.log('[Obay Kogels TEST30J] scan', {rows:auctionRows().length, candidates:candidates.length, maxPerPack:config().maxPerPack, playerName}); } catch(_) {}
+      try { console.log('[Obay Kogels TEST30M] scan', {rows:auctionRows().length, candidates:candidates.length, maxPerPack:config().maxPerPack, playerName}); } catch(_) {}
       if (!candidates.length) break;
 
       const c = candidates[0];
@@ -11162,18 +11268,27 @@ paint();
       // bod-reservering meer.
       const remainingBudget = remainingBudgetFromCash(infoCash);
       if (actual <= 0 || actual > config().maxPerPack || actual > Number(infoCash || 0) || actual > remainingBudget){
+        if (actual <= 0) lastStatus = 'Werkelijk popup-bod kon niet worden gelezen';
+        else if (actual > config().maxPerPack) lastStatus = `Overslaan: popup-bod ${fmt(actual)} > max/pak ${fmt(config().maxPerPack)}`;
+        else if (actual > Number(infoCash || 0)) lastStatus = `Overslaan: popup-bod ${fmt(actual)} > saldo ${fmt(infoCash)}`;
+        else lastStatus = `Overslaan: popup-bod ${fmt(actual)} > resterend totaalbudget ${fmt(remainingBudget)}`;
+        paint();
         realClick(cancelButtonIn(modal));
         await waitModalClosed(modal, 3500);
         failedRows.add(c.row);
         continue;
       }
 
-      // 3) Klik exact de knop in DEZE modal. Niet opnieuw globaal zoeken.
-      const bidBtn = bidButtonIn(modal);
-      if (!bidBtn || !realClick(bidBtn)){
-        lastStatus = 'Bid-knop in popup niet klikbaar';
+      // 3) Bevestig exact deze JQI-modal. Deze helper kiest expliciet de
+      // anonieme knop of de default/naamgebonden 'Bid as <speler>' knop en
+      // accepteert pas succes nadat Omerta zichtbaar state heeft gewijzigd.
+      const submit = await submitBidModal(modal, c.row);
+      if (!submit.ok){
+        lastStatus = submit.reason === 'button-missing'
+          ? 'Bid-knop niet gevonden in zichtbare popup'
+          : 'Biedknop gaf geen serverreactie';
         paint();
-        realClick(cancelButtonIn(modal));
+        if (visible(modal)) realClick(cancelButtonIn(modal));
         await waitModalClosed(modal, 3500);
         failedRows.add(c.row);
         continue;
@@ -11182,7 +11297,7 @@ paint();
       // 4) Alleen serverbevestiging telt. Geen bevestiging = geen bod, geen budget.
       const modalClosed = await waitModalClosed(modal, 5500);
       if (!modalClosed){
-        lastStatus = 'Bid-knop geklikt maar popup bleef open';
+        lastStatus = 'Biedactie gestart maar popup bleef open';
         paint();
         failedRows.add(c.row);
         break;
@@ -11241,7 +11356,7 @@ paint();
     const nav = unsafeWindow.mrbNavigate?.(OBAY, {source:'obay-bullets'}) === true;
     if (!nav){ busy = false; scheduleNext(2500); paint(); return false; }
     sleep(900).then(() => inspectAndBid(cash)).catch(async err => {
-      try { console.warn('[Obay Kogels TEST30J]', err); } catch(_) {}
+      try { console.warn('[Obay Kogels TEST30M]', err); } catch(_) {}
       scheduleNext(5000);
       await returnHome('Fout tijdens Obay-controle');
     });
@@ -11252,7 +11367,7 @@ paint();
   paint();
 
   unsafeWindow.mrbObayBullets = {
-    version:'6.0.0-test30J-clean',
+    version:'6.0.0-test30M-bid-submit-rewrite',
     wake,
     canWake,
     stop:(reason='Extern gestopt') => stop(reason, true),
