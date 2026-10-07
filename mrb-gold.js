@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MRB Gold Edition TEST30N - Obay Bid Submit Rewrite
-// @version      6.0.0-test30N-spot-leader-second-pass
+// @version      6.0.0-test30O-heist-leader-fast-start
 // @description  MRB Gold: centrale Unified Scheduler, navigatie-owner, retry-circuitbreaker en strikte actieguards.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -18,6 +18,7 @@
 // @run-at       document-end
 // ==/UserScript==
 
+// Release 6.0.0-test30O: Heist Leader fast-start. Zodra een verzonden Heist-uitnodiging actief is, mag de Leader-wachtflow niet meer door Session Manager batch-gates minutenlang worden uitgesteld. De Leader controleert acceptatie elke 8-12s. Op GroupCrimes krijgt een zichtbare finale Start Heist-knop absolute voorrang: Heist claimt ownership en start direct, voordat Race-wachtlogica wordt toegepast. Passief wachten blijft op Mijn Account zodat Crimes/Cars tussendoor kunnen blijven werken.
 // Release 6.0.0-test30N: Spot Leader second-pass structureel hersteld. Na de eerste Start/Update blijft de verplichte tweede doorgang actief, ook wanneer de server al cooldown toont of op de tweede detailweergave Driver/Auto niet meer wordt herhaald. Dispatcher kan een verse second-pass wakker houden zonder Spot=Nu te vereisen. Geen wijzigingen aan Driver-selectie, doelkeuze of Obay.
 // Release 6.0.0-test30M: Obay-biedbevestiging schoon herschreven. De zichtbare JQI-popup kiest exact 'Bid Anonymously' of de default/naamgebonden 'Bid as <speler>'-knop. Native klik wordt eerst gebruikt; alleen als modal en serverrow aantoonbaar ongewijzigd blijven volgt maximaal één delegated jQuery-click op dezelfde knop. Een bod telt pas na echte UI/serverstate-wijziging. Scan-, budget-, scheduler- en 403-logica blijven verder ongewijzigd.
 // Release 6.0.0-test30L: Global 403 Recovery herschreven. De eerste echte 403 opent exact een vaste 120s serverpauze; vervolg-403s verlengen die deadline niet meer. Tijdens backoff geeft mrbNavigate false terug zodat modules een geblokkeerde navigatie niet als succes behandelen. Race/group/CC ownership wordt vrijgegeven en na de oorspronkelijke deadline volgt exact een harde full-page recovery naar Mijn Account. Hiermee kan een requeststorm de 120s niet meer eindeloos vooruit schuiven.
@@ -16010,7 +16011,12 @@ paint();
         status('Uitgelogd · Heist gepauzeerd');
         next(fn,5000);return;
       }
-      if(!sessionAllowsHeist()){
+      // TEST30O: een reeds verzonden Leader-Heist mag niet meer minutenlang
+      // achter Session Manager/Race/Spot batch-gates blijven hangen. Tijdens de
+      // invite/wait/start-fase blijft de Heist-flow zelf actief; passief wachten
+      // gebeurt nog steeds op Mijn Account zodat Crimes/Cars tussendoor kunnen.
+      const leaderInviteFlow = role()==='leader' && (invitePending() || /^(?:inviting|waiting|started|leader_start_pending)$/i.test(String(phase||'')));
+      if(!sessionAllowsHeist() && !leaderInviteFlow){
         status('Sessie Manager: Heist wacht tot Race en Spot Overval klaar zijn');
         next(fn,1000);return;
       }
@@ -16295,6 +16301,25 @@ paint();
   }
   function inspectLeaderGroup(initial=false){
     if(!enabled()||role()!=='leader')return;
+
+    // TEST30O: server-side Driver-ready is de beslissende handoff. Als GroupCrimes
+    // de finale Start Heist-knop al toont, start de Leider direct. Deze check moet
+    // VOOR Race-prioriteit staan; anders kan een reeds geaccepteerde Heist nog
+    // minuten wachten op een andere groepsflow terwijl de Driver al klaarstaat.
+    if(onGroup()){
+      const readyStart=finalStart();
+      if(readyStart){
+        try{unsafeWindow.mrbGroupTransaction?.acquire?.('heist','LEADER_DRIVER_READY');}catch(_){}
+        setInvitePending(false);
+        phase='starting';
+        status('Driver gereed · Heist direct starten');
+        readyStart.click();
+        phase='started';
+        next(()=>inspectLeaderGroup(false),rand(5000,8000));
+        return;
+      }
+    }
+
     if(waitForRaceBefore(()=>inspectLeaderGroup(initial),'Heist Leider-controle'))return;
     // 5.8.41: GroupCrimes zelf kan al aantonen dat de vorige Heist is afgerond.
     // Stop dan onmiddellijk de stale Leider-flow voordat enige hernavigatie plaatsvindt.
@@ -16349,7 +16374,7 @@ paint();
     if(lead){status('Leid een heist openen');lead.click();next(leaderActionPage,rand(1500,3000));return;}
     if(invitePending()){
       phase='waiting';
-      status('Uitnodiging loopt · over 35-40 sec opnieuw controleren');
+      status('Uitnodiging loopt · over 8-12 sec opnieuw controleren');
       scheduleLeaderCheck();
       return;
     }
@@ -16367,16 +16392,16 @@ paint();
     if(bullets&&String(bullets.value).replace(/\D/g,'')!=='50'){setInput(bullets,'50');return next(leaderActionPage,450);}
     if(gun&&!/tommy\s*gun/i.test(norm(gun.selectedOptions?.[0]?.textContent))){selectTommy(gun);return next(leaderActionPage,450);}
     const btn=[...root.querySelectorAll('input[type="submit"],button')].find(b=>/^Start$/i.test(norm(b.value||b.textContent)));
-    if(btn&&driver&&bullets&&gun){status(`Heist uitnodiging versturen aan ${driverName()}`);setInvitePending(true);btn.click();phase='waiting';acceptChecks=0;next(()=>inspectLeaderGroup(false),rand(35000,40000));return;}
+    if(btn&&driver&&bullets&&gun){status(`Heist uitnodiging versturen aan ${driverName()}`);setInvitePending(true);btn.click();phase='waiting';acceptChecks=0;next(()=>inspectLeaderGroup(false),rand(8000,12000));return;}
     status('Heistformulier wordt opgebouwd');next(leaderActionPage,1500);
   }
   function scheduleLeaderCheck(){
     acceptChecks++;
     if(acceptChecks>=MAX_ACCEPT_CHECKS){setInvitePending(false);try{unsafeWindow.mrbGroupTransaction?.release?.('heist','driver-wachtlimiet');}catch(_){}status('Driver niet gereed na 30 controles; terug naar Mijn Account');next(goInfo,3000);return;}
-    const delay=rand(35000,40000);
+    const delay=rand(8000,12000);
     phase='waiting';
     try{unsafeWindow.mrbGroupTransaction?.release?.('heist','Heist Leider wacht passief op Driver');}catch(_){}
-    status(`Wachten op Driver · controle ${acceptChecks}/${MAX_ACCEPT_CHECKS} over 35-40 sec · overige timers vrij`);
+    status(`Wachten op Driver · controle ${acceptChecks}/${MAX_ACCEPT_CHECKS} over 8-12 sec · overige timers vrij`);
     // TEST30B: wachten bezit GroupCrimes niet. Mijn Account is het rustpunt; de
     // centrale dispatcher kan Race/Spot/Crimes/Cars tussendoor laten lopen.
     load('/information.php');
