@@ -1,6 +1,6 @@
 // ==UserScript==
-// @name         MRB Gold Edition TEST30M - Obay Bid Submit Rewrite
-// @version      6.0.0-test30M-obay-bid-submit-rewrite
+// @name         MRB Gold Edition TEST30N - Obay Bid Submit Rewrite
+// @version      6.0.0-test30N-spot-leader-second-pass
 // @description  MRB Gold: centrale Unified Scheduler, navigatie-owner, retry-circuitbreaker en strikte actieguards.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -18,6 +18,7 @@
 // @run-at       document-end
 // ==/UserScript==
 
+// Release 6.0.0-test30N: Spot Leader second-pass structureel hersteld. Na de eerste Start/Update blijft de verplichte tweede doorgang actief, ook wanneer de server al cooldown toont of op de tweede detailweergave Driver/Auto niet meer wordt herhaald. Dispatcher kan een verse second-pass wakker houden zonder Spot=Nu te vereisen. Geen wijzigingen aan Driver-selectie, doelkeuze of Obay.
 // Release 6.0.0-test30M: Obay-biedbevestiging schoon herschreven. De zichtbare JQI-popup kiest exact 'Bid Anonymously' of de default/naamgebonden 'Bid as <speler>'-knop. Native klik wordt eerst gebruikt; alleen als modal en serverrow aantoonbaar ongewijzigd blijven volgt maximaal één delegated jQuery-click op dezelfde knop. Een bod telt pas na echte UI/serverstate-wijziging. Scan-, budget-, scheduler- en 403-logica blijven verder ongewijzigd.
 // Release 6.0.0-test30L: Global 403 Recovery herschreven. De eerste echte 403 opent exact een vaste 120s serverpauze; vervolg-403s verlengen die deadline niet meer. Tijdens backoff geeft mrbNavigate false terug zodat modules een geblokkeerde navigatie niet als succes behandelen. Race/group/CC ownership wordt vrijgegeven en na de oorspronkelijke deadline volgt exact een harde full-page recovery naar Mijn Account. Hiermee kan een requeststorm de 120s niet meer eindeloos vooruit schuiven.
 // Release 6.0.0-test30K: Freeze Recovery schoon herschreven. Een stabiele grijze overlay / zichtbare modal die 20s geen DOM-voortgang toont mag nu herstellen, ook wanneer een stale popup- of module-busy state actief blijft. Normale cooldown-popups en recente handmatige invoer blijven beschermd; aparte 30s freeze-refresh guard voorkomt reload-loops.
@@ -2898,7 +2899,10 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
       // Het spel kan na het opnieuw openen van GroupCrimes direct het actieve
       // Overval Details-scherm tonen, zonder tussenliggende Spot-link. Dat is
       // juist de serverbug-pagina waarop de tweede Start/Update nodig is.
-      if (isActiveSpotDetailsPage() && activeDriverReady() && findStartUpdate()) {
+      if (isActiveSpotDetailsPage() && findStartUpdate()) {
+        // TEST30N: op de verplichte tweede doorgang herhaalt Omerta niet altijd
+        // Driver/Auto in het detail. startCount=1 + verse secondPass is hier al
+        // het bewijs dat de eerste doorgang met gereed Driver/Auto is uitgevoerd.
         set(K.secondPass, 'reopened');
         setStatus('SECOND_PASS_DETAILS_READY', 'Actieve Spot is direct opnieuw geopend; verplichte tweede Start/Update wordt nu uitgevoerd.');
         return false;
@@ -2939,18 +2943,26 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
   // krijgt Start/Update absolute voorrang. Dit voorkomt dat Heist of een oude
   // cooldown-state een half afgeronde Spot Overval laat staan.
   function handleMandatorySpotFinalize() {
-    if (!isGroupPage() || !isActiveSpotDetailsPage() || !activeDriverReady()) return false;
+    if (!isGroupPage() || !isActiveSpotDetailsPage()) return false;
+
+    const clicks = Number(get(K.startCount, 0) || 0);
+    const secondPassActive = clicks === 1 && validFreshSecondPass();
+    // Eerste Start/Update blijft streng: Driver + echte auto moeten zichtbaar zijn.
+    // Voor de tweede verplichte gamebug-doorgang is dat niet opnieuw vereist;
+    // Omerta laat die gegevens na de eerste afronding niet altijd nogmaals zien.
+    if (!secondPassActive && !activeDriverReady()) return false;
+
     const start = findStartUpdate();
     if (!start) return false;
 
-    const clicks = Number(get(K.startCount, 0) || 0);
+    const clicksConfirmed = clicks;
     const lastClick = Number(get(K.startClickedAt, 0) || 0);
     const elapsed = lastClick ? Date.now() - lastClick : Infinity;
 
-    if (clicks < START_MAX_CLICKS) {
+    if (clicksConfirmed < START_MAX_CLICKS) {
       if (!lastClick || elapsed >= START_RETRY) {
         if (clickOnce(start)) {
-          const nextCount = clicks + 1;
+          const nextCount = clicksConfirmed + 1;
           set(K.startCount, nextCount);
           set(K.startClickedAt, Date.now());
           set(K.leaderGo, true);
@@ -3192,8 +3204,19 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
       if (!timer.found) { setStatus('WAIT_TIMER_READ', 'Spot Overval-timer nog niet gevonden op Mijn Account.'); return; }
       syncSpotTimer(timer);
       if (!timer.ready) {
-        // De actuele servercooldown is de absolute bron van waarheid.
-        // Wis elke oude/pending Spot-cyclus, ook wanneer startCount nog 0 is.
+        // TEST30N: na de eerste Start/Update kan de server al cooldown tonen,
+        // terwijl de verplichte tweede Spot-doorgang nog moet plaatsvinden.
+        // Een verse second-pass mag daarom niet door de gewone cooldown-cleanup
+        // worden gewist. Alle andere cycli blijven servercooldown respecteren.
+        if (validFreshSecondPass()) {
+          if (loadGroupCrimesForSecondPass()) {
+            set(K.secondPass, 'need_spot');
+            setStatus('SECOND_PASS_COOLDOWN_TO_GROUP', 'Server toont al cooldown na de eerste doorgang; verplichte tweede Spot-doorgang wordt toch opnieuw geopend.');
+          } else {
+            setStatus('SECOND_PASS_COOLDOWN_NAV_WAIT', 'Tweede Spot-doorgang is nog verplicht; wachten op navigatievrijgave naar Groepsmisdaden.');
+          }
+          return;
+        }
         hardStopSpotCooldown(timer.raw, 'Mijn Account');
         return;
       }
@@ -3261,7 +3284,7 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
 
     if (isGroupPage()) {
       const groupCooldown = readGroupSpotCooldown();
-      if (groupCooldown && hardStopSpotCooldown(groupCooldown, 'Groepsmisdaden')) return;
+      if (groupCooldown && !validFreshSecondPass() && hardStopSpotCooldown(groupCooldown, 'Groepsmisdaden')) return;
       const entry = findSpotEntry();
       const _spotClicks = Number(get(K.startCount, 0) || 0);
       const _spotSecond = String(get(K.secondPass, '') || '');
@@ -3550,7 +3573,14 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
       set(K.lastAction, 0); set(K.lastNav, 0); clearLoop(); schedule(150); return true;
     },
     setEnabled: on => unsafeWindow.mrbSpotSessionSetEnabled?.(on===true),
-    getState: () => ({ enabled: enabled(), role: role(), state: state(), nextAt: timerAt(), driverCentralProbePermit: hasDriverCentralProbe() })
+    getState: () => ({
+      enabled: enabled(), role: role(), state: state(), nextAt: timerAt(),
+      driverCentralProbePermit: hasDriverCentralProbe(),
+      startCount: Number(get(K.startCount, 0) || 0),
+      secondPass: String(get(K.secondPass, '') || ''),
+      startClickedAt: Number(get(K.startClickedAt, 0) || 0),
+      secondPassFresh: validFreshSecondPass()
+    })
   };
   unsafeWindow.mrbV9SpotRaid = unsafeWindow.mrbSpotRaidCoreV3;
   if (enabled()) schedule(150);
@@ -11653,7 +11683,13 @@ paint();
     let heistCanWake=true;
     try{heistCanWake=unsafeWindow.mrbHeistCoreControl?.canWake?.()!==false;}catch(_){}
     watchRunnable('heist', nowish(heistRaw)&&!!GM_Get('mrb_heist_integrated_enabled',false)&&heistCanWake, {timer:heistRaw});
-    watchRunnable('spot', nowish(spotRaw)&&!!GM_Get('mrb_spot_complete_v1_enabled',false), {timer:spotRaw});
+    let spotCtlState={};
+    try{ spotCtlState=unsafeWindow.mrbSpotRaidCoreV3?.getState?.()||{}; }catch(_){}
+    const spotSecondPassPending = !!spotCtlState.secondPassFresh || (
+      Number(spotCtlState.startCount||0)===1 && !!String(spotCtlState.secondPass||'') &&
+      Number(spotCtlState.startClickedAt||0)>0 && Date.now()-Number(spotCtlState.startClickedAt||0)<=120000
+    );
+    watchRunnable('spot', (nowish(spotRaw)||spotSecondPassPending)&&!!GM_Get('mrb_spot_complete_v1_enabled',false), {timer:spotRaw,secondPass:spotSecondPassPending});
 
     // 1) Crimes/Cars absoluut eerst en altijd opnieuw serverbevestigd op Mijn Account.
     try {
@@ -11740,7 +11776,7 @@ paint();
           }
         } catch(_) {}
       }
-      if(nowish(spotRaw) && GM_Get('mrb_spot_complete_v1_enabled',false)){
+      if((nowish(spotRaw) || spotSecondPassPending) && GM_Get('mrb_spot_complete_v1_enabled',false)){
         try {
           const ctl=unsafeWindow.mrbSpotRaidCoreV3;
           const ss=ctl?.getState?.()||{};
@@ -11751,7 +11787,7 @@ paint();
               accepted=ctl?.wake?.()!==false;
             }
           } else if(mayWake('spot') && unsafeWindow.mrbGroupTransaction?.acquire?.('spot','WAKE_PENDING')){
-            diag('SPOT_WAKE',{timer:spotRaw,lane:'group'},'spot-wake',900);
+            diag('SPOT_WAKE',{timer:spotRaw,lane:'group',secondPass:spotSecondPassPending},'spot-wake',900);
             accepted=ctl?.wake?.()!==false;
             if(!accepted) unsafeWindow.mrbGroupTransaction?.release?.('spot','spot wake geweigerd');
           }
