@@ -2970,9 +2970,15 @@ try {
     batchStarted:'mrb_night_manager_batch_started_v1',
     doRace:'mrb_night_manager_do_race_v1',
     doSpot:'mrb_night_manager_do_spot_v1',
-    doHeist:'mrb_night_manager_do_heist_v1'
+    doHeist:'mrb_night_manager_do_heist_v1',
+    doMilestone:'mrb_night_manager_do_milestone_v1', milestoneSamples:'mrb_night_milestone_samples_v1', milestoneNext:'mrb_night_milestone_next_v1', milestoneLast:'mrb_night_milestone_last_v1'
   };
   const CHECK_MS=5000;
+  const MS_PATH='/?module=Milestone';
+  const MS_CHECK_INTERVAL=60*60*1000;
+  const MS_LEAD=5*60*1000;
+  const MS_STAY=30*60*1000;
+  const msEnabled=()=>get(K.doMilestone,false)===true;
   const MIN_LOGOUT_REMAINING=15*60*1000;
   const FALLBACK_SESSION_MS=3*60*60*1000;
   const MANAGER_CITIES=['Detroit','Chicago','New York','Las Vegas','Philadelphia','Baltimore','Corleone','Palermo'];
@@ -3074,6 +3080,82 @@ try {
     return '';
   }
 
+  // Milestone Planner: één sessie-eigenaar; nooit zelfstandig navigeren tijdens een batch.
+  let msVisitAt=0, msBusy=false, msReturn=false;
+  const msPage=()=>!!document.querySelector('#module_Milestone .module_Milestones_box_container');
+  function msCard(){return [...document.querySelectorAll('#module_Milestone .module_Milestones_box_container')].find(x=>norm(x.querySelector('h4')?.textContent).toLowerCase()==='rank progress')||null;}
+  function msStats(){
+    const card=msCard();if(!card)return null;
+    const txt=norm(card.querySelector('.module_Milestones_percentage')?.textContent).replace(',','.');
+    const pct=Number((txt.match(/[\d.]+/)||[])[0]);if(!Number.isFinite(pct)||pct<0||pct>100)return null;
+    const points=norm(card.querySelector('.module_Milestones_box p')?.textContent||'');
+    const claim=!![...card.querySelectorAll('a[href*="action=Redeem"]')].find(visible);
+    const end=Number(card.querySelector('[data-time-end]')?.getAttribute('data-time-end')||0);
+    return {pct,points,claim,end};
+  }
+  function msSamples(){const x=get(K.milestoneSamples,[]);return Array.isArray(x)?x:[];}
+  function msPrediction(){
+    const a=msSamples(),last=a[a.length-1];if(!last)return {eta:0,rate:0};
+    const usable=a.filter(x=>x.cycle===last.cycle&&x.t>=last.t-24*3600000&&x.t<last.t-30*60000&&x.pct<last.pct);
+    if(!usable.length)return {eta:0,rate:0};
+    const prev=usable[0],hours=(last.t-prev.t)/3600000,rate=(last.pct-prev.pct)/hours;
+    if(!(rate>0.01&&rate<100))return {eta:0,rate:0};
+    return {eta:last.t+(100-last.pct)/rate*3600000,rate};
+  }
+  function msRecord(stats){
+    const now=Date.now(),samples=msSamples(),prev=samples[samples.length-1];
+    if(prev&&now-prev.t<60000&&Math.abs(prev.pct-stats.pct)<0.01)return;
+    const cycle=prev?(stats.pct+2<prev.pct?prev.cycle+1:prev.cycle):1;
+    samples.push({t:now,pct:stats.pct,cycle});set(K.milestoneSamples,samples.slice(-150));
+    set(K.milestoneLast,{...stats,t:now});
+    const prediction=msPrediction();
+    const next=stats.claim?now+2*60000:prediction.eta?Math.min(now+MS_CHECK_INTERVAL,Math.max(now+2*60000,prediction.eta-MS_LEAD)):now+MS_CHECK_INTERVAL;
+    set(K.milestoneNext,next);
+    console.info('[MRB Milestone]',stats.pct+'%',stats.points,'ETA',prediction.eta?new Date(prediction.eta).toLocaleString('nl-NL'):'leren');
+  }
+  function msDue(){return msEnabled()&&Date.now()>=Number(get(K.milestoneNext,0)||0);}
+  function msSchedule(){return msEnabled()?Number(get(K.milestoneNext,0)||Date.now()):0;}
+  function msStatus(){
+    const last=get(K.milestoneLast,null),prediction=msPrediction();
+    if(!last)return 'Nog geen meting · eerste controle bij start';
+    return `${Number(last.pct).toFixed(2)}% · ${last.points||''} · ${prediction.eta?'ETA '+new Date(prediction.eta).toLocaleString('nl-NL'):'groeisnelheid wordt geleerd'} · ${msSchedule()?'controle '+new Date(msSchedule()).toLocaleTimeString('nl-NL'):''}`;
+  }
+  function msClaims(){
+    return [...document.querySelectorAll('#module_Milestone .module_Milestones_box_container a[href*="action=Redeem"]')].filter(visible);
+  }
+  async function msReadAndClaim(){
+    if(msBusy||!msPage())return false;
+    msBusy=true;
+    try{
+      const before=msStats();if(!before){state('Milestone: Rank Progress niet gevonden');set(K.milestoneNext,Date.now()+15*60000);return false;}
+      msRecord(before);
+      const links=msClaims();
+      if(links.length){
+        // Gebruik de game-eigen redeem-link; geen onbevestigde fetch/POST.
+        const link=links[0];const url=new URL(link.getAttribute('href'),location.href);
+        if(url.origin===location.origin && /[?&]action=Redeem(?:&|$)/i.test(url.search)){
+          state(`Milestone: ${links.length} beschikbaar · claim proberen`);
+          set(K.milestoneNext,Date.now()+2*60000);
+          link.click();return true;
+        }
+      }
+      return false;
+    }finally{msBusy=false;}
+  }
+  function msVisit(){
+    if(!msEnabled()||batchActive())return false;
+    if(msPage()){
+      if(msBusy)return true;
+      if(!msVisitAt||Date.now()-msVisitAt>30000){msVisitAt=Date.now();void msReadAndClaim().then(claimed=>{if(!claimed){msReturn=true;}});}
+      if(msReturn&&Date.now()-msVisitAt>3000){msReturn=false;load('/information.php');}
+      return true;
+    }
+    if(msDue()&&(!msVisitAt||Date.now()-msVisitAt>15000)){msVisitAt=Date.now();msReturn=false;state('Milestone: voortgang controleren');load(MS_PATH);return true;}
+    return false;
+  }
+  function msEarlierLogin(existing){
+    const next=msSchedule();return next&&next>Date.now()?(!existing?next:Math.min(existing,next)):existing;
+  }
   function missingSelectedStandaloneModules(){
     const missing=[];
     if(selected('race') && !unsafeWindow.cc_api?.raceSet) missing.push('Race');
@@ -3188,24 +3270,27 @@ try {
     const now=Date.now(), readyAt=now+wait, jitter=chooseJitterSeconds();
     const loginAt=now+Math.max(60000,wait-lead-(jitter*1000));
     set(K.readyAt,readyAt);set(K.jitterPick,jitter);set(K.loginAt,loginAt);
-    state(`Batch klaar · volgende login ${new Date(loginAt).toLocaleTimeString('nl-NL')} · ${jitter}s extra eerder`);
+    const earliest=msEarlierLogin(loginAt);set(K.loginAt,earliest);
+    state(`Batch klaar · volgende login ${new Date(earliest).toLocaleTimeString('nl-NL')}`);
     return loginAt;
   }
 
   function finishSelectedBatch(){
     clearBatch();
+    if(msEnabled()){set(K.milestoneNext,Math.min(Number(get(K.milestoneNext,Infinity)),Date.now()+60000));}
     if(selected('heist')){state('Geselecteerde activiteiten afgerond');return;}
     const lead=Math.max(2,Math.min(10,Number(get(K.lead,4)||4)))*60000;
     const jitter=chooseJitterSeconds(), readyAt=Date.now()+FALLBACK_SESSION_MS;
     const loginAt=readyAt-lead-(jitter*1000);
     set(K.readyAt,readyAt);set(K.jitterPick,jitter);set(K.loginAt,loginAt);
-    state(`Batch klaar · Heist uit · volgende sessie ${new Date(loginAt).toLocaleTimeString('nl-NL')}`);
+    const earliest=msEarlierLogin(loginAt);set(K.loginAt,earliest);
+    state(`Batch klaar · Heist uit · volgende sessie ${new Date(earliest).toLocaleTimeString('nl-NL')}`);
     doLogout();
   }
 
   function startBatch(){
     const wanted=selectedList();
-    if(!wanted.length){state('Geen activiteiten aangevinkt');return false;}
+    if(!wanted.length){state('Geen Race/Spot/Heist aangevinkt');return false;}
     if(!driverName()){state('Driver naam ontbreekt');return false;}
     if(selected('heist')&&managerRole()==='leader'&&!selectedManagerCities().length){state('Heist: selecteer minimaal één stad');return false;}
     ensureStandaloneModules();
@@ -3254,6 +3339,9 @@ try {
   function tickLoggedIn(){
     const other=otherGoldModuleActive(); if(other){state(`Geblokkeerd: andere Gold-module actief (${other})`);return;}
     if(monitorBatch())return;
+    if(msVisit())return;
+    if(msEnabled()&&msPrediction().eta&&msPrediction().eta-Date.now()<=MS_STAY&&msPrediction().eta>Date.now()){state('Milestone bijna klaar · ingelogd blijven');return;}
+    if(msEnabled()&&!selectedList().length){const next=msSchedule();if(next>Date.now()){set(K.loginAt,next);state('Milestone · volgende meting '+new Date(next).toLocaleTimeString('nl-NL'));doLogout();}return;}
 
     // v2.1.3 PRE-HEIST BATCH:
     // De Night Manager logt bewust enkele minuten voor Heist in. Race hoeft niet
@@ -3282,12 +3370,14 @@ try {
     let jitter=Number(get(K.jitterPick,-1)), loginAt=savedLoginAt;
     const sameCycle=savedReadyAt>0&&Math.abs(savedReadyAt-readyAt)<=90000&&savedLoginAt>0&&jitter>=0&&jitter<=59;
     if(!sameCycle){jitter=chooseJitterSeconds();loginAt=planNow+Math.max(60000,wait-lead-(jitter*1000));set(K.readyAt,readyAt);set(K.jitterPick,jitter);set(K.loginAt,loginAt);}
+    loginAt=msEarlierLogin(loginAt);set(K.loginAt,loginAt);
     state(`Cooldown ${raw} · login gepland ${new Date(loginAt).toLocaleTimeString('nl-NL')} · ${jitter}s extra eerder`);doLogout();
   }
   function tickLoggedOut(){
     if(gateVisible()){state('Gepauzeerd: captcha/Cloudflare');return;}
     const at=Number(get(K.loginAt,0)||0); if(!at){state('Uitgelogd zonder geplande login');return;}
-    if(Date.now()<at){state(`Uitgelogd · login om ${new Date(at).toLocaleTimeString('nl-NL')}`);return;}
+    const earliest=msEarlierLogin(at);if(earliest&&earliest<at){set(K.loginAt,earliest);}
+    if(Date.now()<earliest){state(`Uitgelogd · login om ${new Date(earliest).toLocaleTimeString('nl-NL')}`);return;}
     doLogin();
   }
   function tick(){
@@ -3299,6 +3389,10 @@ try {
   GM_addStyle(`
     #mrb-night-manager-panel{position:fixed;right:14px;bottom:14px;z-index:2147483000;width:270px;background:#151515;color:#eee;border:1px solid #8b7440;border-radius:8px;padding:10px;font:12px Arial,sans-serif;box-shadow:0 4px 18px rgba(0,0,0,.5)}
     #mrb-night-manager-panel b.title{color:#e3c66b;font-size:13px} #mrb-night-manager-panel input,#mrb-night-manager-panel select{background:#222;color:#eee;border:1px solid #555;border-radius:4px;padding:4px}
+    #mrb-night-manager-panel{max-height:85vh;overflow-y:auto}
+    #mrb-night-manager-panel .mrb-night-section{margin-top:7px;border:1px solid #65552e;border-radius:5px}
+    #mrb-night-manager-panel .mrb-night-section>summary{cursor:pointer;padding:7px;color:#e3c66b;font-weight:bold;user-select:none}
+    #mrb-night-manager-panel .mrb-night-section-body{padding:0 8px 8px}
     #mrb-night-manager-panel button{background:#3b3421;color:#f4df93;border:1px solid #806d37;border-radius:4px;padding:5px 8px;cursor:pointer} #mrb-night-manager-panel .row{display:flex;gap:6px;align-items:center;margin-top:6px}
     #mrb-night-manager-panel .status{margin-top:6px;color:#d8c98f;line-height:1.3} #mrb-night-manager-panel label{display:block;margin-top:6px} #mrb-night-manager-panel .small{font-size:10px;opacity:.75;margin-top:6px;line-height:1.3}
   `);
@@ -3306,19 +3400,44 @@ try {
     if(panel?.isConnected)return;
     document.getElementById('mrb-night-manager-panel')?.remove();
     panel=document.createElement('div');panel.id='mrb-night-manager-panel';
-    panel.innerHTML=`<b class="title">MRB Heist Night Manager Standalone v2.1.3</b><div class="row"><button data-toggle>Start</button><strong data-on>Uit</strong></div><div class="status" data-status>Gestopt</div><label>Gebruikersnaam<br><input data-user type="text" autocomplete="off" data-lpignore="true" data-1p-ignore="true" style="width:95%"></label><label>Wachtwoord<br><input data-pass type="password" autocomplete="new-password" data-lpignore="true" data-1p-ignore="true" style="width:95%"></label><label>Driver naam<br><input data-driver type="text" autocomplete="off" placeholder="Naam van Driver" style="width:95%"></label><label>Rol van dit account<br><select data-role style="width:95%"><option value="leader">Leider</option><option value="driver">Driver</option></select></label><div class="row" style="flex-wrap:wrap"><label style="margin:0"><input data-do-race type="checkbox"> Race</label><label style="margin:0"><input data-do-spot type="checkbox"> Spot Overval/Raid</label><label style="margin:0"><input data-do-heist type="checkbox"> Heist</label></div><div data-city-wrap style="margin-top:7px;border-top:1px solid rgba(255,214,102,.18);padding-top:6px"><b style="font-size:11px">Heist-steden (Leider)</b><div data-city-list style="margin-top:3px"></div><div class="small" style="margin-top:4px">Alleen aangevinkte steden worden gebruikt. Is de huidige stad niet beschikbaar, dan reist de Leider automatisch naar een aangevinkte stad waar Heist wel beschikbaar is.</div></div><label>Inloggen vóór Heist Nu<br><select data-lead><option value="2">2 minuten</option><option value="3">3 minuten</option><option value="4">4 minuten</option><option value="5">5 minuten</option><option value="7">7 minuten</option><option value="10">10 minuten</option></select></label><div class="row"><span>Extra eerder</span><input data-jmin type="number" min="0" max="59" style="width:42px"><span>t/m</span><input data-jmax type="number" min="0" max="59" style="width:42px"><span>s</span></div><button data-save style="margin-top:7px">Opslaan</button><div class="small">Zelfstandig: Race, Spot Overval en Heist zitten in dit script. v2.1.2: login en Driver zijn strikt gescheiden; credentials wijzigen alleen via Opslaan. MRB Gold moet uit staan.</div>`;
+    panel.innerHTML=`<b class="title">MRB Heist Night Manager Standalone v2.2.0</b><div class="row"><button data-toggle>Start</button><strong data-on>Uit</strong></div><div class="status" data-status>Gestopt</div><label>Gebruikersnaam<br><input data-user type="text" autocomplete="off" data-lpignore="true" data-1p-ignore="true" style="width:95%"></label><label>Wachtwoord<br><input data-pass type="password" autocomplete="new-password" data-lpignore="true" data-1p-ignore="true" style="width:95%"></label><label>Driver naam<br><input data-driver type="text" autocomplete="off" placeholder="Naam van Driver" style="width:95%"></label><label>Rol van dit account<br><select data-role style="width:95%"><option value="leader">Leider</option><option value="driver">Driver</option></select></label><div class="row" style="flex-wrap:wrap"><label style="margin:0"><input data-do-race type="checkbox"> Race</label><label style="margin:0"><input data-do-spot type="checkbox"> Spot Overval/Raid</label><label style="margin:0"><input data-do-heist type="checkbox"> Heist</label></div><div data-city-wrap style="margin-top:7px;border-top:1px solid rgba(255,214,102,.18);padding-top:6px"><b style="font-size:11px">Heist-steden (Leider)</b><div data-city-list style="margin-top:3px"></div><div class="small" style="margin-top:4px">Alleen aangevinkte steden worden gebruikt. Is de huidige stad niet beschikbaar, dan reist de Leider automatisch naar een aangevinkte stad waar Heist wel beschikbaar is.</div></div><div class="row"><label><input data-do-milestone type="checkbox"> Milestone Planner</label></div><div data-ms-status class="small">Nog geen meting</div><label>Inloggen vóór Heist Nu<br><select data-lead><option value="2">2 minuten</option><option value="3">3 minuten</option><option value="4">4 minuten</option><option value="5">5 minuten</option><option value="7">7 minuten</option><option value="10">10 minuten</option></select></label><div class="row"><span>Extra eerder</span><input data-jmin type="number" min="0" max="59" style="width:42px"><span>t/m</span><input data-jmax type="number" min="0" max="59" style="width:42px"><span>s</span></div><button data-save style="margin-top:7px">Opslaan</button><div class="small">Zelfstandig: Race, Spot Overval en Heist zitten in dit script. v2.1.2: login en Driver zijn strikt gescheiden; credentials wijzigen alleen via Opslaan. MRB Gold moet uit staan.</div>`;
+    // UI-only: verplaats bestaande velden naar inklapbare secties; event handlers blijven intact.
+    const sectionDefs = [
+      ['account','Algemene instellingen',['[data-user]','[data-pass]','[data-driver]','[data-role]']],
+      ['race','Race',['[data-do-race]']],
+      ['heist','Heist',['[data-do-heist]','[data-city-wrap]']],
+      ['spot','Spot / Raid',['[data-do-spot]']],
+      ['milestone','Milestone Planner',['[data-do-milestone]','[data-ms-status]']],
+      ['planning','Sessiebeheer en inlogplanning',['[data-lead]','[data-jmin]']]
+    ];
+    const sections=document.createElement('div');sections.className='mrb-night-sections';
+    const nearestField=el=>el?.closest('label')||el?.closest('.row')||el;
+    for(const [key,title,selectors] of sectionDefs){
+      const details=document.createElement('details');details.className='mrb-night-section';
+      const stored=localStorage.getItem('mrb_night_ui_open_'+key);
+      details.open=stored===null?(key==='account'):stored==='1';
+      const summary=document.createElement('summary');summary.textContent=title;details.appendChild(summary);
+      const body=document.createElement('div');body.className='mrb-night-section-body';details.appendChild(body);
+      for(const selector of selectors){const el=panel.querySelector(selector);const field=nearestField(el);if(field && field.parentNode && !body.contains(field))body.appendChild(field);}
+      details.addEventListener('toggle',()=>localStorage.setItem('mrb_night_ui_open_'+key,details.open?'1':'0'));
+      sections.appendChild(details);
+    }
+    // Behoud overige bediening, status en opslaan op hun bestaande plek.
+    const saveButton=panel.querySelector('[data-save]');
+    if(saveButton)panel.insertBefore(sections,saveButton);else panel.appendChild(sections);
     document.body.appendChild(panel);
-    panel.querySelector('[data-user]').value=String(get(K.user,'')||'');panel.querySelector('[data-pass]').value=String(get(K.pass,'')||'');panel.querySelector('[data-driver]').value=String(get(K.driver,'')||'');panel.querySelector('[data-role]').value=managerRole();panel.querySelector('[data-lead]').value=String(get(K.lead,4)||4);panel.querySelector('[data-do-race]').checked=selected('race');panel.querySelector('[data-do-spot]').checked=selected('spot');panel.querySelector('[data-do-heist]').checked=selected('heist');
+    panel.querySelector('[data-user]').value=String(get(K.user,'')||'');panel.querySelector('[data-pass]').value=String(get(K.pass,'')||'');panel.querySelector('[data-driver]').value=String(get(K.driver,'')||'');panel.querySelector('[data-role]').value=managerRole();panel.querySelector('[data-lead]').value=String(get(K.lead,4)||4);panel.querySelector('[data-do-race]').checked=selected('race');panel.querySelector('[data-do-spot]').checked=selected('spot');panel.querySelector('[data-do-heist]').checked=selected('heist');panel.querySelector('[data-do-milestone]').checked=msEnabled();
     const cityState=managerCitySettings();
     panel.querySelector('[data-city-list]').innerHTML=MANAGER_CITIES.map(city=>`<label style="display:inline-flex;align-items:center;gap:4px;width:47%;margin:2px 0"><input type="checkbox" data-heist-city="${city}" ${cityState[city]?'checked':''}> ${city}</label>`).join('');
     const r=jitterRange();panel.querySelector('[data-jmin]').value=String(r.min);panel.querySelector('[data-jmax]').value=String(r.max);
     panel.querySelector('[data-role]').addEventListener('change',()=>{const cityWrap=panel.querySelector('[data-city-wrap]');if(cityWrap)cityWrap.style.display=panel.querySelector('[data-role]').value==='leader'?'block':'none';});panel.querySelector('[data-do-heist]').addEventListener('change',render);panel.querySelectorAll('[data-heist-city]').forEach(x=>x.addEventListener('change',syncCitySettingsFromPanel));
-    panel.querySelector('[data-save]').onclick=()=>{savePanelSettings();syncCitySettingsFromPanel();set(K.doRace,panel.querySelector('[data-do-race]').checked);set(K.doSpot,panel.querySelector('[data-do-spot]').checked);set(K.doHeist,panel.querySelector('[data-do-heist]').checked);set(K.lead,Number(panel.querySelector('[data-lead]').value||4));let min=Math.max(0,Math.min(59,Math.round(Number(panel.querySelector('[data-jmin]').value)||0))),max=Math.max(0,Math.min(59,Math.round(Number(panel.querySelector('[data-jmax]').value)||0)));if(max<min)[min,max]=[max,min];set(K.jitterMin,min);set(K.jitterMax,max);if(!loggedOut())clearLoginSchedule();state('Instellingen opgeslagen');render();};
+    panel.querySelector('[data-save]').onclick=()=>{savePanelSettings();syncCitySettingsFromPanel();set(K.doRace,panel.querySelector('[data-do-race]').checked);set(K.doSpot,panel.querySelector('[data-do-spot]').checked);set(K.doHeist,panel.querySelector('[data-do-heist]').checked);set(K.doMilestone,panel.querySelector('[data-do-milestone]').checked);if(msEnabled()&&!get(K.milestoneNext,0))set(K.milestoneNext,Date.now());set(K.lead,Number(panel.querySelector('[data-lead]').value||4));let min=Math.max(0,Math.min(59,Math.round(Number(panel.querySelector('[data-jmin]').value)||0))),max=Math.max(0,Math.min(59,Math.round(Number(panel.querySelector('[data-jmax]').value)||0)));if(max<min)[min,max]=[max,min];set(K.jitterMin,min);set(K.jitterMax,max);if(!loggedOut())clearLoginSchedule();state('Instellingen opgeslagen');render();};
     panel.querySelector('[data-toggle]').onclick=()=>{const n=!on();set(K.on,n);if(!n){clearLoginSchedule();clearBatch();try{unsafeWindow.cc_api?.raceSet?.(false,'night-manager-stop');}catch(_){}try{unsafeWindow.mrbSpotRaidCoreV3?.setEnabled?.(false);}catch(_){}try{unsafeWindow.mrbHeistCoreControl?.setEnabled?.(false);}catch(_){}state('Handmatig gestopt');}else{clearLoginSchedule();clearBatch();state('Gestart · Heisttimer bepaalt volgende sessie');}render();setTimeout(tick,100);};
     render();
   }
   function render(){
     if(!panel?.isConnected){mount();return;} const enabled=on();panel.querySelector('[data-toggle]').textContent=enabled?'Stop':'Start';panel.querySelector('[data-on]').textContent=enabled?'Actief':'Uit';panel.querySelector('[data-status]').textContent=enabled?state():'Gestopt';
+    const msEl=panel.querySelector('[data-ms-status]');if(msEl)msEl.textContent=msStatus();
     const cityWrap=panel.querySelector('[data-city-wrap]');
     if(cityWrap) cityWrap.style.display=managerRole()==='leader'?'block':'none';
     panel.querySelectorAll('[data-heist-city]').forEach(x=>x.disabled=!panel.querySelector('[data-do-heist]').checked);
