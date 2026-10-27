@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MRB Gold COM Edition - Compatibility Test 1
-// @version      6.0.0-com-test1
+// @version      6.0.0-com-test4-race-driver
 // @description  COM testbasis: originele Gold-logica, uitsluitend op barafranca.com; Engelse selectors nog te valideren.
 // @author       Mrb
 // @include      http://*.barafranca.com/*
@@ -7499,11 +7499,18 @@ try {
 
   // ------------------ DRIVER FLOW ------------------
   function raceIsLeaderPage(){
-    const body = String(document.body?.innerText || '').replace(/\s+/g,' ').trim();
-    if (document.querySelector('input[name="racer2"], input[name="driver"]')) return true;
-    if (raceFindGoToInvitesButton()) return true;
-    if (raceFindSendInviteButton()) return true;
-    return /je\s*kan\s*hier\s*een\s*race\s*starten|you\s*can\s*start\s*a\s*race|racer\s*2|ga\s*naar\s*uitnodigingen|go\s*to\s*invites|uitnodiging\s*versturen|send\s*invite/i.test(body);
+    // COM: een zichtbare Accept-uitnodiging of Driver-autostap heeft voorrang.
+    // Algemene navigatielinks (Go to invites) zijn geen bewijs van een Leider-formulier.
+    const gameRoot = document.querySelector('#game_container') || document;
+    const body = String(gameRoot.innerText || '').replace(/\s+/g,' ').trim();
+    const visible = el => !!(el && (el.offsetParent !== null || el.getClientRects().length));
+    const driverAccept = Array.from(gameRoot.querySelectorAll('a, button, input[type="submit"], input[type="button"]'))
+      .some(el => visible(el) && /^(?:accept|accepteer)(?:\s|$)/i.test(raceButtonText(el)));
+    if (driverAccept || raceDriverHasRealCarStep()) return false;
+    // Alleen het daadwerkelijke uitnodigingsformulier bewijst dat dit een Leader-scherm is.
+    if (gameRoot.querySelector('input[name="racer2"], input[name="driver"]')) return true;
+    if (raceFindSendInviteButton() && /please\s+fill\s+in\s+the\s+names|you\s+can\s+start\s+a\s+race|je\s+kan\s+hier\s+een\s+race\s+starten/i.test(body)) return true;
+    return false;
   }
 
   function raceDriverHasRealCarStep(){
