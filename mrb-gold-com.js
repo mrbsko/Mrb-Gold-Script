@@ -1,6 +1,6 @@
 // ==UserScript==
-// @name         MRB Gold COM Edition - Compatibility Test 1
-// @version      6.0.0-com-test4-race-driver
+// @name         MRB Gold COM TEST5 Heist Driver
+// @version      6.0.0-com-test5-heist-driver
 // @description  COM testbasis: originele Gold-logica, uitsluitend op barafranca.com; Engelse selectors nog te valideren.
 // @author       Mrb
 // @include      http://*.barafranca.com/*
@@ -16187,7 +16187,18 @@ paint();
     if(cur!=='Onbekend')return cur!==inviteCity;
     return /niet\s+in\s+de\s+stad.*(?:reis\s+naar)|not\s+in\s+the\s+(?:right\s+)?city.*(?:travel\s+to)|reis\s+naar|travel\s+to/i.test(text());
   }
-  function acceptLink(){return [...document.querySelectorAll('a[href*="module=Heist"],button,input[type="submit"],input[type="button"]')].find(a=>/^(Accept|Accepteer)(?:\s+(?:invitation|uitnodiging))?$/i.test(norm(a.textContent||a.value)));}
+  // COM TEST5: dezelfde robuuste Accept-herkenning als het oude werkende COM-script.
+  // Alleen echte Heist-links accepteren; geen generieke knoppen van andere modules.
+  function acceptLink(){
+    return [...document.querySelectorAll('a[href*="module=Heist" i]')].find(a=>{
+      const label=norm(a.textContent||'');
+      const href=a.getAttribute('href')||'';
+      return /\b(?:Accept|Accepteer)\b/i.test(label) &&
+        !/\b(?:Decline|Reject|Cancel|Weiger|Annuleer)\b/i.test(label) &&
+        !/\b(?:Lead a Heist|Leid een heist)\b/i.test(label) &&
+        /module=Heist/i.test(href);
+    });
+  }
   function finalStart(){return [...document.querySelectorAll('input[type="submit"],button')].find(b=>/^(Start Heist|Start overval)$/i.test(norm(b.value||b.textContent)));}
   function transferLink(){return [...document.querySelectorAll('a[href^="javascript:MakeTransfer("],a[onclick*="MakeTransfer"]')].find(a=>/Make Transfer|Verstuur|Transfer/i.test(norm(a.textContent))||/MakeTransfer/i.test((a.getAttribute('href')||'')+(a.getAttribute('onclick')||'')));}
 
@@ -16423,7 +16434,10 @@ paint();
     if(!enabled()||role()!=='driver')return;
     if(waitForRaceBefore(driverAcceptLoop,'Heist-uitnodiging'))return;
     if(onHeist()){driverFinalize();return;}
-    if(!onGroup()){load('/?module=GroupCrimes');next(driverAcceptLoop,rand(1500,3000));return;}
+    // COM TEST5: zichtbare Heist-uitnodiging gaat voor URL/pagina-herkenning.
+    // De COM-site kan via AJAX al GroupCrimes tonen terwijl location nog op information.php staat.
+    const visibleInvite=acceptLink();
+    if(!onGroup()&&!visibleInvite){load('/?module=GroupCrimes');next(driverAcceptLoop,rand(1500,3000));return;}
     const inviteCity=driverInviteCity();
     const cur=currentCity();
     if(driverMustTravelTo(inviteCity)){
@@ -16433,7 +16447,7 @@ paint();
       next(travelFlow,rand(900,1600));
       return;
     }
-    const acc=acceptLink();
+    const acc=visibleInvite||acceptLink();
     if(acc){
       // TEST27J: pas een echte uitnodiging maakt Heist atomair. Tot dit moment was
       // de Driver-probe volledig yieldable en kon Race zonder vertraging voorgaan.
