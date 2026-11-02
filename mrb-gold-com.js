@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         MRB Gold COM TEST5 Heist Driver
+// @name         MRB Gold COM TEST7 Race Safe Buttons
 // @version      6.0.0-com-test5-heist-driver
 // @description  COM testbasis: originele Gold-logica, uitsluitend op barafranca.com; Engelse selectors nog te valideren.
 // @author       Mrb
@@ -7203,9 +7203,26 @@ try {
     return String(b?.value || b?.textContent || b?.getAttribute?.('title') || b?.getAttribute?.('alt') || '').replace(/\s+/g,' ').trim();
   }
 
+  // COM TEST7: uitsluitend echte race-acties binnen het raceformulier.
+  // Een profiel-link zoals /user.php?name=Race mag nooit als startknop gelden.
+  function raceIsActionControl(el){
+    if (!el || el.disabled || el.offsetParent === null) return false;
+    if (!/races\.php/i.test(String(location.pathname || ''))) return false;
+    if (el.matches('a')) {
+      const href = String(el.getAttribute('href') || '').trim();
+      if (!href || href === '#' || /^javascript:/i.test(href)) return false;
+      let url;
+      try { url = new URL(href, location.href); } catch (_) { return false; }
+      if (url.origin !== location.origin || !/\/races\.php$/i.test(url.pathname)) return false;
+    } else if (!el.matches('input[type="submit"],button[type="submit"],button:not([type]),input[type="button"]')) {
+      return false;
+    }
+    return true;
+  }
+
   function raceFindButtonByText(patterns){
     const candidates = Array.from(document.querySelectorAll('input[type="submit"], button, input[type="button"], a'))
-      .filter(b => !b.disabled && b.offsetParent !== null);
+      .filter(raceIsActionControl);
     return candidates.find(b => patterns.some(re => re.test(raceButtonText(b)))) || null;
   }
 
@@ -7231,9 +7248,8 @@ try {
   function raceFindRaceStartButton(){
     return raceFindButtonByText([
       /^race!!!$/i,
-      /^race!?$/i,
-      /start\s*race/i,
-      /starten/i
+      /^start\s*race$/i,
+      /^starten$/i
     ]);
   }
 
@@ -7453,9 +7469,7 @@ try {
 
     if (raceRecoverStartedTravelBlock('Race-start')) return;
 
-    const btn = raceFindRaceStartButton()
-      || document.querySelector('input[type="submit"][value="Race!!!"]')
-      || document.querySelector('input[type="submit"][name="race"]');
+    const btn = raceFindRaceStartButton();
 
     if (btn){
       raceSafeClick(btn);
