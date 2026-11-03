@@ -1,6 +1,6 @@
 // ==UserScript==
-// @name         MRB Gold COM TEST7 Race Safe Buttons
-// @version      6.0.0-com-test5-heist-driver
+// @name         MRB Gold COM TEST8 Race SPA Route Fix
+// @version      6.0.0-com-test8-race-spa
 // @description  COM testbasis: originele Gold-logica, uitsluitend op barafranca.com; Engelse selectors nog te valideren.
 // @author       Mrb
 // @include      http://*.barafranca.com/*
@@ -7207,13 +7207,18 @@ try {
   // Een profiel-link zoals /user.php?name=Race mag nooit als startknop gelden.
   function raceIsActionControl(el){
     if (!el || el.disabled || el.offsetParent === null) return false;
-    if (!/races\.php/i.test(String(location.pathname || ''))) return false;
+    // COM gebruikt index.php#/races.php: location.pathname is dus /index.php.
+    const activeRoute = String(location.hash || location.pathname || '').replace(/^#/, '');
+    if (!/^\/?races\.php(?:[?#]|$)/i.test(activeRoute)) return false;
     if (el.matches('a')) {
       const href = String(el.getAttribute('href') || '').trim();
       if (!href || href === '#' || /^javascript:/i.test(href)) return false;
       let url;
       try { url = new URL(href, location.href); } catch (_) { return false; }
-      if (url.origin !== location.origin || !/\/races\.php$/i.test(url.pathname)) return false;
+      if (url.origin !== location.origin) return false;
+      const targetRoute = String(url.hash || url.pathname || '').replace(/^#/, '');
+      // Alleen echte race-navigatie, nooit user.php?name=Race.
+      if (!/^\/?races\.php(?:[?#]|$)/i.test(targetRoute)) return false;
     } else if (!el.matches('input[type="submit"],button[type="submit"],button:not([type]),input[type="button"]')) {
       return false;
     }
@@ -7246,11 +7251,14 @@ try {
   }
 
   function raceFindRaceStartButton(){
-    return raceFindButtonByText([
+    const btn = raceFindButtonByText([
       /^race!!!$/i,
       /^start\s*race$/i,
       /^starten$/i
     ]);
+    if (btn) return btn;
+    return Array.from(document.querySelectorAll('input[type="submit"],button[type="submit"],button:not([type])'))
+      .find(el => raceIsActionControl(el) && /^race$/i.test(raceButtonText(el))) || null;
   }
 
   // 5.8.35: wanneer de server een oude/achtergebleven gestarte race toont,
