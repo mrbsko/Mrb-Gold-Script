@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MRB Gold Edition TEST30N - Obay Bid Submit Rewrite
-// @version      6.0.0-test30O-bg-special-lex-ray
+// @version      6.0.0-test30O-bg-special-independent
 // @description  MRB Gold: centrale Unified Scheduler, navigatie-owner, retry-circuitbreaker en strikte actieguards.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -4325,30 +4325,35 @@ Naam3"></textarea><br><br>
         def:level(name,'def',dp),
         weapon,
         vest,
-        special:specialInfo(id)
+        special:specialInfo(id,name)
       };
     }); return result;
   }
-  function specialInfo(id){
-    // Lees de echte Special-rij. Niet afleiden uit Attack/Defence of totale level.
-    const forms=[...document.querySelectorAll('form')].filter(f=>
-      f.querySelector('input[name="bgid"]')?.value===String(id));
-    const row=forms.map(f=>f.closest('tr')).find(r=>r && /\b(?:speciaal|special)\b/i.test(clean(r.textContent)));
-    if(!row)return {available:false,value:null};
-    const bar=row.querySelector('[id*="special" i] p,[id*="special" i],.progress-bar');
-    const text=clean(bar?.textContent||'');
-    const match=text.match(/(?:^|\s)(\d{1,2})(?:\s*\/\s*\d{1,2})?(?:\s|$)/);
-    // Zonder eenduidige actuele waarde nooit blind trainen.
-    return {available:true,value:match?Number(match[1]):null};
+  function specialInfo(id,name){
+    // Omerta toont Special als eigen progress-bar; deze hoeft niet binnen een <tr> te staan.
+    const bar=document.querySelector(`#pgb-bar-special_${name} p, #pgb-bar-special_${name}, [id="pgb-bar-special_${name.toLowerCase()}"] p`);
+    const raw=clean(bar?.textContent||'');
+    const match=raw.match(/^(\d{1,2})(?:\s*\/\s*\d{1,2})?$/);
+    if(match) return {available:true,value:Number(match[1])};
+    // Fallback: alleen de eigen Special-rij in de bodyguardsectie gebruiken.
+    const form=specialForm(id,name);
+    const row=form?.closest('tr');
+    const m=clean(row?.textContent||'').match(/(?:speciaal|special)\s*:?\s*(\d{1,2})(?:\s*\/\s*\d{1,2})?/i);
+    return {available:!!bar||!!form,value:m?Number(m[1]):null};
   }
-  function specialTrain(id){
+  function specialForm(id,name){
     const forms=[...document.querySelectorAll('form')].filter(f=>
       f.querySelector('input[name="bgid"]')?.value===String(id));
-    const f=forms.find(f=>{
-      const a=String(f.querySelector('input[name="action"]')?.value||'').toLowerCase();
-      return a==='train_special' && /\b(?:speciaal|special)\b/i.test(clean(f.closest('tr')?.textContent));
-    });
-    const button=f?.querySelector('input[type="submit"],button[type="submit"]');
+    // De server-action is leidend; de game gebruikt niet altijd tabellen.
+    const exact=forms.find(f=>String(f.querySelector('input[name="action"]')?.value||'').toLowerCase()==='train_special');
+    if(exact)return exact;
+    // Alleen binnen een expliciet als Special gemarkeerde rij terugvallen.
+    return forms.find(f=>/\b(?:speciaal|special)\b/i.test(clean(f.closest('tr')?.textContent)) &&
+      /^train_/i.test(String(f.querySelector('input[name="action"]')?.value||'')))||null;
+  }
+  function specialTrain(id,name){
+    const f=specialForm(id,name);
+    const button=f?.querySelector('input[type="submit"],input[type="button"],button[type="submit"],button:not([type])');
     if(!button||button.disabled||f.querySelector('span[data-timecb="bodyguard"]'))return false;
     return clickWithBgConfirm(button);
   }
@@ -4502,13 +4507,16 @@ Naam3"></textarea><br><br>
       }
       lastStatus='Navigeren naar Bodyguards voor gereedstaande actie';paint();navigate();return;
     }
-    const c=cfg(); if(!c.lineup.length){setDetrainPending(false);setWorkState(false,0);lastStatus='Geen bodyguards geselecteerd';paint();return;}
+    const c=cfg();
+    const specialNames=['Lex','Ray'].filter(n=>special[n]?.use);
+    const selectedNames=[...new Set([...c.lineup,...specialNames])];
+    if(!selectedNames.length){setDetrainPending(false);setWorkState(false,0);lastStatus='Geen bodyguards geselecteerd';paint();return;}
     busy=true;
     try{
       const owned=readOwned(),avail=available();
 
       // Eerst ontbrekende bodyguards afhandelen zoals voorheen.
-      for(const name of c.lineup){
+      for(const name of selectedNames){
         if(owned[name])continue;
         if(avail.includes(name)&&hire(name)){
           lastStatus=`${name} wordt aangenomen`; GM_Set(K_LAST,Date.now()); localCooldownUntil=Date.now()+7000; setWorkState(true,localCooldownUntil); paint(); return;
@@ -4519,13 +4527,16 @@ Naam3"></textarea><br><br>
       const detrainJobs=[];
       const trainJobs=[];
       const equipJobs=[];
-      for(const name of c.lineup){
+      for(const name of selectedNames){
         const o=owned[name]; if(!o)continue;
-        const eq=equipmentAction(name,o);
-        if(eq)equipJobs.push({name,id:o.id,action:eq});
-        const stats=statActions(name,o,c.targets[name]);
-        for(const a of stats.detrain)detrainJobs.push({name,id:o.id,action:a});
-        for(const a of stats.train)trainJobs.push({name,id:o.id,action:a});
+        // Special-only selectie verandert geen Attack/Defence en koopt geen equipment.
+        if(c.lineup.includes(name)){
+          const eq=equipmentAction(name,o);
+          if(eq)equipJobs.push({name,id:o.id,action:eq});
+          const stats=statActions(name,o,c.targets[name]);
+          for(const a of stats.detrain)detrainJobs.push({name,id:o.id,action:a});
+          for(const a of stats.train)trainJobs.push({name,id:o.id,action:a});
+        }
         if((name==='Lex'||name==='Ray') && special[name]?.use){
           const target=clamp(special[name].target);
           if(o.special?.available && o.special.value!==null && o.special.value<target){
@@ -4550,7 +4561,7 @@ Naam3"></textarea><br><br>
       // timer mogen UNTRAIN-acties gewoon doorgaan.
       if(trainingWait<=0 && trainJobs.length){
         const j=trainJobs[0],n=j.action;
-        if((n[0]==='train_special'?specialTrain(j.id):clickAction(j.id,n[0]))){
+        if((n[0]==='train_special'?specialTrain(j.id,j.name):clickAction(j.id,n[0]))){
           lastStatus=`${j.name}: ${n[1]}`; GM_Set(K_LAST,Date.now());
           localCooldownUntil=Date.now()+1800;
           setWorkState(true,localCooldownUntil); paint(); return;
@@ -4583,7 +4594,7 @@ Naam3"></textarea><br><br>
         lastStatus=`Wachten op trainingstimer; geen de-trainwerk meer`; paint(); return;
       }
 
-      const unknownSpecial=c.lineup.some(name=>(name==='Lex'||name==='Ray') && special[name]?.use &&
+      const unknownSpecial=specialNames.some(name=>(name==='Lex'||name==='Ray') && special[name]?.use &&
         (!owned[name]?.special?.available || owned[name]?.special?.value===null));
       if(unknownSpecial){
         setWorkState(true,Date.now()+60000);
