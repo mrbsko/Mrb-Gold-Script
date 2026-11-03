@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MRB Heist Night Manager
-// @version      2.2.2
+// @version      2.2.5
 // @description  Standalone login-detectie fix: Night Manager velden tellen niet als game-login; Race/Spot/Heist gebruiken dezelfde betrouwbare gate-status.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -3049,7 +3049,17 @@ try {
     const password=[...document.querySelectorAll('input[type="password"]')].find(gameVisible);
     if(password) return true;
     const loginForm=[...document.querySelectorAll('form[action*="login" i],#loginModal')].find(gameVisible);
-    return !!loginForm;
+    if(loginForm) return true;
+    // Publieke homepage heeft alleen LOGIN/SIGNUP knoppen; het loginformulier
+    // verschijnt pas na een klik. De vorige detectie zag dit als ingelogd.
+    const publicLogin=[...document.querySelectorAll('a,button')].some(el=>
+      gameVisible(el) && /^(?:login|log in|inloggen|sign in)$/i.test(norm(el.textContent||'')));
+    const publicSignup=[...document.querySelectorAll('a,button')].some(el=>
+      gameVisible(el) && /^(?:signup|sign up|registreren|register)$/i.test(norm(el.textContent||'')));
+    const accountControls=[...document.querySelectorAll('a,button')].some(el=>
+      gameVisible(el) && /^(?:logout|log out|uitloggen)$/i.test(norm(el.textContent||'')));
+    if(publicLogin && publicSignup && !accountControls) return true;
+    return false;
   }
   function gateVisible(){
     const t=norm(document.body?.innerText||'');
@@ -3445,7 +3455,7 @@ try {
     if(panel?.isConnected)return;
     document.getElementById('mrb-night-manager-panel')?.remove();
     panel=document.createElement('div');panel.id='mrb-night-manager-panel';
-    panel.innerHTML=`<b class="title">MRB Heist Night Manager Standalone v2.2.4</b><div class="row"><button data-toggle>Start</button><strong data-on>Uit</strong></div><div class="status" data-status>Gestopt</div><label>Gebruikersnaam<br><input data-user type="text" autocomplete="off" data-lpignore="true" data-1p-ignore="true" style="width:95%"></label><label>Wachtwoord<br><input data-pass type="password" autocomplete="new-password" data-lpignore="true" data-1p-ignore="true" style="width:95%"></label><label>Driver naam<br><input data-driver type="text" autocomplete="off" placeholder="Naam van Driver" style="width:95%"></label><label>Rol van dit account<br><select data-role style="width:95%"><option value="leader">Leider</option><option value="driver">Driver</option></select></label><div class="row" style="flex-wrap:wrap"><label style="margin:0"><input data-do-race type="checkbox"> Race</label><label style="margin:0"><input data-do-spot type="checkbox"> Spot Overval/Raid</label><label style="margin:0"><input data-do-heist type="checkbox"> Heist</label></div><div data-city-wrap style="margin-top:7px;border-top:1px solid rgba(255,214,102,.18);padding-top:6px"><b style="font-size:11px">Heist-steden (Leider)</b><div data-city-list style="margin-top:3px"></div><div class="small" style="margin-top:4px">Alleen aangevinkte steden worden gebruikt. Is de huidige stad niet beschikbaar, dan reist de Leider automatisch naar een aangevinkte stad waar Heist wel beschikbaar is.</div></div><div class="row"><label><input data-do-milestone type="checkbox"> Milestone Planner</label></div><label>Meetinterval<br><select data-ms-interval><option value="5">5 minuten</option><option value="15">15 minuten</option><option value="30">30 minuten</option><option value="60">60 minuten</option></select></label><div data-ms-status class="small">Nog geen meting</div><div class="small">Dagmodus: meten zonder automatisch uitloggen.</div><label><input data-auto-sessions type="checkbox"> Nachtmodus: automatisch uitloggen en inloggen</label><div class="small">Standaard uit. Alleen in nachtmodus beheert dit script de login en logout.</div><label>Inloggen vóór Heist Nu<br><select data-lead><option value="2">2 minuten</option><option value="3">3 minuten</option><option value="4">4 minuten</option><option value="5">5 minuten</option><option value="7">7 minuten</option><option value="10">10 minuten</option></select></label><div class="row"><span>Extra eerder</span><input data-jmin type="number" min="0" max="59" style="width:42px"><span>t/m</span><input data-jmax type="number" min="0" max="59" style="width:42px"><span>s</span></div><button data-save style="margin-top:7px">Opslaan</button><div class="small">Zelfstandig: Race, Spot Overval en Heist zitten in dit script. v2.1.2: login en Driver zijn strikt gescheiden; credentials wijzigen alleen via Opslaan. MRB Gold moet uit staan.</div>`;
+    panel.innerHTML=`<b class="title">MRB Heist Night Manager Standalone v2.2.6</b><div class="row"><button data-toggle>Start</button><strong data-on>Uit</strong></div><div class="status" data-status>Gestopt</div><div class="status" data-next-login style="border:1px solid #65552e;border-radius:5px;padding:7px;margin-top:7px;font-weight:bold">Volgende login: nog niet gepland</div><label>Gebruikersnaam<br><input data-user type="text" autocomplete="off" data-lpignore="true" data-1p-ignore="true" style="width:95%"></label><label>Wachtwoord<br><input data-pass type="password" autocomplete="new-password" data-lpignore="true" data-1p-ignore="true" style="width:95%"></label><label>Driver naam<br><input data-driver type="text" autocomplete="off" placeholder="Naam van Driver" style="width:95%"></label><label>Rol van dit account<br><select data-role style="width:95%"><option value="leader">Leider</option><option value="driver">Driver</option></select></label><div class="row" style="flex-wrap:wrap"><label style="margin:0"><input data-do-race type="checkbox"> Race</label><label style="margin:0"><input data-do-spot type="checkbox"> Spot Overval/Raid</label><label style="margin:0"><input data-do-heist type="checkbox"> Heist</label></div><div data-city-wrap style="margin-top:7px;border-top:1px solid rgba(255,214,102,.18);padding-top:6px"><b style="font-size:11px">Heist-steden (Leider)</b><div data-city-list style="margin-top:3px"></div><div class="small" style="margin-top:4px">Alleen aangevinkte steden worden gebruikt. Is de huidige stad niet beschikbaar, dan reist de Leider automatisch naar een aangevinkte stad waar Heist wel beschikbaar is.</div></div><div class="row"><label><input data-do-milestone type="checkbox"> Milestone Planner</label></div><label>Meetinterval<br><select data-ms-interval><option value="5">5 minuten</option><option value="15">15 minuten</option><option value="30">30 minuten</option><option value="60">60 minuten</option></select></label><div data-ms-status class="small">Nog geen meting</div><div class="small">Dagmodus: meten zonder automatisch uitloggen.</div><label><input data-auto-sessions type="checkbox"> Nachtmodus: automatisch uitloggen en inloggen</label><div class="small">Standaard uit. Alleen in nachtmodus beheert dit script de login en logout.</div><label>Inloggen vóór Heist Nu<br><select data-lead><option value="2">2 minuten</option><option value="3">3 minuten</option><option value="4">4 minuten</option><option value="5">5 minuten</option><option value="7">7 minuten</option><option value="10">10 minuten</option></select></label><div class="row"><span>Extra eerder</span><input data-jmin type="number" min="0" max="59" style="width:42px"><span>t/m</span><input data-jmax type="number" min="0" max="59" style="width:42px"><span>s</span></div><button data-save style="margin-top:7px">Opslaan</button><div class="small">Zelfstandig: Race, Spot Overval en Heist zitten in dit script. v2.1.2: login en Driver zijn strikt gescheiden; credentials wijzigen alleen via Opslaan. MRB Gold moet uit staan.</div>`;
     // UI-only: verplaats bestaande velden naar inklapbare secties; event handlers blijven intact.
     const sectionDefs = [
       ['account','Algemene instellingen',['[data-user]','[data-pass]','[data-driver]','[data-role]']],
@@ -3514,6 +3524,18 @@ try {
   }
   function render(){
     if(!panel?.isConnected){mount();return;} const enabled=on();panel.querySelector('[data-toggle]').textContent=enabled?'Stop':'Start';panel.querySelector('[data-on]').textContent=enabled?'Actief':'Uit';panel.querySelector('[data-status]').textContent=enabled?state():'Gestopt';
+    const loginEl=panel.querySelector('[data-next-login]');
+    if(loginEl){
+      const at=Number(get(K.loginAt,0)||0);
+      if(!enabled)loginEl.textContent='Volgende login: Night Manager staat uit';
+      else if(!autoSessions())loginEl.textContent='Volgende login: dagmodus (automatisch inloggen uit)';
+      else if(at>0){
+        const remaining=Math.max(0,at-Date.now());
+        const mins=Math.floor(remaining/60000),secs=Math.floor((remaining%60000)/1000);
+        const when=new Date(at).toLocaleString('nl-NL',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'});
+        loginEl.textContent=`Verwachte login: ${when} (over ${mins}m ${String(secs).padStart(2,'0')}s)`;
+      }else loginEl.textContent='Verwachte login: nog niet berekend';
+    }
     const msEl=panel.querySelector('[data-ms-status]');if(msEl)msEl.textContent=msStatus();
     const cityWrap=panel.querySelector('[data-city-wrap]');
     if(cityWrap) cityWrap.style.display=managerRole()==='leader'?'block':'none';
