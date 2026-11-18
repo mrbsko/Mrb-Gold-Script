@@ -1,6 +1,6 @@
 // ==UserScript==
-// @name         MRB Gold COM TEST8 BG Special Lex Ray
-// @version      6.0.0-com-test8-bg-special
+// @name         MRB Gold COM TEST10 Invite City Travel Guard
+// @version      6.0.0-com-test9-invite-city
 // @description  COM testbasis: originele Gold-logica, uitsluitend op barafranca.com; Engelse selectors nog te valideren.
 // @author       Mrb
 // @include      http://*.barafranca.com/*
@@ -18,7 +18,6 @@
 // @run-at       document-end
 // ==/UserScript==
 
-// COM TEST8 BG Special: Lex en Ray hebben optionele, onafhankelijke Special-trainingsdoelen; bestaande COM-modules blijven intact.
 // Release 6.0.0-test30O: Heist Leader fast-start. Zodra een verzonden Heist-uitnodiging actief is, mag de Leader-wachtflow niet meer door Session Manager batch-gates minutenlang worden uitgesteld. De Leader controleert acceptatie elke 8-12s. Op GroupCrimes krijgt een zichtbare finale Start Heist-knop absolute voorrang: Heist claimt ownership en start direct, voordat Race-wachtlogica wordt toegepast. Passief wachten blijft op Mijn Account zodat Crimes/Cars tussendoor kunnen blijven werken.
 // Release 6.0.0-test30N: Spot Leader second-pass structureel hersteld. Na de eerste Start/Update blijft de verplichte tweede doorgang actief, ook wanneer de server al cooldown toont of op de tweede detailweergave Driver/Auto niet meer wordt herhaald. Dispatcher kan een verse second-pass wakker houden zonder Spot=Nu te vereisen. Geen wijzigingen aan Driver-selectie, doelkeuze of Obay.
 // Release 6.0.0-test30M: Obay-biedbevestiging schoon herschreven. De zichtbare JQI-popup kiest exact 'Bid Anonymously' of de default/naamgebonden 'Bid as <speler>'-knop. Native klik wordt eerst gebruikt; alleen als modal en serverrow aantoonbaar ongewijzigd blijven volgt maximaal één delegated jQuery-click op dezelfde knop. Een bod telt pas na echte UI/serverstate-wijziging. Scan-, budget-, scheduler- en 403-logica blijven verder ongewijzigd.
@@ -1011,6 +1010,15 @@ class MRBPerfMutationObserver extends MutationObserver {
     });
   })();
 
+
+  // TEST11: Enteren/Slots are continuous page-bound activities.
+  // A scheduled refresh or idle-home return must never interrupt them.
+  function mrbContinuousPageActivity(){
+    try { return GM_Get('enteren_on',false)===true || GM_Get('slots_auto_on',false)===true; }
+    catch(_) { return false; }
+  }
+  unsafeWindow.mrbContinuousPageActivity=mrbContinuousPageActivity;
+
   // ---------- SPRINT 4.9: CENTRALE NAVIGATIEPOORT ----------
   // Alle modules die mrbNavigate gebruiken komen eerst langs deze poort.
   // De poort verandert geen moduleflow; hij voorkomt alleen navigatie wanneer
@@ -1286,6 +1294,7 @@ class MRBPerfMutationObserver extends MutationObserver {
       try { if (unsafeWindow.mrbSessionSafeMode?.active?.()) return true; } catch(_) {}
       const now = Date.now();
       const source = clean(meta?.source || meta?.owner || 'onbekend');
+      if (mrbContinuousPageActivity() && source==='unified-idle-home') return false;
       const crimesCarsPriority = source.toLowerCase().includes('crimes-cars');
       const yieldNavigation = meta?.yield === true && /information\.php/i.test(String(target||''));
       const wanted = canonical(target);
@@ -4141,7 +4150,7 @@ Naam3"></textarea><br><br>
   const K_NEEDS_WORK='mrb_bg_trainer_needs_work_v1';
   const K_NEXT_CHECK='mrb_bg_trainer_next_check_v1';
   const K_DETRAIN_PENDING='mrb_bg_trainer_detrain_pending_v1';
-  const K_SPECIAL='mrb_bg_trainer_special_targets_v1';
+  const K_BG_SWAP='mrb_bg_trainer_swap_pending_v1';
 
   const ALL=['Lee','Vic','Ike','Joe','Lex','Ray'];
   const META={
@@ -4175,6 +4184,7 @@ Naam3"></textarea><br><br>
   needsWork=needsWork===null ? true : !!needsWork;
   let nextCheckAt=Math.max(0,Number(GM_Get(K_NEXT_CHECK,0))||0);
   let detrainPending=!!GM_Get(K_DETRAIN_PENDING,false);
+  let swapPending=GM_Get(K_BG_SWAP,null);
   if(on && needsWork===false && !nextCheckAt) nextCheckAt=Date.now();
   let lastStatus='Gereed';
   let lastRouteHref=String(location.href);
@@ -4198,12 +4208,6 @@ Naam3"></textarea><br><br>
     catch(e){ return defaultCustom(); }
   }
   let custom=loadCustom();
-  // Special is opt-in, ook voor bestaande presets. Bestaande doelen blijven intact.
-  function loadSpecial(){
-    try { const x=JSON.parse(String(GM_Get(K_SPECIAL,'')||'')); return x&&typeof x==='object'?x:{}; }
-    catch(_){ return {}; }
-  }
-  let special=loadSpecial();
   const clamp=n=>Math.max(0,Math.min(10,Math.floor(Number(n)||0)));
   const clean=s=>String(s||'').replace(/\s+/g,' ').trim();
   const sleep=ms=>new Promise(r=>mrbSetTimeout(r,ms));
@@ -4228,8 +4232,6 @@ Naam3"></textarea><br><br>
       <input id="mrbBgEquip" type="checkbox" ${autoEquip?'checked':''}> Automatisch wapen/vest kopen
     </label>
     <div id="mrbBgCustom" style="margin-top:7px;"></div>
-    <div style="margin-top:8px;font-size:11px"><b>Speciaal (Lex / Ray)</b></div>
-    <div id="mrbBgSpecial"></div>
     <div class="gm-row" style="gap:7px;margin-top:7px;">
       <button id="mrbBgPriority" class="gm-btn"></button>
       <button id="mrbBgSave" class="gm-btn">Save</button>
@@ -4250,15 +4252,6 @@ Naam3"></textarea><br><br>
         <span>Verd.</span><input data-bg-def="${n}" type="number" min="0" max="10" value="${clamp(x.def)}" style="width:36px;">
       </div>`;
     }).join('');
-    // Ook bij presets zijn de Special-doelen afzonderlijk instelbaar.
-    const specialRoot=block.querySelector('#mrbBgSpecial');
-    if(specialRoot) specialRoot.innerHTML=['Lex','Ray'].map(n=>{
-      const x=special[n]||{};
-      return `<div style="display:flex;gap:5px;align-items:center;margin-top:4px;">
-        <label style="flex:1"><input type="checkbox" data-bg-special-use="${n}" ${x.use?'checked':''}> ${n} Speciaal</label>
-        <span>Doel</span><input data-bg-special-target="${n}" type="number" min="0" max="10" value="${clamp(x.target||0)}" style="width:40px;">
-      </div>`;
-    }).join('');
   }
   renderCustom();
 
@@ -4272,12 +4265,8 @@ Naam3"></textarea><br><br>
         def:clamp(block.querySelector(`[data-bg-def="${n}"]`)?.value)
       });
     }
-    for(const n of ['Lex','Ray']) special[n]={
-      use:!!block.querySelector(`[data-bg-special-use="${n}"]`)?.checked,
-      target:clamp(block.querySelector(`[data-bg-special-target="${n}"]`)?.value)
-    };
-    GM_Set(K_SPECIAL,JSON.stringify(special));
     GM_Set(K_MODE,mode); GM_Set(K_EQUIP,autoEquip); GM_Set(K_CUSTOM,JSON.stringify(custom)); GM_Set(K_PRIORITY,priorityMode);
+    swapPending=null; GM_Set(K_BG_SWAP,null);
     setWorkState(true,Date.now()); lastStatus='Instellingen opgeslagen'; paint();
   }
 
@@ -4324,38 +4313,9 @@ Naam3"></textarea><br><br>
         att:level(name,'att',ap),
         def:level(name,'def',dp),
         weapon,
-        vest,
-        special:specialInfo(id,name)
+        vest
       };
     }); return result;
-  }
-  function specialInfo(id,name){
-    // Omerta toont Special als eigen progress-bar; deze hoeft niet binnen een <tr> te staan.
-    const bar=document.querySelector(`#pgb-bar-special_${name} p, #pgb-bar-special_${name}, [id="pgb-bar-special_${name.toLowerCase()}"] p`);
-    const raw=clean(bar?.textContent||'');
-    const match=raw.match(/^(\d{1,2})(?:\s*\/\s*\d{1,2})?$/);
-    if(match) return {available:true,value:Number(match[1])};
-    // Fallback: alleen de eigen Special-rij in de bodyguardsectie gebruiken.
-    const form=specialForm(id,name);
-    const row=form?.closest('tr');
-    const m=clean(row?.textContent||'').match(/(?:speciaal|special)\s*:?\s*(\d{1,2})(?:\s*\/\s*\d{1,2})?/i);
-    return {available:!!bar||!!form,value:m?Number(m[1]):null};
-  }
-  function specialForm(id,name){
-    const forms=[...document.querySelectorAll('form')].filter(f=>
-      f.querySelector('input[name="bgid"]')?.value===String(id));
-    // De server-action is leidend; de game gebruikt niet altijd tabellen.
-    const exact=forms.find(f=>String(f.querySelector('input[name="action"]')?.value||'').toLowerCase()==='train_special');
-    if(exact)return exact;
-    // Alleen binnen een expliciet als Special gemarkeerde rij terugvallen.
-    return forms.find(f=>/\b(?:speciaal|special)\b/i.test(clean(f.closest('tr')?.textContent)) &&
-      /^train_/i.test(String(f.querySelector('input[name="action"]')?.value||'')))||null;
-  }
-  function specialTrain(id,name){
-    const f=specialForm(id,name);
-    const button=f?.querySelector('input[type="submit"],input[type="button"],button[type="submit"],button:not([type])');
-    if(!button||button.disabled||f.querySelector('span[data-timecb="bodyguard"]'))return false;
-    return clickWithBgConfirm(button);
   }
   function available(){ return [...document.querySelectorAll('input[name="bgtype"]')].map(x=>x.value); }
   function cooldownEnd(){
@@ -4436,6 +4396,7 @@ Naam3"></textarea><br><br>
     if(currentDefense<targetDefense)train.push(['train_defense',`verdediging ${currentDefense}/${targetDefense}`]);
     return {detrain,train};
   }
+  function setSwapPending(value){ swapPending=value||null; GM_Set(K_BG_SWAP,swapPending); }
   function setDetrainPending(value){
     detrainPending=!!value;
     GM_Set(K_DETRAIN_PENDING,detrainPending);
@@ -4458,9 +4419,7 @@ Naam3"></textarea><br><br>
     // De-trainen heeft geen servertrainingstimer. Als uit de laatste inspectie
     // bekend is dat er surplus is, mag Bodyguard ook tijdens een train-cooldown
     // terugkomen voor een untrain-actie.
-    const due=detrainPending
-      ? Math.max(nextCheckAt,localCooldownUntil)
-      : Math.max(nextCheckAt,cooldownEnd(),localCooldownUntil);
+    const due=Math.max(nextCheckAt,cooldownEnd(),localCooldownUntil);
     return Date.now()>=due;
   }
   function nextDueAt(){
@@ -4468,9 +4427,7 @@ Naam3"></textarea><br><br>
     if(!needsWork){
       return nextCheckAt>Date.now() ? nextCheckAt : Date.now()+250;
     }
-    const due=detrainPending
-      ? Math.max(nextCheckAt,localCooldownUntil)
-      : Math.max(nextCheckAt,cooldownEnd(),localCooldownUntil);
+    const due=Math.max(nextCheckAt,cooldownEnd(),localCooldownUntil);
     return due>Date.now() ? due : Date.now()+250;
   }
   function paint(){
@@ -4484,7 +4441,7 @@ Naam3"></textarea><br><br>
     const wait=remaining();
     const ptxt=priorityMode==='strict'?'stipt':'normaal';
     const planState=!needsWork?'doelen bereikt':(actionDue()?'actie gereed':`gepland over ${fmt(Math.max(0,nextDueAt()-Date.now()))}`);
-    block.querySelector('#mrbBgInfo').textContent=(wait?`${lastStatus} • volgende actie over ${fmt(wait)}`:lastStatus)+` • ${planState} • prioriteit: ${ptxt} • omtrainen: exact doel • ontbrekende BGs: automatisch kopen • ontslaan: uit`;
+    block.querySelector('#mrbBgInfo').textContent=(wait?`${lastStatus} • volgende actie over ${fmt(wait)}`:lastStatus)+` • ${planState} • prioriteit: ${ptxt} • omtrainen: geleidelijk (1 level per training) • ontbrekende BGs: automatisch kopen • ontslaan: uit`;
   }
 
   async function tick(force=false){
@@ -4507,16 +4464,13 @@ Naam3"></textarea><br><br>
       }
       lastStatus='Navigeren naar Bodyguards voor gereedstaande actie';paint();navigate();return;
     }
-    const c=cfg();
-    const specialNames=['Lex','Ray'].filter(n=>special[n]?.use);
-    const selectedNames=[...new Set([...c.lineup,...specialNames])];
-    if(!selectedNames.length){setDetrainPending(false);setWorkState(false,0);lastStatus='Geen bodyguards geselecteerd';paint();return;}
+    const c=cfg(); if(!c.lineup.length){setDetrainPending(false);setWorkState(false,0);lastStatus='Geen bodyguards geselecteerd';paint();return;}
     busy=true;
     try{
       const owned=readOwned(),avail=available();
 
       // Eerst ontbrekende bodyguards afhandelen zoals voorheen.
-      for(const name of selectedNames){
+      for(const name of c.lineup){
         if(owned[name])continue;
         if(avail.includes(name)&&hire(name)){
           lastStatus=`${name} wordt aangenomen`; GM_Set(K_LAST,Date.now()); localCooldownUntil=Date.now()+7000; setWorkState(true,localCooldownUntil); paint(); return;
@@ -4527,25 +4481,13 @@ Naam3"></textarea><br><br>
       const detrainJobs=[];
       const trainJobs=[];
       const equipJobs=[];
-      for(const name of selectedNames){
+      for(const name of c.lineup){
         const o=owned[name]; if(!o)continue;
-        // Special-only selectie verandert geen Attack/Defence en koopt geen equipment.
-        if(c.lineup.includes(name)){
-          const eq=equipmentAction(name,o);
-          if(eq)equipJobs.push({name,id:o.id,action:eq});
-          const stats=statActions(name,o,c.targets[name]);
-          for(const a of stats.detrain)detrainJobs.push({name,id:o.id,action:a});
-          for(const a of stats.train)trainJobs.push({name,id:o.id,action:a});
-        }
-        if((name==='Lex'||name==='Ray') && special[name]?.use){
-          const target=clamp(special[name].target);
-          if(o.special?.available && o.special.value!==null && o.special.value<target){
-            trainJobs.push({name,id:o.id,action:['train_special',`speciaal ${o.special.value}/${target}`]});
-          } else if(!o.special?.available || o.special.value===null){
-            // Niet gokken met de actuele Special-waarde of een ontbrekend formulier.
-            lastStatus=`${name}: Special-waarde niet herkenbaar`;
-          }
-        }
+        const eq=equipmentAction(name,o);
+        if(eq)equipJobs.push({name,id:o.id,action:eq});
+        const stats=statActions(name,o,c.targets[name]);
+        for(const a of stats.detrain)detrainJobs.push({name,id:o.id,action:a});
+        for(const a of stats.train)trainJobs.push({name,id:o.id,action:a});
       }
       setDetrainPending(detrainJobs.length>0);
 
@@ -4556,27 +4498,86 @@ Naam3"></textarea><br><br>
         lastStatus=`Korte server-settle (${fmt(settledWait)})`; paint(); return;
       }
 
-      // TEST20E: zodra de 1-minuut train-timer vrij is, benutten we dat slot
-      // eerst voor exact een benodigde TRAIN-actie. Tijdens de daarna lopende
-      // timer mogen UNTRAIN-acties gewoon doorgaan.
-      if(trainingWait<=0 && trainJobs.length){
-        const j=trainJobs[0],n=j.action;
-        if((n[0]==='train_special'?specialTrain(j.id,j.name):clickAction(j.id,n[0]))){
-          lastStatus=`${j.name}: ${n[1]}`; GM_Set(K_LAST,Date.now());
-          localCooldownUntil=Date.now()+1800;
-          setWorkState(true,localCooldownUntil); paint(); return;
+      // TEST10: Omtrainen als atomaire levelwissel, niet alle levels ineens verwijderen.
+      // Bij een volle BG (10 levels) eerst precies 1 level vrijmaken en daarna
+      // die ene plek met de doelstat vullen. Tijdens training-cooldown NOOIT
+      // verder untrainen. De swap-marker overleeft SPA-herladen.
+      const byName=new Map(c.lineup.filter(n=>owned[n]).map(n=>[n,owned[n]]));
+      if(swapPending){
+        const o=byName.get(swapPending.name);
+        const target=c.targets[swapPending.name];
+        const wanted=target && (swapPending.to==='attack'?clamp(target.att):clamp(target.def));
+        const current=o && (swapPending.to==='attack'?o.att:o.def);
+        if(!o || !target || current>=wanted){ setSwapPending(null); }
+        else if(trainingWait>0){
+          setWorkState(true,Date.now()+trainingWait);
+          lastStatus=`${swapPending.name}: wacht op training voor levelwissel`;
+          paint(); return;
+        }else{
+          const action=swapPending.to==='attack'?'train_attack':'train_defense';
+          if(clickAction(o.id,action)){
+            lastStatus=`${swapPending.name}: levelwissel voltooid (${swapPending.to})`;
+            GM_Set(K_LAST,Date.now()); setSwapPending(null);
+            localCooldownUntil=Date.now()+1800;
+            setWorkState(true,localCooldownUntil); paint(); return;
+          }
+          lastStatus=`${swapPending.name}: wacht op ${action}-knop`;
+          setWorkState(true,Date.now()+4000); paint(); return;
         }
       }
 
-      if(detrainJobs.length){
-        const j=detrainJobs[0],n=j.action;
-        if(clickAction(j.id,n[0])){
-          lastStatus=`${j.name}: ${n[1]}`; GM_Set(K_LAST,Date.now());
-          // Untrain heeft geen minuut-cooldown; alleen kort wachten op DOM/server-settle.
-          localCooldownUntil=Date.now()+1200;
-          setWorkState(true,localCooldownUntil); paint(); return;
+      if(trainingWait<=0){
+        // Als een bodyguard nog vrije levelruimte heeft, eerst trainen.
+        const direct=trainJobs.find(j=>{
+          const o=byName.get(j.name);
+          return o && o.att+o.def<10;
+        });
+        if(direct){
+          const n=direct.action;
+          if(clickAction(direct.id,n[0])){
+            lastStatus=`${direct.name}: ${n[1]}`; GM_Set(K_LAST,Date.now());
+            localCooldownUntil=Date.now()+1800;
+            setWorkState(true,localCooldownUntil); paint(); return;
+          }
         }
-        lastStatus=`${j.name}: wacht op knop voor ${n[1]}`; setWorkState(true,Date.now()+4000); paint(); return;
+        // Een volle BG die van stat moet wisselen: precies EEN untrain.
+        const swap=detrainJobs.find(j=>{
+          const o=byName.get(j.name),t=c.targets[j.name];
+          return o && t && o.att+o.def>=10 &&
+            (o.att<clamp(t.att)||o.def<clamp(t.def));
+        });
+        if(swap){
+          const o=byName.get(swap.name),t=c.targets[swap.name];
+          const to=o.att<clamp(t.att)?'attack':'defense';
+          const n=swap.action;
+          if(clickAction(swap.id,n[0])){
+            setSwapPending({name:swap.name,to});
+            lastStatus=`${swap.name}: 1 level vrijgemaakt voor ${to}`;
+            GM_Set(K_LAST,Date.now()); localCooldownUntil=Date.now()+1200;
+            setWorkState(true,localCooldownUntil); paint(); return;
+          }
+          lastStatus=`${swap.name}: wacht op knop voor ${n[1]}`;
+          setWorkState(true,Date.now()+4000); paint(); return;
+        }
+        // Als het gewenste totaalniveau lager is, bouw eveneens slechts
+        // 1 level per trainingsinterval af, zodat niet alles ineens verdwijnt.
+        if(detrainJobs.length){
+          const j=detrainJobs[0],n=j.action;
+          if(clickAction(j.id,n[0])){
+            lastStatus=`${j.name}: geleidelijk ${n[1]}`;
+            GM_Set(K_LAST,Date.now());
+            localCooldownUntil=Date.now()+60000;
+            setWorkState(true,localCooldownUntil); paint(); return;
+          }
+          lastStatus=`${j.name}: wacht op knop voor ${n[1]}`;
+          setWorkState(true,Date.now()+4000); paint(); return;
+        }
+      }
+
+      if(detrainJobs.length || trainJobs.length){
+        setWorkState(true,Date.now()+Math.max(1000,trainingWait));
+        lastStatus='Wachten op trainingstimer voor volgende levelwissel';
+        paint(); return;
       }
 
       // Equipmentgedrag blijft behouden, maar pas wanneer er geen stat-surplus
@@ -4594,13 +4595,7 @@ Naam3"></textarea><br><br>
         lastStatus=`Wachten op trainingstimer; geen de-trainwerk meer`; paint(); return;
       }
 
-      const unknownSpecial=specialNames.some(name=>(name==='Lex'||name==='Ray') && special[name]?.use &&
-        (!owned[name]?.special?.available || owned[name]?.special?.value===null));
-      if(unknownSpecial){
-        setWorkState(true,Date.now()+60000);
-        lastStatus='Special-waarde/knop niet herkend; veilig opnieuw controleren';paint();return;
-      }
-      setDetrainPending(false);
+      setSwapPending(null); setDetrainPending(false);
       setWorkState(false,Date.now()+BODYGUARD_RECHECK_MS); lastStatus='Alle geselecteerde bodyguards hebben hun doel bereikt'; paint();
     } finally { await sleep(700); busy=false; }
   }
@@ -7154,31 +7149,38 @@ try {
     return true;
   }
 
-  // DRIVER: "Chicago (travel to this city to accept)" → auto-travel naar die stad
+  // COM TEST9: uitsluitend een expliciete Race-uitnodigingsrij kan reizen aanvragen.
+  // Een algemene Travel-link op de SPA-pagina is geen geldige reisopdracht.
+  function raceCurrentCity(){
+    const top=String(document.querySelector('.top-city-text a,.top-city-text,#cityName,.cityName')?.textContent||'').trim();
+    const names=Object.keys(RACE_NAME_TO_CODE);
+    const match=names.find(c=>new RegExp('\\b'+c.replace(/ /g,'\\s+')+'\\b','i').test(top));
+    if(match)return match;
+    const bg=[document.body?.style?.backgroundImage||'',getComputedStyle(document.body||document.documentElement).backgroundImage||''].join(' ');
+    const m=bg.match(/backgrounds\/(detroit|chicago|newyork|lasvegas|philadelphia|baltimore|corleone|palermo)\.jpg/i);
+    return m?({newyork:'new york',lasvegas:'las vegas'})[m[1].toLowerCase()]||m[1].toLowerCase():'';
+  }
   function handleSlaveTravelToRaceCity(){
-    if (raceRole!=='slave') return false;
-    if (!raceAutoTravel) return false;
-    if (isLoggedOut()) return false;
-
-    const link = document.querySelector('#game_container a[href*="module=Travel"][href*="CityId="]');
-    if (!link) return false;
-
-    const cell = link.closest('td') || link.parentElement;
-    if (!cell) return false;
-
-    const full = (cell.textContent || '').trim();
-    let cityName = null;
-    const m = full.match(/^([A-Za-z ]+)\s*\(/);
-    if (m) cityName = m[1].trim();
-    if (!cityName){
-      const fallback = raceFindFirstCityInText(full);
-      if (fallback) cityName = fallback;
+    if(raceRole!=='slave'||!raceAutoTravel||isLoggedOut())return false;
+    const links=[...document.querySelectorAll('#game_container a[href*="module=Travel"][href*="CityId="]')];
+    for(const link of links){
+      const cell=link.closest('tr')||link.closest('td')||link.parentElement;
+      const full=String(cell?.textContent||'').replace(/\s+/g,' ').trim();
+      // Alleen de expliciete COM-racemelding; niet een willekeurige stadlink.
+      if(!/travel to this city to accept|reis naar deze stad om te accepteren/i.test(full))continue;
+      const m=full.match(/(?:^|\s)(Detroit|Chicago|New York|Las Vegas|Philadelphia|Baltimore|Corleone|Palermo)\s*\(/i);
+      const cityName=m?.[1]||'';
+      if(!cityName)continue;
+      const current=raceCurrentCity();
+      if(current && current===cityName.toLowerCase()){
+        console.warn('[Race TEST9] Reis geweigerd: Driver is al in',cityName);
+        return false;
+      }
+      console.log('[Race TEST9] Expliciete uitnodiging buiten huidige stad:',cityName,'huidige stad:',current||'onbekend');
+      raceAutoTravelToCityName(cityName);
+      return true;
     }
-    if (!cityName) return false;
-
-    console.log('[Race] Driver: uitnodiging in andere stad -> Auto-Travel naar', cityName);
-    raceAutoTravelToCityName(cityName);
-    return true;
+    return false;
   }
 
   // ===================================================================
@@ -11687,6 +11689,7 @@ paint();
   }
   function idleHomeWatchdog(){
     if (onInfo()){ idleHomeTouch('on-info'); return false; }
+    if (mrbContinuousPageActivity()) { idleHomeTouch('continuous-enteren-slots'); return false; }
     const blocker=idleHomeBusyReason();
     if (blocker){ idleHomeTouch(blocker); return false; }
     const now=Date.now();
@@ -13491,6 +13494,7 @@ paint();
     return !!(el && (el.matches?.('input,textarea,select,[contenteditable="true"]')) && !el.closest?.('#mrbGoldMenu'));
   }
   function safeToRefresh(){
+    if(mrbContinuousPageActivity()) return false;
     if(gateVisible()||plannerBusy()||moduleFlowBusy()||realPopupVisible()||inputBusy()) return false;
     if(document.hidden) return false;
     return true;
@@ -13506,6 +13510,7 @@ paint();
     return !!(cooldownText || nowBtn);
   }
   function safeForForcedPeriodicRefresh(){
+    if(mrbContinuousPageActivity()) return false;
     if(gateVisible()||inputBusy()||document.hidden) return false;
     // Periodieke refresh blijft conservatief: onbekende actieve dialogen worden
     // niet zomaar afgebroken. Freeze Recovery heeft hieronder zijn eigen,
@@ -13562,6 +13567,7 @@ paint();
     return {candidate:true,signature:`${route}|${parts.sort().join('|')}`,reason:dialogs.length?'dialoog/overlay staat stil':'overlay staat stil'};
   }
   function safeForFreezeRecovery(){
+    if(mrbContinuousPageActivity()) return false;
     if(gateVisible()||inputBusy()||document.hidden) return false;
     // Recente echte gebruikersactiviteit krijgt altijd voorrang. Stale
     // planner/module-busy flags blokkeren freeze recovery bewust NIET meer.
@@ -13576,7 +13582,7 @@ paint();
     GM_Set(K_LAST_REFRESH,Date.now());
     try{sessionStorage.setItem('mrb_session_refresh_reason',String(reason||'freeze recovery'));}catch(e){}
     ui(`Freeze Recovery: ${reason}`);
-    mrbSetTimeout(()=>{ try{location.reload();}catch(e){} },250);
+    mrbSetTimeout(()=>{ if(mrbContinuousPageActivity()) return; try{location.reload();}catch(e){} },250);
     return true;
   }
   function markActivity(){ lastActivity=Date.now(); }
@@ -13595,7 +13601,7 @@ paint();
     GM_Set(K_LAST_REFRESH,Date.now());
     try{sessionStorage.setItem('mrb_session_refresh_reason',String(reason||'veilig herstel'));}catch(e){}
     ui(`Veilige refresh: ${reason}`);
-    mrbSetTimeout(()=>{ try{location.reload();}catch(e){} },250);
+    mrbSetTimeout(()=>{ if(mrbContinuousPageActivity()) return; try{location.reload();}catch(e){} },250);
     return true;
   }
   function ui(message=''){
@@ -16255,27 +16261,28 @@ paint();
     });
   }
   function driverInviteCity(){
-    const t=text();
-    // Betrouwbaarste bron: de echte Travel-link van de Heistmelding, zoals
-    // /?module=Travel&action=FetchInfo&CityId=0 voor Detroit.
-    const travelLink=[...document.querySelectorAll('a[href*="module=Travel" i][href*="CityId=" i]')]
-      .find(a=>!/annuleer|cancel/i.test(norm(a.textContent||'')));
-    if(travelLink){
+    // COM TEST9: lees alleen een expliciete Heist-reismelding op de actieve
+    // GroupCrimes/Heist-pagina. Generieke stadlinks zijn geen uitnodigingsbewijs.
+    if(!onGroup()&&!onHeist())return '';
+    const travelLinks=[...document.querySelectorAll('#game_container a[href*="module=Travel" i][href*="CityId=" i]')];
+    for(const link of travelLinks){
+      const context=norm((link.closest('tr')||link.closest('p')||link.parentElement)?.textContent||'');
+      if(!/\b(?:heist|overval)\b/i.test(context) || !/\b(?:travel|reis|city|stad)\b/i.test(context))continue;
       try{
-        const url=new URL(travelLink.getAttribute('href')||'',location.href);
+        const url=new URL(link.getAttribute('href')||'',location.href);
         const id=Number(url.searchParams.get('CityId'));
         const byId=Object.entries(CITY_ID).find(([,cityId])=>cityId===id)?.[0];
         if(byId)return byId;
       }catch(_){}
     }
+    // Alleen een uitdrukkelijke reisaanwijzing, niet een willekeurige stadnaam.
+    const t=text();
     const patterns=[
       /(?:reis|travel)\s+(?:naar|to)\s+(Detroit|Chicago|New York|Las Vegas|Philadelphia|Baltimore|Corleone|Palermo)/i,
-      /(?:overval|heist)\s+plaatsvindt[^.]*?(?:in|te)\s+(Detroit|Chicago|New York|Las Vegas|Philadelphia|Baltimore|Corleone|Palermo)/i,
-      /(?:stad|city)\s*[:\-]?\s*(Detroit|Chicago|New York|Las Vegas|Philadelphia|Baltimore|Corleone|Palermo)/i
+      /(?:not in the (?:right )?city|niet in de (?:juiste )?stad)[^.!?]{0,160}?(Detroit|Chicago|New York|Las Vegas|Philadelphia|Baltimore|Corleone|Palermo)/i
     ];
-    for(const re of patterns){const m=t.match(re);if(m)return CITIES.find(c=>c.toLowerCase()===m[1].toLowerCase())||m[1];}
-    const cityLink=[...document.querySelectorAll('a')].find(a=>CITIES.some(c=>new RegExp(`^${c.replace(' ','\\s+')}$`,'i').test(norm(a.textContent)))&&!/annuleer|cancel/i.test(norm(a.textContent)));
-    return cityLink?CITIES.find(c=>new RegExp(`^${c.replace(' ','\\s+')}$`,'i').test(norm(cityLink.textContent)))||'':'';
+    for(const re of patterns){const m=t.match(re);if(m)return CITIES.find(c=>c.toLowerCase()===m[1].toLowerCase())||'';}
+    return '';
   }
   function driverMustTravelTo(inviteCity){
     if(!inviteCity)return false;
@@ -16617,6 +16624,10 @@ paint();
         next(goInfo,500);
         return;
       }
+    }
+    // COM TEST9: na handmatige reis een oude Driver-bestemming niet blind uitvoeren.
+    if(role()==='driver' && currentCity()!=='Onbekend' && currentCity()===travelTarget){
+      const arrived=travelTarget;travelTarget='';status(`Al in ${arrived}; geen nieuwe reis nodig`);next(driverStart,300);return;
     }
     if(!onTravel()){load('/?module=Travel');next(travelFlow,1000);return;}
     if(currentCity()===travelTarget){const arrived=travelTarget;travelTarget='';status(`Aangekomen in ${arrived}`);if(role()==='leader')leaderStart();else driverStart();return;}
