@@ -4357,19 +4357,18 @@ Naam3"></textarea><br><br>
       return !!row && rowWords.test(clean(row.textContent));
     });
     return forms.find(f=>{
-      const b=f.querySelector('input[type="submit"],button[type="submit"]');
-      return !!b && !b.disabled && !f.querySelector('span[data-timecb="bodyguard"]');
+      const b=f.querySelector('input[type="submit"],button[type="submit"],input[type="button"],button:not([type])');
+      // De servertrainingstimer blokkeert TRAIN, niet UNTRAIN.
+      return !!b && !b.disabled && (mode==='untrain' || !f.querySelector('span[data-timecb="bodyguard"]'));
     }) || null;
   }
   function clickAction(id,action){
+    const untrain=action.startsWith('untrain_');
     let f=formAction(id,action);
-    // TEST20D: Omerta's interne untrain action-naam is niet betrouwbaar gekoppeld
-    // aan het zichtbare statlabel. Kies daarom bij de-trainen de form uit de
-    // daadwerkelijke Attack/Defence-rij die de gebruiker ziet.
     if(action==='untrain_attack') f=statRowForm(id,'attack','untrain') || f;
     else if(action==='untrain_defense') f=statRowForm(id,'defense','untrain') || f;
-    const b=f?.querySelector('input[type="submit"],button[type="submit"]');
-    if(!b||b.disabled||f.querySelector('span[data-timecb="bodyguard"]'))return false;
+    const b=f?.querySelector('input[type="submit"],button[type="submit"],input[type="button"],button:not([type])');
+    if(!b||b.disabled||(!untrain&&f.querySelector('span[data-timecb="bodyguard"]')))return false;
     return clickWithBgConfirm(b);
   }
   function hire(name){
@@ -4521,7 +4520,7 @@ Naam3"></textarea><br><br>
             localCooldownUntil=Date.now()+1800;
             setWorkState(true,localCooldownUntil); paint(); return;
           }
-          lastStatus=`${swapPending.name}: wacht op ${action}-knop`;
+          lastStatus=`${swapPending.name}: Train-knop niet gevonden of geblokkeerd (${action})`;
           setWorkState(true,Date.now()+4000); paint(); return;
         }
       }
@@ -4556,7 +4555,7 @@ Naam3"></textarea><br><br>
             GM_Set(K_LAST,Date.now()); localCooldownUntil=Date.now()+1200;
             setWorkState(true,localCooldownUntil); paint(); return;
           }
-          lastStatus=`${swap.name}: wacht op knop voor ${n[1]}`;
+          lastStatus=`${swap.name}: Untrain-knop niet gevonden of geblokkeerd (${n[0]})`;
           setWorkState(true,Date.now()+4000); paint(); return;
         }
         // Als het gewenste totaalniveau lager is, bouw eveneens slechts
