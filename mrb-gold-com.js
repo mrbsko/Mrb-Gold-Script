@@ -1,6 +1,6 @@
 // ==UserScript==
-// @name         MRB Gold COM TEST15 Race Travel Text Fix
-// @version      6.0.0-com-test15-race-travel-text-fix
+// @name         MRB Gold COM TEST16 Scheduler Diagnostics
+// @version      6.0.0-com-test16-scheduler-diag
 // @description  COM testbasis: originele Gold-logica, uitsluitend op barafranca.com; Engelse selectors nog te valideren.
 // @author       Mrb
 // @include      http://*.barafranca.com/*
@@ -797,6 +797,7 @@ class MRBPerfMutationObserver extends MutationObserver {
     function stopPulseWhenIdle(){ if(!tasks.size) cancelPulse(); }
     function finishInterval(task){
       if (!tasks.has(task.id)) return;
+      try { unsafeWindow.mrbSchedulerTrace?.('INTERVAL_FINISH',{id:task.id,module:task.module,label:task.label}); }catch(_){}
       task.running=false;
       task.nextAt=Date.now()+task.delay;
       ensurePulse();
@@ -805,6 +806,7 @@ class MRBPerfMutationObserver extends MutationObserver {
       if (!tasks.has(task.id) || task.running) return;
       if (task.once) tasks.delete(task.id);
       else task.running=true;
+      try { unsafeWindow.mrbSchedulerTrace?.('TASK_START',{id:task.id,module:task.module,label:task.label,lateMs:Math.max(0,Date.now()-task.nextAt)}); }catch(_){}
       const __perfT0=(typeof performance!=='undefined'&&performance.now)?performance.now():Date.now();
       try {
         const result=task.callback(...task.args);
@@ -898,7 +900,7 @@ class MRBPerfMutationObserver extends MutationObserver {
       if(!who)return false;
       if(owner && owner!==who)return false;
       const now=Date.now();
-      if(!owner){owner=who;since=now;}
+      if(!owner){owner=who;since=now; try { unsafeWindow.mrbSchedulerTrace?.('OWNER_ACQUIRE',{owner,phase:nextPhase}); }catch(_){} }
       phase=String(nextPhase||phase||'active');updatedAt=now;
       try{unsafeWindow.mrbFlightRecorder?.add?.('GROUP_OWNER_ACQUIRE',{owner,phase,since});}catch(_){}
       return true;
@@ -913,6 +915,7 @@ class MRBPerfMutationObserver extends MutationObserver {
       who=normOwner(who);
       if(!owner || (who && owner!==who))return false;
       const old=owner,oldPhase=phase;
+      try { unsafeWindow.mrbSchedulerTrace?.('OWNER_RELEASE',{owner,phase,reason,heldMs:Date.now()-since}); }catch(_){}
       owner='';phase='';since=0;updatedAt=Date.now();
       try{unsafeWindow.mrbFlightRecorder?.add?.('GROUP_OWNER_RELEASE',{owner:old,phase:oldPhase,reason:String(reason||'')});}catch(_){}
       return true;
@@ -1289,12 +1292,31 @@ class MRBPerfMutationObserver extends MutationObserver {
       } catch(_) { return false; }
     }
 
+    // COM TEST16: bounded read-only diagnostic buffer, no additional timer.
+    const navDiagRows=[];
+    function navDiag(kind, detail={}){
+      try {
+        const row={at:Date.now(),kind,...detail};
+        navDiagRows.push(row); if(navDiagRows.length>1500) navDiagRows.shift();
+      } catch(_) {}
+    }
+    unsafeWindow.mrbSchedulerTrace=navDiag;
+    unsafeWindow.mrbSchedulerDiag=()=>{
+      const rows=navDiagRows.slice();
+      const result={version:'COM TEST16',events:rows,tasks:unsafeWindow.mrbCentralPulse?.state?.(),flight:unsafeWindow.mrbFlightRecorder?.live?.()};
+      console.table(rows.slice(-150)); return result;
+    };
+    unsafeWindow.mrbSchedulerDiagClear=()=>{navDiagRows.length=0;};
     unsafeWindow.mrbNavigate = function(target, meta={}){
+      const trace=(reason,result)=>{
+        try { navDiag('NAV',{source:String(meta?.source||meta?.owner||'onbekend'),target:canonical(target),reason,result,activeSource,leaseRemainingMs:Math.max(0,activeUntil-Date.now()),groupOwner:unsafeWindow.mrbGroupTransaction?.owner?.()||''}); }catch(_){}
+        return result;
+      };
       // 5.8.54: loginpagina is exclusief van de gebruiker; Gold navigeert daar nooit.
-      try { if (unsafeWindow.mrbSessionSafeMode?.active?.()) return true; } catch(_) {}
+      try { if (unsafeWindow.mrbSessionSafeMode?.active?.()) return trace('session-safe',true); } catch(_) {}
       const now = Date.now();
       const source = clean(meta?.source || meta?.owner || 'onbekend');
-      if (mrbContinuousPageActivity() && source==='unified-idle-home') return false;
+      if (mrbContinuousPageActivity() && source==='unified-idle-home') return trace('continuous-activity',false);
       const crimesCarsPriority = source.toLowerCase().includes('crimes-cars');
       const yieldNavigation = meta?.yield === true && /information\.php/i.test(String(target||''));
       const wanted = canonical(target);
@@ -1302,11 +1324,11 @@ class MRBPerfMutationObserver extends MutationObserver {
 
       // TEST10: na een server-403 geen automatische requeststorm. De bestaande
       // modulecallbacks mogen blijven leven, maar krijgen tijdelijk geen navigatie.
-      if (!meta?.serverBackoffBypass && serverBackoffActive()) return false;
+      if (!meta?.serverBackoffBypass && serverBackoffActive()) return trace('server-backoff',false);
 
       // Tijdens handmatige bediening blijven timers actief, maar geen enkele
       // gewone module mag de door de speler gekozen pagina vervangen.
-      if (!meta?.manualPauseBypass && unsafeWindow.mrbManualControl?.isPaused?.()) return true;
+      if (!meta?.manualPauseBypass && unsafeWindow.mrbManualControl?.isPaused?.()) return trace('manual-pause',true);
 
       // TEST5: Race bezit de pagina uitsluitend tijdens de korte eigen klikstap.
       // Crimes/Cars mag nooit door een stale Race-state worden tegengehouden.
@@ -1319,7 +1341,7 @@ class MRBPerfMutationObserver extends MutationObserver {
         try {
           const st = unsafeWindow.mrbV9CrimesCars?.state?.();
           const ccOwnsPage = !!st?.running && (!!st.busy || !!st.confirmPendingKind || !!st.forcedRetryKind);
-          if (ccOwnsPage) return true;
+          if (ccOwnsPage) return trace('crimes-cars-owner',true);
         } catch(_) {}
       }
 
@@ -1330,29 +1352,29 @@ class MRBPerfMutationObserver extends MutationObserver {
       const sameRouteRecovery = meta?.sameRouteRecovery === true;
       // URL en zichtbare module worden beide gecontroleerd. Bij een SPA-wissel
       // loopt de URL soms voor op de DOM; opnieuw laden veroorzaakt dan de witte/raw pagina.
-      if (!sameRouteRecovery && targetAlreadyVisible(wanted)) return true;
+      if (!sameRouteRecovery && targetAlreadyVisible(wanted)) return trace('already-visible',true);
       // TEST19F: sommige SPA-resultaatpagina's houden exact dezelfde route terwijl
       // het eigenlijke formulier/module-DOM verdwenen is. Alleen een expliciete
       // sameRouteRecovery mag in dat geval dezelfde route opnieuw claimen.
       // Voor Crimes/Cars is de zichtbare DOM hierboven leidend. Een oude URL
       // kan na een SPA-onderbreking nog Crimes/Cars tonen terwijl Heist, Spot,
       // Race of een handmatige pagina daadwerkelijk in de container staat.
-      if (!sameRouteRecovery && !crimesCarsPriority && wanted && current && (wanted === current || current.endsWith(wanted) || wanted.endsWith(current))) return true;
-      if (gateVisible() || captchaVisible()) return true;
-      if (!meta?.force && cooldownBlocks(source, wanted)) return true;
+      if (!sameRouteRecovery && !crimesCarsPriority && wanted && current && (wanted === current || current.endsWith(wanted) || wanted.endsWith(current))) return trace('same-route',true);
+      if (gateVisible() || captchaVisible()) return trace('gate-or-captcha',true);
+      if (!meta?.force && cooldownBlocks(source, wanted)) return trace('cooldown',true);
 
 
       // Laat nooit twee verschillende modules tegelijk de SPA-container vervangen.
       if (!meta?.force && !yieldNavigation && now < activeUntil && activeSource && activeSource !== source) {
-        if (!source.includes('crimes-cars')) return true;
+        if (!source.includes('crimes-cars')) return trace('navigation-owner',true);
       }
-      if (!meta?.force && !yieldNavigation && navigationLoading() && !source.includes('crimes-cars')) return true;
+      if (!meta?.force && !yieldNavigation && navigationLoading() && !source.includes('crimes-cars')) return trace('loading',true);
       // Een onderbroken Crimes/Cars-actie moet dezelfde doelpagina opnieuw
       // kunnen openen. De zichtbaarheidstest hierboven voorkomt dubbel laden
       // wanneer de juiste module al werkelijk in de container staat.
-      if (!meta?.force && !sameRouteRecovery && !crimesCarsPriority && wanted === lastTarget && now - lastTargetAt < SAME_TARGET_GAP_MS) return true;
-      if (!meta?.force && !crimesCarsPriority && now - lastNavigationAt < NAV_MIN_GAP_MS) return true;
-      if (!meta?.force && !navCircuitAllows(source,wanted)) return true;
+      if (!meta?.force && !sameRouteRecovery && !crimesCarsPriority && wanted === lastTarget && now - lastTargetAt < SAME_TARGET_GAP_MS) return trace('same-target-gap',true);
+      if (!meta?.force && !crimesCarsPriority && now - lastNavigationAt < NAV_MIN_GAP_MS) return trace('minimum-gap',true);
+      if (!meta?.force && !navCircuitAllows(source,wanted)) return trace('circuit-breaker',true);
 
       lastNavigationAt = now;
       lastTarget = wanted;
@@ -1362,7 +1384,7 @@ class MRBPerfMutationObserver extends MutationObserver {
       try {
         unsafeWindow.mrbNavigationState = { source, target:wanted, at:now, activeUntil };
       } catch(_) {}
-      return perform(target);
+      return trace('perform',perform(target));
     };
 
     unsafeWindow.mrbNavigationGate = {
@@ -11571,6 +11593,7 @@ paint();
       if(now-last<gap)return;
       diagSeen.set(sig,now);
       unsafeWindow.mrbFlightRecorder?.add?.('UNIFIED_'+kind,{...diagContext(),...detail});
+      try { unsafeWindow.mrbSchedulerTrace?.('UNIFIED_'+kind,{...detail,readyAgeMs:detail.module&&runnableSince.has(detail.module)?now-runnableSince.get(detail.module):null}); }catch(_){}
     }catch(_){}
   }
   function checkpoint(reason,detail={}){
