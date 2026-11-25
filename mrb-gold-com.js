@@ -1,6 +1,6 @@
 // ==UserScript==
-// @name         MRB Gold COM TEST14 Race Accept Fix
-// @version      6.0.0-com-test14-race-accept-fix
+// @name         MRB Gold COM TEST15 Race Travel Text Fix
+// @version      6.0.0-com-test15-race-travel-text-fix
 // @description  COM testbasis: originele Gold-logica, uitsluitend op barafranca.com; Engelse selectors nog te valideren.
 // @author       Mrb
 // @include      http://*.barafranca.com/*
@@ -7161,21 +7161,21 @@ try {
   }
   function handleSlaveTravelToRaceCity(){
     if(raceRole!=='slave'||!raceAutoTravel||isLoggedOut())return false;
-    const links=[...document.querySelectorAll('#game_container a')].filter(a=>/^(?:\(?\s*)(travel to this city to accept|reis naar deze stad om te accepteren)\s*\)?$/i.test(String(a.textContent||'').replace(/\s+/g,' ').trim()));
+    const links=[...document.querySelectorAll('#game_container a')].filter(a=>/^(?:\(?\s*)(travel to this city to accept|reis naar deze stad o[mn] te accepteren)\s*\)?$/i.test(String(a.textContent||'').replace(/\s+/g,' ').trim()));
     for(const link of links){
       const cell=link.closest('td')||link.closest('tr')||link.parentElement;
       const full=String(cell?.textContent||'').replace(/\s+/g,' ').trim();
       // Alleen de expliciete COM-racemelding; niet een willekeurige stadlink.
-      if(!/travel to this city to accept|reis naar deze stad om te accepteren/i.test(full))continue;
+      if(!/travel to this city to accept|reis naar deze stad o[mn] te accepteren/i.test(full))continue;
       const m=full.match(/(?:^|\s)(Detroit|Chicago|New York|Las Vegas|Philadelphia|Baltimore|Corleone|Palermo)\s*\(/i);
       const cityName=m?.[1]||'';
       if(!cityName)continue;
       const current=raceCurrentCity();
       if(current && current===cityName.toLowerCase()){
-        console.warn('[Race TEST9] Reis geweigerd: Driver is al in',cityName);
+        console.warn('[Race TEST15] Reis geweigerd: Driver is al in',cityName);
         return false;
       }
-      console.log('[Race TEST9] Expliciete uitnodiging buiten huidige stad:',cityName,'huidige stad:',current||'onbekend');
+      console.log('[Race TEST15] Expliciete uitnodiging buiten huidige stad:',cityName,'huidige stad:',current||'onbekend');
       raceAutoTravelToCityName(cityName);
       return true;
     }
