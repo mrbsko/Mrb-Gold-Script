@@ -1,6 +1,6 @@
 // ==UserScript==
-// @name         MRB Gold COM TEST10 Invite City Travel Guard
-// @version      6.0.0-com-test9-invite-city
+// @name         MRB Gold COM TEST13 Race Travel DIAG
+// @version      6.0.0-com-test13-race-travel-diag
 // @description  COM testbasis: originele Gold-logica, uitsluitend op barafranca.com; Engelse selectors nog te valideren.
 // @author       Mrb
 // @include      http://*.barafranca.com/*
@@ -6699,6 +6699,7 @@ try {
   // timers en helpers om dubbel-loop te voorkomen
   let failsafeTimer = null;
   let loopTimer     = null;
+  let raceTravelJob = null;
 
   // 5.8.36: Driver onthoudt kort dat hij voor de huidige uitnodiging al een auto
   // heeft ingestuurd. Als de Leider daarna annuleert, verdwijnt de ready/wachttekst.
@@ -6740,6 +6741,7 @@ try {
     loopTimer = setTimeout(fn, Math.max(0, ms || 0));
   };
   const clearAll = ()=>{
+    raceTravelJob = null;
     if(loopTimer) clearTimeout(loopTimer);
     if(failsafeTimer) clearTimeout(failsafeTimer);
     clearDriverReadyExit();
@@ -6964,6 +6966,7 @@ try {
   }
 
   function stopRaceScript(reason){
+    raceTravelJob = null;
     raceReleaseAction();
     scriptAan = false;
     GM_Set("race_scriptAan", false);
@@ -7004,109 +7007,61 @@ try {
     return RACE_NAME_TO_CODE[key] || null;
   }
 
-  function raceClickCityByCode(code){
-    const id = RACE_CODE_TO_ID[code];
-    if (id==null) return false;
-
-    try{
-      if (typeof unsafeWindow.onTravelData === 'function'){
-        unsafeWindow.onTravelData(id);
-        return true;
-      }
-    }catch{}
-
-    const cityName = ({Det:'Detroit',Chi:'Chicago',NY:'New York',LV:'Las Vegas',Phi:'Philadelphia',Bal:'Baltimore',Cor:'Corleone',Pal:'Palermo'})[code];
-    const a = document.querySelector(`a[onclick="onTravelData(${id});"]`)
-           || document.querySelector(`a[onclick^="onTravelData(${id})"]`)
-           || document.querySelector(`a[href*="CityId=${id}"]`)
-           || Array.from(document.querySelectorAll('a')).find(el =>
-                String(el.textContent || '').replace(/\s+/g,' ').trim().toLowerCase() === String(cityName || '').toLowerCase()
-              );
-    if (!a) return false;
-
-    try {
-      a.click();
-      a.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,view:window}));
-      return true;
-    }catch(e){
-      console.warn('[Race] raceClickCityByCode error', e);
-    }
-    return false;
+  // TEST13: one bounded travel transaction; never treat a click as arrival.
+  function raceTravelLog(step, detail){
+    console.info('[Race TEST13]', step, detail || '', {phase:raceCorePhase, url:location.href});
   }
-
-  function racePromptOpen(){
-    return document.querySelector('.jqi') !== null;
+  function raceTravelValid(job){
+    return raceTravelJob === job && scriptAan && raceRole === 'slave' && raceAutoTravel && !isLoggedOut();
   }
-
-  function raceFindTravelButton(){
-    return document.querySelector('button[name="jqi_state0_buttonTravel"][value="true"]')
-      || document.querySelector('.jqi .jqibuttons button[name="jqi_state0_buttonTravel"]')
-      || Array.from(document.querySelectorAll('button.jqibutton, .jqibuttons button, button.btn'))
-           .find(b => /travel/i.test(b.textContent || ''))
-      || null;
+  function raceTravelFinish(job, reason, arrived){
+    if(raceTravelJob !== job) return;
+    raceTravelLog(arrived ? 'ARRIVED' : 'STOP', reason);
+    raceTravelJob = null;
+    if(!scriptAan || isLoggedOut()) return;
+    if(!arrived){ stopRaceScript('TEST13 Travel: '+reason); return; }
+    goInfo();
   }
-
   function raceAutoTravelToCityName(cityName){
-    raceRegistryState('TRAVEL', 'naar racestad reizen');
     const code = raceCityNameToCode(cityName);
-    if (!code){
-      console.warn('[Race] Auto-Travel: stad niet herkend:', cityName);
-      return;
-    }
-    if(!scriptAan) return;
-    if (isLoggedOut()) return pauseForGate('Auto-Travel gestart terwijl je uitgelogd bent');
-
-    console.log('[Race] Auto-Travel naar', cityName, '(', code, ')');
+    if(!code || !scriptAan || !raceAutoTravel || raceTravelJob) return;
+    if(isLoggedOut()) return pauseForGate('Auto-Travel: uitgelogd');
     clearAll();
+    const job = {city:cityName.toLowerCase(), id:RACE_CODE_TO_ID[code], deadline:Date.now()+20000, stage:'select'};
+    raceTravelJob = job;
+    raceRegistryState('TRAVEL', 'naar '+cityName+' reizen');
+    raceTravelLog('DESTINATION', job);
     guiLoad('/?module=Travel');
-    next(()=>raceAutoTravelFlow(code), randomDelay(800,1500));
+    next(()=>raceAutoTravelFlow(job), 600);
   }
-
-  function raceAutoTravelFlow(code){
-    if(!scriptAan) return;
-    if (isLoggedOut()) return pauseForGate('Auto-Travel flow: uitgelogd');
-
-    const ok = raceClickCityByCode(code);
-    if (!ok){
-      return next(()=>raceAutoTravelFlow(code), 600);
+  function raceAutoTravelFlow(job){
+    if(!raceTravelValid(job)) { if(raceTravelJob===job) raceTravelJob=null; return; }
+    if(Date.now()>job.deadline) return raceTravelFinish(job,'Timeout: '+job.stage,false);
+    const again=()=>next(()=>raceAutoTravelFlow(job),500);
+    const root=document.querySelector('#game_container') || document;
+    if(job.stage==='select'){
+      const link=root.querySelector(`a[onclick="onTravelData(${job.id});"]`);
+      if(!link || !link.getClientRects().length) return again();
+      raceTravelLog('CITY_LINK',link.getAttribute('onclick'));
+      job.stage='confirm'; job.deadline=Date.now()+15000;
+      try { link.click(); } catch(e){ return raceTravelFinish(job,String(e),false); }
+      return again();
     }
-
-    next(()=>raceConfirmTravelAndBackToInfo(), randomDelay(700,1100));
-  }
-
-  function raceConfirmTravelAndBackToInfo(){
-    if(!scriptAan) return;
-    if (isLoggedOut()) return pauseForGate('Auto-Travel confirm: uitgelogd');
-
-    if (!racePromptOpen()){
-      return next(raceConfirmTravelAndBackToInfo, 500);
+    if(job.stage==='confirm'){
+      const dialogs=Array.from(document.querySelectorAll('.jqi, [role="dialog"], .modal, .ui-dialog'));
+      const dialog=dialogs.find(el=>el.getClientRects().length && /reizen naar|travel to/i.test(el.innerText||'') && (el.innerText||'').toLowerCase().includes(job.city));
+      if(!dialog) return again();
+      const btn=Array.from(dialog.querySelectorAll('button,input[type="button"],input[type="submit"]')).find(el=>/^(travel|reis)$/i.test(String(el.textContent||el.value||'').trim()) && !el.disabled && el.getClientRects().length);
+      if(!btn) return again();
+      raceTravelLog('CONFIRM',job.city);
+      job.stage='arrival'; job.deadline=Date.now()+20000;
+      try { btn.click(); } catch(e){ return raceTravelFinish(job,String(e),false); }
+      return again();
     }
-
-    const btn = raceFindTravelButton();
-    if (!btn){
-      return next(raceConfirmTravelAndBackToInfo, 500);
+    if(job.stage==='arrival'){
+      if(raceCurrentCity()===job.city) return raceTravelFinish(job,job.city,true);
+      return again();
     }
-
-    try { btn.click(); }catch{}
-
-    let tries = 0;
-    (function poll(){
-      if(!scriptAan) return;
-      if (isLoggedOut()) return pauseForGate('Auto-Travel poll: uitgelogd');
-
-      if (!racePromptOpen() || tries>20){
-        next(()=>{
-          if(!scriptAan) return;
-          if (isLoggedOut()) return pauseForGate('Auto-Travel klaar: uitgelogd bij terugkeer');
-          clearRacePlan();
-          guiLoad('/information.php');
-          next(()=>checkAvailability(true), randomDelay(2000,4000));
-        }, actionDelay());
-        return;
-      }
-      tries++;
-      setTimeout(poll, 250);
-    })();
   }
 
   function raceFindFirstCityInText(text){
@@ -7645,6 +7600,7 @@ try {
   }
 
   function slave_startRace(){
+    if(raceTravelJob) { raceTravelLog("STALE_CALLBACK", "slave_startRace"); return; }
     raceRegistryState('DRIVER_OPEN', 'uitnodiging openen');
     if(!scriptAan) return;
     if (isLoggedOut()) return pauseForGate('slave_startRace: uitgelogd');
@@ -7655,6 +7611,7 @@ try {
   }
 
   function slave_acceptLoop(){
+    if(raceTravelJob) { raceTravelLog("STALE_CALLBACK", "slave_acceptLoop"); return; }
     raceRegistryState('DRIVER_ACCEPT', 'uitnodiging accepteren');
     if(!scriptAan) return;
     if (isLoggedOut()) return pauseForGate('slave_acceptLoop: uitgelogd');
@@ -7747,6 +7704,7 @@ try {
   }
 
   function slave_selectCar(){
+    if(raceTravelJob) { raceTravelLog("STALE_CALLBACK", "slave_selectCar"); return; }
     raceRegistryState('DRIVER_CAR', 'auto selecteren');
     if(!scriptAan) return;
     if (isLoggedOut()) return pauseForGate('slave_selectCar: uitgelogd');
@@ -7806,6 +7764,7 @@ try {
 
   // ------------------ AVAILABILITY (gedeeld) ------------------
   function checkAvailability(fromInfoSync=false){
+    if(raceTravelJob) { raceTravelLog("STALE_CALLBACK", "checkAvailability"); return; }
     raceRegistryState('CHECK_TIMER', 'Race-timer controleren');
     if(!scriptAan) return;
     if (isLoggedOut()) return pauseForGate('checkAvailability: uitgelogd');
