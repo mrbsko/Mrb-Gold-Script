@@ -1,7 +1,8 @@
+// TEST30Q NL: bevestigde Spot Driver auto-inzet geeft group ownership vrij en keert terug naar Mijn Account.
 // TEST30P NL: click-limit recovery na 60s met eenmalige harde navigatie; Bodyguard untrain uitsluitend via gecontroleerde statrij.
 // ==UserScript==
-// @name         MRB Gold Edition TEST30N - Obay Bid Submit Rewrite
-// @version      6.0.0-test30O-heist-leader-fast-start
+// @name         MRB Gold Edition TEST30Q - Spot Driver Passive Wait
+// @version      6.0.0-test30Q-spot-driver-passive-wait
 // @description  MRB Gold: centrale Unified Scheduler, navigatie-owner, retry-circuitbreaker en strikte actieguards.
 // @author       Mrb
 // @include      http://*.barafranca.nl/*
@@ -3370,7 +3371,12 @@ function _normTitle(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g
       set(K.driverAccepted, true);
       if (!Number(get(K.driverAcceptedAt, 0) || 0)) set(K.driverAcceptedAt, Date.now());
       set(K.driverLastVerify, Date.now());
-      setStatus('DRIVER_READY', 'Driver heeft auto ingezet en wacht op de Leider. Een geannuleerde en opnieuw verstuurde uitnodiging wordt automatisch herkend.');
+      // TEST30Q: server bevestigt auto-inzet; behoud acceptatie, maar geef ownership vrij.
+      setStatus('DRIVER_WAIT_LEADER', 'Auto is ingezet; Driver keert terug naar Mijn Account en wacht passief op de Leider.');
+      if (canNavigate()) {
+        markNav();
+        try { unsafeWindow.mrbNavigate?.('/information.php', {source:'spot-driver-ready-home'}); } catch (_) {}
+      }
       return;
     }
     if (isDriverInvitePage()) {
